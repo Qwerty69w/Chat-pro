@@ -1,0 +1,22 @@
+# Локальные данные приложения и резервные копии SQLite.
+minigram.sqlite3
+minigram.sqlite3-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Секреты и локальная конфигурация окружения.
+.env
+.env.*
+!.env.example
+
+# Служебные файлы Python и macOS.
+__pycache__/
+*.py[cod]
+.DS_Store
+.localized
+.betamigrated
+chat_pro.db
+text
+SC Info/
