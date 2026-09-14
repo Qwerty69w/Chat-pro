@@ -53,6 +53,7 @@ let profileReturnSection = "chats";
 let activeCall = null;
 let callPollTimer = null;
 let messagePollTimer = null;
+let messagePollInProgress = false;
 let ringTone = null;
 let callVoiceActivity = [];
 let scrollChatToLatest = false;
@@ -60,6 +61,10 @@ let selectedMessageIds = new Set();
 let expandedRssPostIds = new Set();
 let pinnedMessageIndex = 0;
 let reviewPageUrl = "";
+let publicLegal = null;
+let publicBranding = null;
+let chatActivityPingTimer = null;
+let lastChatActivity = { chatId: null, activity: "", sentAt: 0 };
 const pendingOutgoingMessages = new Map();
 
 function pinIcon(className = "") {
@@ -76,6 +81,9 @@ function actionIcon(name, className = "") {
     confidential: '<rect x="5" y="10" width="14" height="10" rx="2.5"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"/>',
     donate: '<path d="m12 3 2.15 5.1 5.5.45-4.18 3.62 1.27 5.33L12 14.3 7.26 17.5l1.27-5.33L4.35 8.55l5.5-.45L12 3Z"/>',
     download: '<path d="M12 3v11M8 10l4 4 4-4M5 20h14"/>',
+    play: '<path d="m9 5 10 7-10 7V5Z"/>',
+    stop: '<rect x="7" y="7" width="10" height="10" rx="1.5"/>',
+    edit: '<path d="m4 16.5-.7 4.2 4.2-.7L18.7 8.8a2.45 2.45 0 0 0-3.46-3.46L4 16.5Z"/><path d="m13.8 6.8 3.45 3.45"/>',
     report: '<path d="M6 21V4m0 1h11l-1.7 3.5L17 12H6"/>',
     delete: '<path d="M4 7h16M10 11v6M14 11v6M9 7l1-3h4l1 3M6.5 7l.7 13h9.6l.7-13"/>',
     cancel: '<path d="M7 7h9a5 5 0 1 1-4.5 7.2"/><path d="M7 7v5M7 7h5"/>',
@@ -93,6 +101,7 @@ function callControlIcon(name) {
     play: '<path d="m9 5 10 7-10 7V5Z"/>',
     camera: '<rect x="3.5" y="6.5" width="11.5" height="11" rx="2.5"/><path d="m15 10 5-3v10l-5-3"/>',
     cameraOff: '<rect x="3.5" y="6.5" width="11.5" height="11" rx="2.5"/><path d="m15 10 5-3v10l-5-3M4 4l16 16"/>',
+    cameraFlip: '<rect x="4" y="7" width="11" height="10" rx="2"/><path d="m15 10 4-2.5v9L15 14M7 4.5a8 8 0 0 1 11 2M18 5v2.5h-2.5M17 19.5a8 8 0 0 1-11-2M6 19v-2.5h2.5"/>',
     end: '<path d="M7 15.6c3.2-2.1 6.8-2.1 10 0l1.7 1.1c.7.5.8 1.5.2 2.1l-1.2 1.2c-.4.4-1 .5-1.5.3a10.2 10.2 0 0 0-8.4 0c-.5.2-1.1.1-1.5-.3l-1.2-1.2c-.6-.6-.5-1.6.2-2.1L7 15.6Z"/><path d="M5.5 8.5c4.1-2.7 8.9-2.7 13 0"/>',
     expand: '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 9h6v6"/>',
     shrink: '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M15 9H9v6"/>',
@@ -102,8 +111,6 @@ function callControlIcon(name) {
 }
 
 const CHAT_WALLPAPERS = [
-  { id: "default", title: "Чистый", description: "Нейтральный фон" },
-  { id: "whatsapp", title: "WhatsApp", description: "Светлый зелёный узор" },
   { id: "mint", title: "Мятный свет", description: "По вашему зелёному референсу" },
   { id: "aurora", title: "Неоновая аура", description: "Розовый, синий и индиго" },
   { id: "noir", title: "Ночной бархат", description: "Глубокий сине-чёрный" },
@@ -113,11 +120,11 @@ const CHAT_WALLPAPERS = [
   { id: "ocean", title: "Океан", description: "Светлая глубина" },
   { id: "lavender", title: "Лаванда", description: "Нежный фиолетовый" },
   { id: "forest", title: "Лес", description: "Спокойный зелёный" },
-  { id: "midnight", title: "Полночь", description: "Сдержанный синий" },
+  { id: "midnight", title: "Мотивация", description: "Сдержанный синий с фразами" },
   { id: "ember", title: "Янтарный огонь", description: "Авторский тёплый вариант" },
   { id: "iris", title: "Ирис", description: "Авторский фиолетовый вариант" },
+  { id: "default", title: "Чистый", description: "Нейтральный фон" },
   { id: "prism", title: "Живая призма", description: "8 редких градиентных переливов" },
-  { id: "live", title: "Живые диалоги", description: "Плавно меняющийся цветной фон" },
 ];
 
 const DIALOG_PANEL_STYLES = [
@@ -194,6 +201,7 @@ start();
 
 async function start() {
   if (!token) {
+    await loadPublicLegal();
     renderAuth();
     hidePageLoader();
     return;
@@ -205,6 +213,19 @@ async function start() {
     menuOpen = false;
     await loadState();
     trimSavedAccountsToLimit();
+    const paymentOrder = new URLSearchParams(window.location.search).get("order");
+    if (paymentOrder && window.location.pathname === "/payment-return") {
+      window.history.replaceState({}, "", "/");
+      try {
+        const payment = await api("/api/yookassa/payments/status", { method: "POST", body: { orderId: paymentOrder } });
+        if (payment.credited) {
+          await loadState();
+          toast(`Начислено ★ ${payment.stars}.`);
+        } else {
+          toast("Оплата ещё обрабатывается. Проверьте баланс немного позже.");
+        }
+      } catch (error) { toast(error.message, true); }
+    }
     const inviteCode = window.location.pathname.match(/^\/invite\/([^/]+)$/)?.[1];
     if (inviteCode) {
       window.history.replaceState({}, "", "/");
@@ -224,6 +245,25 @@ async function start() {
     renderAuth();
   }
   hidePageLoader();
+}
+
+async function loadPublicLegal() {
+  try {
+    const response = await fetch("/api/public/legal");
+    const data = await response.json();
+    if (response.ok && data.ok) {
+      publicLegal = data.legal;
+      publicBranding = data.branding;
+    }
+  } catch {
+    publicLegal = null;
+    publicBranding = null;
+  }
+}
+
+function loginLogoSrc() {
+  const logo = String(publicBranding?.loginLogoData || "");
+  return /^data:image\/png;base64,[A-Za-z0-9+/]*={0,2}$/.test(logo) ? logo : "icon.svg";
 }
 
 function hidePageLoader() {
@@ -247,18 +287,31 @@ async function loadState() {
   state.channelLinks ||= [];
   state.telegramChannelLinks ||= [];
   state.rssChannelLinks ||= [];
+  state.vkChannelLinks ||= [];
   state.channelComments ||= [];
+  state.channelStarPurchases ||= [];
   state.notifications ||= [];
+  state.activities ||= {};
   document.body.classList.toggle("theme-dark", state.me.theme === "dark");
   document.documentElement.style.setProperty("--primary", state.me.siteColor || "#2aabee");
   document.documentElement.style.setProperty("--primary-dark", colorShade(state.me.siteColor || "#2aabee", -20));
   document.documentElement.style.setProperty("--primary-rgb", colorToRgb(state.me.siteColor || "#2aabee"));
-  document.documentElement.style.setProperty("--own-bubble", state.me.dialogColor || "#ffffff");
-  document.documentElement.style.setProperty("--own-bubble-background", state.me.dialogColor || "#ffffff");
-  document.documentElement.style.setProperty("--own-bubble-text", dialogBubbleTextColor(state.me.dialogColor || "#ffffff"));
-  document.documentElement.style.setProperty("--other-bubble", state.me.otherDialogColor || "#ffffff");
-  document.documentElement.style.setProperty("--other-bubble-text", dialogBubbleTextColor(state.me.otherDialogColor || "#ffffff"));
+  const ownBubble = state.me.dialogColor || "#dff9f9";
+  const otherBubble = state.me.otherDialogColor || "#ffffff";
+  const ownBubbleText = dialogBubbleTextColor(ownBubble);
+  const otherBubbleText = dialogBubbleTextColor(otherBubble);
+  document.documentElement.style.setProperty("--own-bubble", ownBubble);
+  document.documentElement.style.setProperty("--own-bubble-background", ownBubble);
+  document.documentElement.style.setProperty("--own-bubble-text", ownBubbleText);
+  document.documentElement.style.setProperty("--other-bubble", otherBubble);
+  document.documentElement.style.setProperty("--other-bubble-text", otherBubbleText);
+  document.body.style.setProperty("--own-bubble", ownBubble);
+  document.body.style.setProperty("--own-bubble-background", ownBubble);
+  document.body.style.setProperty("--own-bubble-text", ownBubbleText);
+  document.body.style.setProperty("--other-bubble", otherBubble);
+  document.body.style.setProperty("--other-bubble-text", otherBubbleText);
   document.documentElement.style.setProperty("--message-font", dialogMessageFont(state.me.dialogFont || "business"));
+  document.documentElement.style.setProperty("--text-scale", ({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[state.me.textScale] || 1);
   const nightAppearance = effectiveNightAppearance();
   document.body.classList.toggle("night-appearance-customized", Boolean(state.me.nightAppearanceCustom) || !sameNightAppearance(defaultNightAppearance(), BASE_NIGHT_APPEARANCE));
   document.documentElement.style.setProperty("--night-outline", nightAppearance.outlineColor);
@@ -283,12 +336,12 @@ function renderAuth() {
     <main class="auth-shell">
       <section class="auth-card">
         <div class="brand">
-          <div class="logo">CP</div>
-          <div><h1 class="auth-brand-title" aria-label="Chat-Pro"><span aria-hidden="true" style="--letter-delay: 0ms">C</span><span aria-hidden="true" style="--letter-delay: 65ms">h</span><span aria-hidden="true" style="--letter-delay: 130ms">a</span><span aria-hidden="true" style="--letter-delay: 195ms">t</span><span aria-hidden="true" style="--letter-delay: 260ms">-</span><span aria-hidden="true" style="--letter-delay: 325ms">P</span><span aria-hidden="true" style="--letter-delay: 390ms">r</span><span aria-hidden="true" style="--letter-delay: 455ms">o</span></h1><p>Мессенджер, группы, отзывы, звёзды и акции</p></div>
+          <img class="brand-logo brand-logo--uploaded" src="${esc(loginLogoSrc())}" width="64" height="64" alt="Логотип Chat-Pro">
+          <div><h1 class="auth-brand-title" aria-label="Chat-Pro"><span aria-hidden="true" style="--letter-delay: 0ms">C</span><span aria-hidden="true" style="--letter-delay: 65ms">h</span><span aria-hidden="true" style="--letter-delay: 130ms">a</span><span aria-hidden="true" style="--letter-delay: 195ms">t</span><span aria-hidden="true" style="--letter-delay: 260ms">-</span><span aria-hidden="true" style="--letter-delay: 325ms">P</span><span aria-hidden="true" style="--letter-delay: 390ms">r</span><span aria-hidden="true" style="--letter-delay: 455ms">o</span></h1><p>Мессенджер, каналы, отзывы, звёзды и акции</p></div>
         </div>
         <div class="tabs"><button class="tab active" data-tab="login">Вход</button><button class="tab" data-tab="register">Регистрация</button></div>
         <form class="form" data-form="login">
-          <label>Username<input name="username" required placeholder="andrei"></label>
+          <label>Username или e-mail<input name="login" required autocomplete="username" placeholder="andrei или you@example.com"></label>
           <label>Пароль<span class="password-field"><input name="password" type="password" required><button class="button small" type="button" data-toggle-password>Показать</button></span></label>
           <button class="button primary">Войти</button>
           <button class="auth-link" type="button" data-open-password-reset>Забыли пароль?</button>
@@ -296,11 +349,10 @@ function renderAuth() {
         <form class="form hidden" data-form="register">
           <label>Имя<input name="name" required placeholder="Ваше имя"></label>
           <label>Username<input name="username" required placeholder="latin_123"></label>
-          <label>Способ регистрации<select name="contactType" data-registration-contact-type><option value="email">E-mail</option><option value="phone">Номер телефона</option></select></label>
-          <label data-registration-email>E-mail<input name="email" type="email" autocomplete="email" required placeholder="you@example.com"></label>
-          <label class="hidden" data-registration-phone>Номер телефона<input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+79991234567"></label>
+          <label>E-mail<input name="email" type="email" autocomplete="email" required placeholder="you@example.com"></label>
           <label>Пароль<span class="password-field"><input name="password" type="password" minlength="8" autocomplete="new-password" required><button class="button small" type="button" data-toggle-password>Показать</button></span></label>
-          <small class="muted">Код подтверждения придёт на выбранный контакт.</small>
+          <small class="muted">Код подтверждения придёт на e-mail.</small>
+          <label class="consent"><input name="agreementAccepted" type="checkbox" required> <span>Используя сайт, я принимаю <a href="${esc(publicLegal?.userAgreementUrl || "/requisites#user-agreement")}" target="_blank" rel="noopener">пользовательское соглашение</a>.</span></label>
           <button class="button primary">Создать аккаунт</button>
         </form>
         <div class="card"><b>Сохранённые аккаунты</b><div id="savedAccounts" class="grid" style="margin-top:10px"></div></div>
@@ -313,16 +365,6 @@ function renderAuth() {
   }));
   app.querySelector('[data-form="login"]').addEventListener("submit", (event) => submitAuth(event, "/api/login"));
   app.querySelector('[data-form="register"]').addEventListener("submit", submitRegistration);
-  const contactType = app.querySelector("[data-registration-contact-type]");
-  contactType.addEventListener("change", () => {
-    const isEmail = contactType.value === "email";
-    const email = app.querySelector("[data-registration-email]");
-    const phone = app.querySelector("[data-registration-phone]");
-    email.classList.toggle("hidden", !isEmail);
-    phone.classList.toggle("hidden", isEmail);
-    email.querySelector("input").required = isEmail;
-    phone.querySelector("input").required = !isEmail;
-  });
   app.querySelector("[data-open-password-reset]").addEventListener("click", openPasswordReset);
   app.querySelectorAll("[data-toggle-password]").forEach((button) => button.addEventListener("click", togglePasswordVisibility));
   renderSavedAccounts();
@@ -331,7 +373,10 @@ function renderAuth() {
 async function submitRegistration(event) {
   event.preventDefault();
   try {
-    const data = await api("/api/register", { method: "POST", body: Object.fromEntries(new FormData(event.currentTarget)) });
+    const form = new FormData(event.currentTarget);
+    const body = Object.fromEntries(form);
+    body.agreementAccepted = event.currentTarget.elements.agreementAccepted.checked;
+    const data = await api("/api/register", { method: "POST", body });
     openContactVerification(data.challengeId, "registration");
   } catch (error) { toast(error.message, true); }
 }
@@ -365,6 +410,7 @@ function openContactVerification(challengeId, purpose) {
   };
   setResendCooldown(60);
   resendButton.addEventListener("click", async () => {
+    audio.dataset.playbackAttempted = "true";
     try {
       const data = await api("/api/auth-challenges/resend", { method: "POST", body: { challengeId, purpose: apiPurpose } });
       toast(data.message);
@@ -476,7 +522,7 @@ function renderApp() {
             <span class="profile-menu-arrow" aria-hidden="true">⌄</span>
           </button>
           <nav class="nav menu-drawer${menuOpen ? " open" : ""}" aria-hidden="${!menuOpen}">
-            ${navButton("chats", "Чаты", "💬")}${navButton("profile", "Профиль", "◉")}${navButton("channels", "Создать канал", "")}${navButton("community", "Создать беседу", "👥")}${navButton("secret-chat", "Скрытый чат", "")}${navButton("stars", "Звёзды", "★")}${navButton("account-level", "Уровень аккаунта", "✦")}${navButton("reviews", "Отзывы о действиях людей", "★")}${navButton("activity-rewards", "Награды за активность", "✧")}${navButton("settings", "Настройки", "⚙")}
+            ${navButton("chats", "Чаты", "💬")}${navButton("profile", "Профиль", "◉")}${navButton("channels", "Создать канал", "")}${navButton("autoposting", "Автопостинг в соцсети", "")}${navButton("community", "Создать беседу", "👥")}${navButton("secret-chat", "Скрытый чат", "")}${navButton("stars", "Звёзды", "★")}${navButton("account-level", "Уровень аккаунта", "✦")}${navButton("reviews", "Отзывы о действиях людей", "★")}${navButton("activity-rewards", "Награды за активность", "✧")}${navButton("wallpapers", "Оформление диалогов", "")}${navButton("settings", "Настройки", "⚙")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a>
           </nav>
         </header>
         <div class="list" id="leftList"></div>
@@ -522,7 +568,7 @@ function openMenuSection(section) {
 function openMobileChatMenu() {
   const overlay = document.createElement("div");
   overlay.className = "mobile-chat-menu-overlay";
-  overlay.innerHTML = `<section class="mobile-chat-menu" role="dialog" aria-modal="true" aria-label="Меню чата"><header><div><b>Меню</b><small>Навигация по Chat-Pro</small></div><button type="button" data-close-mobile-chat-menu aria-label="Закрыть меню">×</button></header><div class="mobile-chat-menu__actions"><button class="mobile-chat-menu__chats" type="button" data-mobile-chat-list>${navIcon("chats")}<span>Все чаты</span></button>${["profile", "channels", "community", "secret-chat", "stars", "account-level", "reviews", "activity-rewards", "settings"].map((section) => navButton(section, ({ profile: "Профиль", channels: "Создать канал", community: "Создать беседу", "secret-chat": "Скрытый чат", stars: "Звёзды", "account-level": "Уровень аккаунта", reviews: "Отзывы о действиях людей", "activity-rewards": "Награды за активность", settings: "Настройки" })[section], "")).join("")}</div></section>`;
+  overlay.innerHTML = `<section class="mobile-chat-menu" role="dialog" aria-modal="true" aria-label="Меню чата"><header><div><b>Меню</b><small>Навигация по Chat-Pro</small></div><button type="button" data-close-mobile-chat-menu aria-label="Закрыть меню">×</button></header><div class="mobile-chat-menu__actions"><button class="mobile-chat-menu__chats" type="button" data-mobile-chat-list>${navIcon("chats")}<span>Все чаты</span></button>${["profile", "channels", "autoposting", "community", "secret-chat", "stars", "account-level", "reviews", "activity-rewards", "wallpapers", "settings"].map((section) => navButton(section, ({ profile: "Профиль", channels: "Создать канал", autoposting: "Автопостинг в соцсети", community: "Создать беседу", "secret-chat": "Скрытый чат", stars: "Звёзды", "account-level": "Уровень аккаунта", reviews: "Отзывы о действиях людей", "activity-rewards": "Награды за активность", wallpapers: "Оформление диалогов", settings: "Настройки" })[section], "")).join("")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a></div></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-mobile-chat-menu]").addEventListener("click", close);
@@ -547,14 +593,18 @@ function navIcon(id) {
     channels: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 20 5l-4.6 14-4.15-5.05L4 12.5Z"/><path d="m11.25 13.95 2.55-2.55"/></svg>',
     "secret-chat": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="10" width="13" height="10" rx="2.5"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"/><path d="M12 14v2"/></svg>',
     profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.25"/><circle cx="12" cy="12" r="4.7"/></svg>',
+    autoposting: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.68"/><path d="M20 4.5v4.18h-4.18"/><path d="M20 12a8 8 0 0 1-13.66 5.66L4 15.32"/><path d="M4 19.5v-4.18h4.18"/><path d="M9 12h6M12 9v6"/></svg>',
     stars: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.7 5.55 6.12.88-4.43 4.31 1.05 6.1L12 16.77l-5.44 2.86 1.05-6.1-4.43-4.31 6.12-.88L12 2.8Z"/></svg>',
     "account-level": '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2 14.2 9.8 20.8 12l-6.6 2.2L12 20.8l-2.2-6.6L3.2 12l6.6-2.2L12 3.2Z"/></svg>',
     reviews: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3" width="17" height="18" rx="3"/><path d="m12 7 1.05 2.13 2.35.34-1.7 1.65.4 2.33L12 12.35l-2.1 1.1.4-2.33-1.7-1.65 2.35-.34L12 7Z"/><path d="M7.5 17h9"/></svg>',
     "activity-rewards": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 14.05 9.95 20.5 12l-6.45 2.05L12 20.5l-2.05-6.45L3.5 12l6.45-2.05L12 3.5Z"/></svg>',
+    wallpapers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m5.5 16 4.2-4.1 3.2 2.8 2.2-2 3.1 3.3"/></svg>',
     settings: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.35 3h3.3l.52 2.15c.42.16.82.33 1.19.54l1.93-1.15 2.33 2.33-1.15 1.93c.21.37.39.77.54 1.19l2.15.52v3.3l-2.15.52c-.15.42-.33.82-.54 1.19l1.15 1.93-2.33 2.33-1.93-1.15c-.37.21-.77.39-1.19.54L13.65 21h-3.3l-.52-2.15c-.42-.15-.82-.33-1.19-.54l-1.93 1.15-2.33-2.33 1.15-1.93c-.21-.37-.39-.77-.54-1.19L2.84 13.5v-3.3l2.15-.52c.15-.42.33-.82.54-1.19L4.38 6.56l2.33-2.33 1.93 1.15c.37-.21.77-.39 1.19-.54L10.35 3Zm1.65 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>',
   };
   return icons[id] || "";
 }
+
+function informationIcon() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 10.7v5.1M12 7.7h.01"/></svg>'; }
 
 function navButton(id, label, icon) { return `<button class="nav-button${activeSection === id ? " active" : ""}" data-section="${id}"><span class="nav-button__icon" aria-hidden="true">${navIcon(id) || icon}</span><span class="nav-button__label">${label}</span></button>`; }
 
@@ -563,31 +613,35 @@ function renderLeft() {
   box.dataset.section = activeSection;
   if (activeSection === "chats") return renderChatsList(box);
   if (activeSection === "archive") return renderArchiveList(box);
-  if (activeSection === "groups") return renderGroupsList(box, "group");
   if (activeSection === "community") return renderGroupsList(box, "community");
   if (activeSection === "channels") return renderGroupsList(box, "channel");
+  if (activeSection === "autoposting") return renderAutopostingPanel(box);
   if (activeSection === "stars") return renderStarsPanel(box);
   if (activeSection === "account-level") return renderAccountLevelPanel(box);
   if (activeSection === "reviews") return renderReviewsPanel(box);
   if (activeSection === "activity-rewards") return renderActivityRewardsPanel(box);
+  if (activeSection === "wallpapers") return renderWallpaperSettings(box);
   renderSettingsPanel(box, settingsSection);
 }
 
 function renderChatsList(box) {
   const filters = [["all", "Все"], ["direct", "Диалоги"], ["community", "Беседы"], ["channel", "Каналы"]];
   const chats = visibleChats(false).filter((chat) => chatFilter === "all" || chat.type === chatFilter);
-  const recommendedChannels = chatFilter === "channel"
+  const hasOnlySavedChats = chatFilter === "all" && !chats.some((chat) => chat.type !== "saved");
+  const recommendedChannels = (chatFilter === "channel" || hasOnlySavedChats)
     ? (state.recommended || []).map((rec) => state.chats.find((chat) => chat.id === rec.chat_id && chat.type === "channel" && !isMember(chat.id))).filter(Boolean)
     : [];
   const storyStrip = directStoryStripHtml();
   box.dataset.dialogFilter = chatFilter;
-  const channelsHtml = chats.map(chatRow).join("") || '<p class="muted">Вы пока не подписаны ни на один канал.</p>';
+  const channelsHtml = chats.map(chatRow).join("") || (recommendedChannels.length ? '<p class="muted">Здесь появятся ваши диалоги. А пока — интересные каналы.</p>' : '<p class="muted">Пока нет диалогов.</p>');
   const recommendationsHtml = recommendedChannels.length ? `<section class="recommended-channels"><div class="recommended-channels__title"><b>Рекомендованные каналы</b><span>Подборка для вас</span></div>${recommendedChannels.map(recommendedChannelRow).join("")}</section>` : "";
-  box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="userSearch" placeholder="username"></label><div id="searchResults"></div>${channelsHtml}${recommendationsHtml}`;
+  const activityPromoHtml = hasOnlySavedChats ? `<section class="activity-rewards-promo"><b>Проявляйте активность и получайте звёзды!</b><button class="button small" type="button" data-open-activity-rewards>Подробнее</button></section>` : "";
+  box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="userSearch" placeholder="username"></label><div id="searchResults"></div>${channelsHtml}${recommendationsHtml}${activityPromoHtml}`;
   box.querySelectorAll("[data-chat-filter]").forEach((button) => button.addEventListener("click", () => { chatFilter = button.dataset.chatFilter; renderChatsList(box); }));
   bindChatRows(box);
   bindStoriesStrip(box);
   box.querySelector("#userSearch").addEventListener("input", searchUsers);
+  box.querySelector("[data-open-activity-rewards]")?.addEventListener("click", () => openMenuSection("activity-rewards"));
   box.querySelectorAll("[data-open-recommended-channel]").forEach((button) => button.addEventListener("click", () => {
     activeChatId = button.dataset.openRecommendedChannel;
     scrollChatToLatest = true;
@@ -603,6 +657,37 @@ function renderArchiveList(box) {
   const chats = visibleChats(true);
   box.innerHTML = `<div class="panel-title"><b>Архив</b><span class="muted">${chats.length}</span></div><p class="muted">Здесь находятся чаты, которые вы убрали из общего списка.</p>${chats.map(chatRow).join("") || '<p class="muted">Архив пока пуст.</p>'}`;
   bindChatRows(box);
+}
+
+function renderAutopostingPanel(box) {
+  const channels = state.chats.filter((chat) => chat.type === "channel" && chat.ownerId === state.me.id);
+  const sourceCount = (channelId) => state.telegramChannelLinks.filter((item) => item.channel_id === channelId).length
+    + state.rssChannelLinks.filter((item) => item.channel_id === channelId).length
+    + state.vkChannelLinks.filter((item) => item.channel_id === channelId).length;
+  box.innerHTML = `<section class="autoposting-panel"><div class="panel-title"><div><b>Автопостинг в соцсети</b><small>Импортируйте новые публикации в свои каналы Chat‑Pro.</small></div></div><section class="card autoposting-panel__notice"><b>Подключённые возможности</b><p>RSS, VK и Telegram уже публикуются в выбранный канал как обычные посты. Для материалов из сайта и VK показывается кликабельный «Источник».</p><p class="muted">Вход через VK / Telegram / MAX и публикация обратно в эти сервисы появятся только после подключения их официальных приложений. Сейчас эти сервисы не имитируются.</p></section>${channels.length ? `<div class="autoposting-channel-list">${channels.map((chat) => {
+    const rss = state.rssChannelLinks.filter((item) => item.channel_id === chat.id).length;
+    const vk = state.vkChannelLinks.filter((item) => item.channel_id === chat.id).length;
+    const telegram = state.telegramChannelLinks.some((item) => item.channel_id === chat.id);
+    const scheduled = (state.scheduledPosts || []).filter((item) => item.chat_id === chat.id).length;
+    return `<article class="card autoposting-channel"><div class="autoposting-channel__head">${chatAvatarHtml(chat)}<div><b>${esc(chat.title)}</b><small>${sourceCount(chat.id) ? `Подключено источников: ${sourceCount(chat.id)}` : "Источники не подключены"}</small></div><button class="button small" type="button" data-open-autopost-channel="${chat.id}">Открыть</button></div><div class="autoposting-channel__sources"><button type="button" data-autopost-source="telegram" data-autopost-channel="${chat.id}">Telegram${telegram ? " · подключён" : ""}</button><button type="button" data-autopost-source="rss" data-autopost-channel="${chat.id}">Сайты / RSS${rss ? ` · ${rss}` : ""}</button><button type="button" data-autopost-source="vk" data-autopost-channel="${chat.id}">VK${vk ? ` · ${vk}` : ""}</button><button type="button" data-autopost-schedule="${chat.id}">План · ${scheduled}</button></div></article>`;
+  }).join("")}</div>` : '<section class="card"><b>Нет собственных каналов</b><p class="muted">Сначала создайте канал, затем вернитесь сюда, чтобы подключить источники.</p><button class="button primary small" type="button" data-create-autopost-channel>Создать канал</button></section>'}</section>`;
+  box.querySelectorAll("[data-autopost-source]").forEach((button) => button.addEventListener("click", () => {
+    const chat = state.chats.find((item) => item.id === button.dataset.autopostChannel);
+    if (!chat) return;
+    if (button.dataset.autopostSource === "telegram") openChannelTelegramDialog(chat, () => renderAutopostingPanel(box));
+    if (button.dataset.autopostSource === "rss") openChannelRssDialog(chat, () => renderAutopostingPanel(box));
+    if (button.dataset.autopostSource === "vk") openChannelVkDialog(chat, () => renderAutopostingPanel(box));
+  }));
+  box.querySelectorAll("[data-autopost-schedule]").forEach((button) => button.addEventListener("click", () => {
+    const chat = state.chats.find((item) => item.id === button.dataset.autopostSchedule);
+    if (chat) openChannelScheduleDialog(chat, () => renderAutopostingPanel(box));
+  }));
+  box.querySelectorAll("[data-open-autopost-channel]").forEach((button) => button.addEventListener("click", () => {
+    activeChatId = button.dataset.openAutopostChannel;
+    scrollChatToLatest = true;
+    renderApp();
+  }));
+  box.querySelector("[data-create-autopost-channel]")?.addEventListener("click", () => openMenuSection("channels"));
 }
 
 function bindChatRows(box) {
@@ -949,24 +1034,63 @@ function reviewItemHtml(review) {
 
 const ACTIVITY_CRITERIA_LABELS = {
   stars_balance: "звёзд на балансе", direct_chats: "личных диалогов", channels_joined: "подписок на каналы",
-  communities_joined: "бесед", groups_joined: "групп", channels_created: "созданных каналов",
-  communities_created: "созданных бесед", groups_created: "созданных групп", channel_subscribers: "подписчиков в одном канале",
-  community_subscribers: "участников в одной беседе", group_subscribers: "участников в одной группе", messages: "сообщений",
+  communities_joined: "бесед", channels_created: "созданных каналов",
+  communities_created: "созданных бесед", channel_subscribers: "подписчиков в одном канале",
+  community_subscribers: "участников в одной беседе", messages: "сообщений",
   posts: "публикаций", stories: "сторис", reviews: "отзывов", donations_sent: "отправленных донатов",
   stars_donated: "отправленных звёзд", donations_received: "полученных донатов", login_streak: "дней подряд в приложении",
+  completed_calls: "принятых звонков", call_partners: "уникальных собеседников в принятых звонках",
+  chat_pro_review_video: "видеообзоров Chat‑Pro в своём канале",
 };
 
 function activityCriteriaHtml(criteria = {}, progress = {}) {
   return `<ul class="activity-reward__criteria">${Object.entries(criteria).map(([key, target]) => `<li><span>${esc(ACTIVITY_CRITERIA_LABELS[key] || key)}</span><b>${Math.min(Number(progress[key]) || 0, Number(target))} / ${target}</b></li>`).join("")}</ul>`;
 }
 
+function rewardBenefitsHtml(reward = {}) {
+  const parts = [];
+  if (Number(reward.stars)) parts.push(`★ ${Number(reward.stars)}`);
+  if (Number(reward.recurringStars)) parts.push(`★ ${Number(reward.recurringStars)} раз в ${Number(reward.recurringIntervalDays)} дн. в течение ${Number(reward.recurringDurationDays)} дн.`);
+  if (Number(reward.starPackageDiscountPercent)) parts.push(`Скидка ${Number(reward.starPackageDiscountPercent)}% на пакеты звёзд`);
+  const raisedLimits = Object.entries(reward.limits || {}).filter(([, value]) => Number(value) > 0);
+  if (raisedLimits.length) parts.push(`Личные лимиты: ${raisedLimits.map(([key, value]) => `${limitLabel(key)} — ${value}`).join(", ")}`);
+  if (reward.accountLevelId) parts.push(`Уровень: ${state.accountLevel?.levels?.find((level) => level.id === reward.accountLevelId)?.title || reward.accountLevelId}`);
+  if (reward.recommendOwnChannel) parts.push("Свой канал в рекомендациях");
+  return parts.join(" · ") || "Награда не предусмотрена";
+}
+
+function openActivityRewardChannelPicker(reward) {
+  const channels = state.chats.filter((chat) => chat.type === "channel" && chat.ownerId === state.me.id && !(state.recommended || []).some((item) => item.chat_id === chat.id));
+  if (!channels.length) {
+    toast("Создайте свой канал, который ещё не добавлен в рекомендации.", true);
+    return;
+  }
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Выбор канала для рекомендаций"><header><div><b>Добавить канал в рекомендации</b><small>Выберите один свой канал. После получения награды он станет виден в подборке рекомендаций.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="member-manager__list">${channels.map((channel) => `<button class="member-manager__user" type="button" data-reward-channel-id="${esc(channel.id)}">${chatAvatarHtml(channel)}<span><b>${esc(channel.title)}</b><small>${channel.subscriberCount} подписчиков</small></span><em>Выбрать</em></button>`).join("")}</div></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  overlay.querySelectorAll("[data-reward-channel-id]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      await api("/api/activity-rewards/claim", { method: "POST", body: { rewardId: reward.id, channelId: button.dataset.rewardChannelId } });
+      close();
+      toast("Награда начислена, канал добавлен в рекомендации.");
+      await refresh();
+    } catch (error) { toast(error.message, true); }
+  }));
+}
+
 function renderActivityRewardsPanel(box) {
   const rewards = state.activityRewards || [];
   const activeRewards = rewards.filter((reward) => !reward.claimed);
   const completedRewards = rewards.filter((reward) => reward.claimed);
-  const rewardCard = (reward) => `<article class="card activity-reward${reward.available ? " activity-reward--available" : ""}${reward.claimed ? " activity-reward--claimed" : ""}"><div class="activity-reward__head"><div><h3>${esc(reward.title)}</h3>${reward.description ? `<p class="muted">${esc(reward.description)}</p>` : ""}</div><span class="badge">${reward.reward_stars ? `★ ${reward.reward_stars}` : ""}${reward.reward_stars && reward.premium_days ? " · " : ""}${reward.premium_days ? `Premium ${reward.premium_days} дн.` : ""}</span></div><b class="activity-reward__label">${reward.claimed ? "Условия выполнены" : "Нужно выполнить"}</b>${activityCriteriaHtml(reward.criteria, reward.progress)}<button class="button primary small" data-claim-activity-reward="${esc(reward.id)}" ${reward.claimed || !reward.available ? "disabled" : ""}>${reward.claimed ? "Награда получена" : reward.available ? "Получить" : "Условия не выполнены"}</button></article>`;
+  const rewardCard = (reward) => `<article class="card activity-reward${reward.available ? " activity-reward--available" : ""}${reward.claimed ? " activity-reward--claimed" : ""}"><div class="activity-reward__head"><div><h3>${esc(reward.title)}</h3>${reward.description ? `<p class="muted">${esc(reward.description)}</p>` : ""}</div></div><p class="muted"><b>Награда:</b> ${esc(rewardBenefitsHtml(reward.reward || { stars: reward.reward_stars }))}</p><b class="activity-reward__label">${reward.claimed ? "Условия выполнены" : reward.levelAvailable === false ? "Ваш уровень уже выше" : "Нужно выполнить"}</b>${activityCriteriaHtml(reward.criteria, reward.progress)}<button class="button primary small" data-claim-activity-reward="${esc(reward.id)}" ${reward.claimed || !reward.available ? "disabled" : ""}>${reward.claimed ? "Награда получена" : reward.available ? "Получить" : reward.levelAvailable === false ? "Уровень уже выше" : "Условия не выполнены"}</button></article>`;
   box.innerHTML = `<div class="panel-title"><div><b>Актуальные акции</b><small>Условия проверяются сервером, каждую награду можно получить только один раз.</small></div></div>${activeRewards.map(rewardCard).join("") || '<div class="card"><p class="muted">Актуальных наград пока нет.</p></div>'}${completedRewards.length ? `<div class="activity-rewards-completed-title"><b>Полученные награды</b><span>${completedRewards.length}</span></div>${completedRewards.map(rewardCard).join("")}` : ""}`;
   box.querySelectorAll("[data-claim-activity-reward]").forEach((button) => button.addEventListener("click", async (event) => {
+    const reward = rewards.find((item) => item.id === event.currentTarget.dataset.claimActivityReward);
+    if (reward?.reward?.recommendOwnChannel) return openActivityRewardChannelPicker(reward);
     try { await api("/api/activity-rewards/claim", { method: "POST", body: { rewardId: event.currentTarget.dataset.claimActivityReward } }); toast("Награда начислена."); await refresh(); }
     catch (error) { toast(error.message, true); }
   }));
@@ -974,26 +1098,115 @@ function renderActivityRewardsPanel(box) {
 
 function renderStarsPanel(box) {
   const transactions = state.starTransactions || [];
+  const yookassa = state.yookassa || { available: false, packages: [] };
+  const packagesHtml = yookassa.available
+    ? `<div class="star-packages">${(yookassa.packages || []).map((item) => starPackageButtonHtml(item)).join("")}</div>`
+    : '<p class="muted">Покупка звёзд через ЮKassa скоро будет доступна.</p>';
   const transactionHtml = transactions.map((item) => {
     const amount = Number(item.amount) || 0;
     const sign = amount > 0 ? "+" : "−";
     return `<div class="star-transaction ${amount > 0 ? "income" : "expense"}"><div><b>${esc(item.description)}</b><span>${starDateFmt(item.created_at)}</span></div><strong><span>${sign} ★</span><span>${Math.abs(amount)}</span></strong></div>`;
   }).join("") || '<p class="muted">Операций пока нет. Здесь появятся полученные и отправленные звёзды, награды и покупки.</p>';
-  box.innerHTML = `<div class="panel-title"><b>Звёзды</b></div><div class="card stars-balance"><i class="stars-balance__spark stars-balance__spark--left" aria-hidden="true">✦</i><i class="stars-balance__spark stars-balance__spark--right" aria-hidden="true">★</i><div class="stars-balance__copy"><span>Ваш баланс</span><strong><i aria-hidden="true">★</i>${state.me.stars}</strong><p>Получайте звёзды за активность и награды, отправляйте их другим пользователям и тратьте на премиум.</p></div></div><div class="card"><b>История операций</b><div class="star-transactions">${transactionHtml}</div></div>`;
+  box.innerHTML = `<div class="panel-title"><b>Звёзды</b></div><div class="card stars-balance"><i class="stars-balance__spark stars-balance__spark--left" aria-hidden="true">✦</i><i class="stars-balance__spark stars-balance__spark--right" aria-hidden="true">★</i><div class="stars-balance__copy"><span>Ваш баланс</span><strong><i aria-hidden="true">★</i>${state.me.stars}</strong><p>Получайте звёзды за активность и награды, отправляйте их другим пользователям и тратьте на доступные функции.</p></div></div><div class="card"><b>Купить звёзды</b><p class="muted">Оплата проходит на защищённой странице ЮKassa. Звёзды начисляются только после проверки оплаты сервером.</p>${Number(yookassa.discountPercent) ? `<p class="star-package-discount">Ваша скидка на все пакеты: ${Number(yookassa.discountPercent)}%</p>` : ""}${packagesHtml}</div><div class="card"><b>История операций</b><div class="star-transactions">${transactionHtml}</div></div>`;
+  box.querySelectorAll("[data-buy-stars]").forEach((button) => {
+    const openPurchase = (event) => {
+      if (event.type === "pointerup" && event.button !== 0) return;
+      if (event.type === "click" && button.dataset.starPurchasePointerHandled === "true") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.type === "pointerup") {
+        button.dataset.starPurchasePointerHandled = "true";
+        window.setTimeout(() => { delete button.dataset.starPurchasePointerHandled; }, 0);
+      }
+      try { openStarPurchaseConsent(button.dataset.buyStars); }
+      catch (error) { toast(error.message || "Не удалось открыть покупку.", true); }
+    };
+    button.addEventListener("pointerup", openPurchase);
+    button.addEventListener("click", openPurchase);
+  });
+}
+
+function starPackageButtonHtml(item, attribute = "data-buy-stars") {
+  const originalPrice = String(item.originalPrice || item.price);
+  const hasDiscount = originalPrice !== String(item.price);
+  const stars = Number(item.stars);
+  const price = `${esc(item.price)} ₽`;
+  return `<button class="button star-package" type="button" ${attribute}="${esc(item.id)}" aria-label="Купить ${stars} звёзд за ${price}"><b class="star-package__stars">★ ${stars} звёзд</b><span class="star-package__price">${hasDiscount ? `<s>${esc(originalPrice)} ₽</s>` : ""}<strong>Цена: ${price}</strong></span></button>`;
+}
+
+function openStarPurchaseConsent(packageId, channel = null) {
+  const termsUrl = state.settings?.public_legal?.purchaseTermsUrl || "/requisites#purchase-terms";
+  const bonus = channel ? channelStarBonus(channel) : null;
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Условия покупки"><header><div><b>Подтверждение покупки</b><small>Перед переходом к оплате ознакомьтесь с условиями.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header>${bonus ? `<div class="channel-purchase-note"><b>${esc(channel.title)} получит бонус</b><span>${esc(channelBonusDescription(bonus))}</span></div>` : ""}<form class="form" data-star-purchase-consent><label class="consent"><input name="purchaseTermsAccepted" type="checkbox" required> <span>Я принимаю <a href="${esc(termsUrl)}" target="_blank" rel="noopener">условия покупки</a>.</span></label><button class="button primary" type="submit" disabled>Перейти к оплате</button></form></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  const form = overlay.querySelector("[data-star-purchase-consent]");
+  const checkbox = form.elements.purchaseTermsAccepted;
+  const submitButton = form.querySelector("button[type=submit]");
+  checkbox.addEventListener("change", () => { submitButton.disabled = !checkbox.checked; });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    submitButton.disabled = true;
+    try {
+      const payment = await api("/api/yookassa/payments", { method: "POST", body: { packageId, channelId: channel?.id, purchaseTermsAccepted: true } });
+      window.location.assign(payment.confirmationUrl);
+    } catch (error) {
+      submitButton.disabled = false;
+      toast(error.message, true);
+    }
+  });
+}
+
+function channelStarBonus(channel) {
+  const type = channel?.settings?.starBonusType === "money" ? "money" : "stars";
+  const percent = Math.max(1, Math.min(100, Number(channel?.settings?.starBonusPercent) || 10));
+  return { type, percent };
+}
+
+function channelBonusDescription(bonus) {
+  return bonus.type === "money"
+    ? `Владелец получит ${bonus.percent}% от суммы покупки к выплате.`
+    : `Владелец получит ${bonus.percent}% от купленных звёзд на баланс.`;
+}
+
+function starButtonIcon() {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.72 5.52 6.09.88-4.4 4.28 1.04 6.05L12 16.68l-5.45 2.85 1.04-6.05-4.4-4.28 6.09-.88L12 2.8Z"/><path d="m12 6.15 1.56 3.16 3.49.5-2.53 2.47.6 3.48L12 14.13l-3.12 1.63.6-3.48-2.53-2.47 3.49-.5L12 6.15Z"/></svg>';
+}
+
+function attachmentButtonIcon() {
+  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.15 12.2 6.52-6.52a3.25 3.25 0 1 1 4.6 4.6l-8.06 8.06a5.35 5.35 0 0 1-7.57-7.57l7.43-7.43"/><path d="m8.1 15.1 7.02-7.02a1.78 1.78 0 1 1 2.52 2.52l-7.02 7.02a1.78 1.78 0 0 1-2.52-2.52Z"/><path d="m5.55 17.65 1.1 1.1"/></svg>';
+}
+
+function openChannelStarPurchase(channel) {
+  const packages = state.yookassa?.packages || [];
+  if (!state.yookassa?.available) {
+    toast("Оплата ЮKassa пока недоступна.", true);
+    return;
+  }
+  const bonus = channelStarBonus(channel);
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Купить звёзды через канал"><header><div><b>Купить звёзды</b><small>${esc(channel.title)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-purchase-note"><b>Бонус каналу</b><span>${esc(channelBonusDescription(bonus))}</span></div><p class="muted">Оплата пройдёт на защищённой странице ЮKassa. Звёзды начислятся после проверки оплаты сервером.</p><div class="star-packages">${packages.map((item) => starPackageButtonHtml(item, "data-channel-star-package")).join("")}</div></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  overlay.querySelectorAll("[data-channel-star-package]").forEach((button) => button.addEventListener("click", () => {
+    close();
+    openStarPurchaseConsent(button.dataset.channelStarPackage, channel);
+  }));
 }
 
 function renderAccountLevelPanel(box) {
   const level = state.accountLevel || { current: { title: "Обычный", description: "Стандартный аккаунт.", limits: {} }, activity: {} };
   const current = level.current;
   const next = level.next;
-  const names = { messages: "сообщений", posts: "постов", stories: "сторис", reviews: "отзывов", groups: "групп", communities: "бесед", channels: "каналов" };
+  const names = { ...ACTIVITY_CRITERIA_LABELS, communities: "созданных бесед", channels: "созданных каналов" };
   const requirement = (criteria = {}) => Object.entries(criteria).map(([key, value]) => `<li>${Math.min(level.activity[key] || 0, value)} / ${value} ${names[key] || key}</li>`).join("") || "<li>Все условия выполнены</li>";
-  const rewardHtml = (reward = {}) => {
-    const parts = [];
-    if (Number(reward.stars)) parts.push(`★ ${Number(reward.stars)}`);
-    if (Number(reward.premiumDays)) parts.push(`Premium ${Number(reward.premiumDays)} дн.`);
-    return parts.join(" · ") || "Награда не предусмотрена";
-  };
   const limitsHtml = (limits = {}) => `<ul class="level-limits__list">${Object.entries(limits).map(([key, value]) => `<li>${esc(limitLabel(key))}: <b>${esc(value)}</b></li>`).join("") || "<li>Без дополнительных ограничений</li>"}</ul>`;
   const limitsButton = (limits, label) => `<button class="button small level-limits__toggle" type="button" data-toggle-level-limits aria-expanded="false">${label}</button><div class="level-limits" hidden>${limitsHtml(limits)}</div>`;
   const limits = level.limits || current.limits || {};
@@ -1001,10 +1214,11 @@ function renderAccountLevelPanel(box) {
     const reward = item.reward || {};
     const isNext = item.id === next?.id;
     const purchase = item.starsPrice > 0 && !item.unlocked ? `<button class="button small" data-buy-level="${esc(item.id)}" ${item.id !== next?.id ? "disabled" : ""}>Купить за ★ ${item.starsPrice}</button>` : "";
-    const claim = (Number(reward.stars) || Number(reward.premiumDays)) && item.unlocked ? `<button class="button primary small" data-claim-level="${esc(item.id)}" ${item.rewardClaimed ? "disabled" : ""}>${item.rewardClaimed ? "Награда получена" : `Забрать: ★ ${reward.stars || 0}${reward.premiumDays ? ` + Premium ${reward.premiumDays} дн.` : ""}`}</button>` : "";
-    return `<article class="card level-card${item.id === current.id ? " level-card--current" : ""}"><span class="badge">${item.id === current.id ? "Текущий" : item.unlocked ? "Открыт" : "Следующий уровень"}</span><h2>${esc(item.title)}</h2><p class="muted">${esc(item.description || "")}</p>${isNext ? `<div class="level-next-reward"><b>Награда за следующий уровень</b><span>${rewardHtml(reward)}</span></div>` : ""}${!item.unlocked ? `<b>Нужно выполнить</b><ul>${requirement(item.criteria)}</ul>` : ""}${isNext ? limitsButton(item.limits, "Показать лимиты уровня") : ""}${purchase}${claim}</article>`;
+    const hasReward = Number(reward.stars) || Number(reward.recurringStars) || Number(reward.starPackageDiscountPercent) || Object.values(reward.limits || {}).some((value) => Number(value) > 0);
+    const claim = hasReward && item.unlocked ? `<button class="button primary small" data-claim-level="${esc(item.id)}" ${item.rewardClaimed ? "disabled" : ""}>${item.rewardClaimed ? "Награда получена" : "Забрать награду"}</button>` : "";
+    return `<article class="card level-card${item.id === current.id ? " level-card--current" : ""}"><span class="badge">${item.id === current.id ? "Текущий" : item.unlocked ? "Открыт" : "Следующий уровень"}</span><h2>${esc(item.title)}</h2><p class="muted">${esc(item.description || "")}</p>${hasReward ? `<div class="level-next-reward"><b>Награда за уровень</b><span>${esc(rewardBenefitsHtml(reward))}</span></div>` : ""}${!item.unlocked ? `<b>Нужно выполнить</b><ul>${requirement(item.criteria)}</ul>` : ""}${limitsButton(item.limits, "Показать лимиты уровня")}${purchase}${claim}</article>`;
   }).join("");
-  box.innerHTML = `<div class="panel-title"><b>Уровень аккаунта</b></div><div class="card level-current-limits"><span class="badge">Действующие лимиты</span><p class="muted">Ограничения, доступные вам сейчас.</p>${limitsButton(limits, "Показать действующие лимиты")}</div>${levelCards}`;
+  box.innerHTML = `<div class="panel-title"><b>Уровень аккаунта</b></div><div class="card level-current-limits"><span class="badge">Действующие лимиты</span><p class="muted">Ограничения, доступные вам сейчас. Если вы получили награду за активность или уровень выше лимита в уровне, ваш лимит будет персонально повышен как на текущем, так и на новом уровне.</p>${limitsButton(limits, "Показать действующие лимиты")}</div>${levelCards}`;
   box.querySelectorAll("[data-claim-level]").forEach((button) => button.addEventListener("click", async (event) => { try { await api("/api/account-level/claim", { method: "POST", body: { levelId: event.currentTarget.dataset.claimLevel } }); toast("Награда за уровень получена."); await refresh(); } catch (error) { toast(error.message, true); } }));
   box.querySelectorAll("[data-buy-level]").forEach((button) => button.addEventListener("click", async (event) => { try { await api("/api/account-level/buy", { method: "POST", body: { levelId: event.currentTarget.dataset.buyLevel } }); toast("Уровень куплен."); await refresh(); } catch (error) { toast(error.message, true); } }));
   box.querySelectorAll("[data-toggle-level-limits]").forEach((button) => button.addEventListener("click", () => {
@@ -1026,9 +1240,7 @@ function renderSettingsPanel(box, section = "general") {
   box.innerHTML = `
     <div class="panel-title"><b>Настройки</b></div>
     <form class="card form" id="accountSettingsForm"><label>Username<input name="username" value="${esc(state.me.username)}" maxlength="20" autocomplete="username"></label><p class="muted">Используйте от 3 до 20 латинских символов, цифр или подчёркиваний.</p><button class="button primary">Сохранить username</button><button class="button danger" type="button" data-logout>Выйти из аккаунта</button></form>
-    <form class="card form" id="privacySettingsForm"><b>Приватность</b><label>Кто может добавлять меня в группы<select name="groupInvitePrivacy"><option value="everyone" ${state.me.groupInvitePrivacy === "everyone" ? "selected" : ""}>Все</option><option value="contacts" ${state.me.groupInvitePrivacy !== "everyone" && state.me.groupInvitePrivacy !== "nobody" ? "selected" : ""}>Только те, с кем есть личный диалог</option><option value="nobody" ${state.me.groupInvitePrivacy === "nobody" ? "selected" : ""}>Никто</option></select></label><button class="button small" type="submit">Сохранить приватность</button></form>
     <section class="settings-cards" aria-label="Разделы настроек">
-      <button class="settings-card settings-card--dialogs" type="button" data-settings-section="wallpapers"><span class="settings-card__art" aria-hidden="true"><i></i><i></i><i></i></span><span><b>Оформление диалогов</b><small>Тема, панели, сообщения и фоны</small></span><em>›</em></button>
       <button class="settings-card settings-card--archive" type="button" data-open-archive><span class="settings-card__art" aria-hidden="true"><i></i><i></i></span><span><b>Архив чатов</b><small>В архиве: ${visibleChats(true).length}</small></span><em>›</em></button>
     </section>
     <form class="card form" id="statusSettingsForm"><b>Мои статусы</b>${myStatuses().map((status) => `<label><input type="checkbox" data-hide-status="${status.id}" ${hidden.has(status.id) ? "checked" : ""}> Скрыть ${esc(status.icon)} ${esc(status.title)}</label>`).join("") || '<p class="muted">Статусов пока нет.</p>'}<button class="button small" type="submit">Сохранить видимость статусов</button></form>
@@ -1041,8 +1253,7 @@ function renderSettingsPanel(box, section = "general") {
         <div><b>Вы скрыли сторис</b>${hiddenStoryAuthorUsers.map((user) => `<button class="row" type="button" data-unhide-story-author="${user.id}">${avatarHtml(user)}<span>${esc(user.name)}<small>@${esc(user.username)}</small></span><em>Вернуть</em></button>`).join("") || '<p class="muted">Список пуст.</p>'}</div>
         <div><b>Ваши сторис скрыты от</b>${storyHiddenFromUsers.map((user) => `<button class="row" type="button" data-unhide-story-from="${user.id}">${avatarHtml(user)}<span>${esc(user.name)}<small>@${esc(user.username)}</small></span><em>Разрешить</em></button>`).join("") || '<p class="muted">Список пуст.</p>'}</div>
       </div>
-    </section>
-    <div class="card"><b>Премиум</b><p class="muted">Цена: ★ ${state.settings.premium?.starsPrice || 250} или ${state.settings.premium?.moneyPriceLabel || "оплата"}</p><button class="button primary small" data-buy-premium="stars">Купить за звёзды</button> <button class="button small" data-buy-premium="money">Купить за деньги (демо)</button></div>`;
+    </section>`;
   box.querySelector("#accountSettingsForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -1053,13 +1264,6 @@ function renderSettingsPanel(box, section = "general") {
   box.querySelector("[data-logout]").addEventListener("click", logout);
   box.querySelectorAll("[data-settings-section]").forEach((button) => button.addEventListener("click", (event) => { settingsSection = event.currentTarget.dataset.settingsSection; renderSettingsPanel(box, settingsSection); }));
   box.querySelector("[data-open-archive]").addEventListener("click", () => { activeSection = "archive"; renderApp(); });
-  box.querySelector("#privacySettingsForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await api("/api/preferences", { method: "POST", body: preferencePayload({ groupInvitePrivacy: form.get("groupInvitePrivacy") }) });
-    toast("Приватность сохранена.");
-    await refresh();
-  });
   box.querySelector("#statusSettingsForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const hiddenStatusIds = [...box.querySelectorAll("[data-hide-status]:checked")].map((input) => input.dataset.hideStatus);
@@ -1078,10 +1282,6 @@ function renderSettingsPanel(box, section = "general") {
   renderStoryPrivacyResults();
   box.querySelectorAll("[data-unhide-story-author]").forEach((btn) => btn.addEventListener("click", () => setStoryAuthorHidden(btn.dataset.unhideStoryAuthor, false)));
   box.querySelectorAll("[data-unhide-story-from]").forEach((btn) => btn.addEventListener("click", () => setStoryPrivacyHidden(btn.dataset.unhideStoryFrom, false)));
-  box.querySelectorAll("[data-buy-premium]").forEach((btn) => btn.addEventListener("click", async () => {
-    try { await api("/api/buy-premium", { method: "POST", body: { method: btn.dataset.buyPremium } }); toast("Премиум активирован."); await refresh(); }
-    catch (error) { toast(error.message, true); }
-  }));
 }
 
 function preferencePayload(overrides = {}) {
@@ -1090,12 +1290,13 @@ function preferencePayload(overrides = {}) {
     siteColor: state.me.siteColor || "#2aabee",
     siteBackground: state.me.siteBackground || "default",
     siteBackgroundData: state.me.siteBackgroundData || "",
-    dialogColor: state.me.dialogColor || "#ffffff",
+    dialogColor: state.me.dialogColor || "#dff9f9",
     otherDialogColor: state.me.otherDialogColor || "#ffffff",
     dialogPanelColor: state.me.dialogPanelColor || "#f4f8fc",
     dialogPanelStyle: state.me.dialogPanelStyle || "custom",
     dialogBubbleStyle: "custom",
     dialogFont: state.me.dialogFont || "business",
+    textScale: state.me.textScale || "system",
     chatBackground: state.me.chatBackground || "default",
     chatBackgroundData: state.me.chatBackgroundData || "",
     sidebarBackgroundData: state.me.sidebarBackgroundData || "",
@@ -1110,21 +1311,21 @@ function preferencePayload(overrides = {}) {
 }
 
 function renderWallpaperSettings(box) {
-  const currentWallpaper = state.me.chatBackground || "default";
+  const currentWallpaper = ["whatsapp", "live"].includes(state.me.chatBackground) ? "default" : state.me.chatBackground || "default";
   const currentFont = state.me.dialogFont || "business";
-  const bubbleColor = state.me.dialogColor || "#ffffff";
+  const currentTextScale = state.me.textScale || "system";
+  const bubbleColor = state.me.dialogColor || "#dff9f9";
   const otherBubbleColor = state.me.otherDialogColor || "#ffffff";
   const bubbleText = dialogBubbleTextColor(bubbleColor);
   const otherBubbleText = dialogBubbleTextColor(otherBubbleColor);
   const adminNightAppearance = defaultNightAppearance();
   const personalNightAppearance = effectiveNightAppearance();
   const usesPersonalNightAppearance = Boolean(state.me.nightAppearanceCustom);
-  box.innerHTML = `<div class="panel-title"><b>Оформление диалогов</b></div><form class="card form" id="wallpaperSettingsForm"><div class="dialog-color-controls"><label class="dialog-color-control">Цвет моих сообщений<input name="dialogColor" type="color" value="${esc(bubbleColor)}"><button class="dialog-color-control__button" type="button" data-open-dialog-color aria-label="Выбрать цвет моих сообщений"><span class="dialog-color-control__dot" data-dialog-color-dot style="--dialog-color: ${esc(bubbleColor)}"></span><span>Выбрать цвет</span></button></label><label class="dialog-color-control">Цвет сообщений собеседника<input name="otherDialogColor" type="color" value="${esc(otherBubbleColor)}"><button class="dialog-color-control__button" type="button" data-open-other-dialog-color aria-label="Выбрать цвет сообщений собеседника"><span class="dialog-color-control__dot" data-other-dialog-color-dot style="--dialog-color: ${esc(otherBubbleColor)}"></span><span>Выбрать цвет</span></button></label></div><label>Шрифт сообщений<select name="dialogFont">${DIALOG_FONTS.map((font) => `<option value="${font.id}" ${currentFont === font.id ? "selected" : ""}>${font.title}</option>`).join("")}</select></label><fieldset class="wallpaper-picker"><legend>Обои диалога</legend><p class="muted">Все варианты совпадают с палитрой оформления сайта. Нажмите на вариант — демо изменится сразу.</p><section class="wallpaper-chat-preview ${currentWallpaper === "custom" ? "chat-background-custom" : `chat-background-${currentWallpaper}`}" data-wallpaper-chat-preview style="--preview-own-bubble: ${bubbleColor}; --preview-own-text: ${bubbleText}; --preview-other-bubble: ${otherBubbleColor}; --preview-other-text: ${otherBubbleText}${currentWallpaper === "custom" && state.me.chatBackgroundData ? `; background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,.12)), url('${esc(state.me.chatBackgroundData)}')` : ""}"><header><span class="wallpaper-preview-avatar">А</span><span><b>Алексей</b><small>в сети</small></span></header><div class="wallpaper-preview-messages"><p class="wallpaper-preview-message">Привет! Как тебе новые обои?</p><p class="wallpaper-preview-message own" data-dialog-font-preview style="font-family: ${dialogMessageFont(currentFont)}">Очень красиво, выбираю этот вариант ✨</p><p class="wallpaper-preview-message">Так будет выглядеть ваш диалог.</p></div></section><div class="wallpaper-grid">${CHAT_WALLPAPERS.map((wallpaper) => `<label class="wallpaper-option${currentWallpaper === wallpaper.id ? " selected" : ""}"><input type="radio" name="chatBackground" value="${wallpaper.id}" ${currentWallpaper === wallpaper.id ? "checked" : ""}><span class="wallpaper-preview chat-background-${wallpaper.id}" aria-hidden="true"></span><span><b>${esc(wallpaper.title)}</b><small>${esc(wallpaper.description)}</small></span></label>`).join("")}</div></fieldset><label>Своя картинка<input name="chatBackgroundImage" type="file" accept="image/png,image/jpeg,image/webp"></label><p class="muted">Загруженная картинка заменит выбранный вариант. Для чёткости на большом экране выбирайте изображение от 1920 px по ширине.</p><button class="button primary">Сохранить оформление</button></form>`;
+  box.innerHTML = `<div class="panel-title"><b>Оформление диалогов</b></div><form class="card form" id="wallpaperSettingsForm"><div class="dialog-color-controls"><label class="dialog-color-control">Цвет моих сообщений<input name="dialogColor" type="color" value="${esc(bubbleColor)}"><button class="dialog-color-control__button" type="button" data-open-dialog-color aria-label="Выбрать цвет моих сообщений"><span class="dialog-color-control__dot" data-dialog-color-dot style="--dialog-color: ${esc(bubbleColor)}"></span><span>Выбрать цвет</span></button></label><label class="dialog-color-control">Цвет сообщений собеседника<input name="otherDialogColor" type="color" value="${esc(otherBubbleColor)}"><button class="dialog-color-control__button" type="button" data-open-other-dialog-color aria-label="Выбрать цвет сообщений собеседника"><span class="dialog-color-control__dot" data-other-dialog-color-dot style="--dialog-color: ${esc(otherBubbleColor)}"></span><span>Выбрать цвет</span></button></label></div><label>Шрифт сообщений<select name="dialogFont">${DIALOG_FONTS.map((font) => `<option value="${font.id}" ${currentFont === font.id ? "selected" : ""}>${font.title}</option>`).join("")}</select></label><label>Размер текста<select name="textScale"><option value="system" ${currentTextScale === "system" ? "selected" : ""}>Системный</option><option value="110" ${currentTextScale === "110" ? "selected" : ""}>Крупнее · 110%</option><option value="120" ${currentTextScale === "120" ? "selected" : ""}>Большой · 120%</option><option value="130" ${currentTextScale === "130" ? "selected" : ""}>Очень большой · 130%</option></select></label><fieldset class="wallpaper-picker"><legend>Обои диалога</legend><p class="muted">Все варианты совпадают с палитрой оформления сайта. Нажмите на вариант — демо изменится сразу.</p><section class="wallpaper-chat-preview ${currentWallpaper === "custom" ? "chat-background-custom" : `chat-background-${currentWallpaper}`}" data-wallpaper-chat-preview style="--preview-text-scale: ${({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[currentTextScale] || 1}; --preview-own-bubble: ${bubbleColor}; --preview-own-text: ${bubbleText}; --preview-other-bubble: ${otherBubbleColor}; --preview-other-text: ${otherBubbleText}${currentWallpaper === "custom" && state.me.chatBackgroundData ? `; background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,.12)), url('${esc(state.me.chatBackgroundData)}')` : ""}"><header><span class="wallpaper-preview-avatar">А</span><span><b>Алексей</b><small>в сети</small></span></header><div class="wallpaper-preview-messages" data-dialog-font-preview style="font-family: ${dialogMessageFont(currentFont)}"><p class="wallpaper-preview-message">Привет! Как тебе новые обои?</p><p class="wallpaper-preview-message own">Очень красиво, выбираю этот вариант ✨</p><p class="wallpaper-preview-message">Так будет выглядеть ваш диалог.</p></div></section><div class="wallpaper-grid">${CHAT_WALLPAPERS.map((wallpaper) => `<label class="wallpaper-option${currentWallpaper === wallpaper.id ? " selected" : ""}"><input type="radio" name="chatBackground" value="${wallpaper.id}" ${currentWallpaper === wallpaper.id ? "checked" : ""}><span class="wallpaper-preview chat-background-${wallpaper.id}" aria-hidden="true"></span><span><b>${esc(wallpaper.title)}</b><small>${esc(wallpaper.description)}</small></span></label>`).join("")}</div></fieldset><label>Своя картинка<input name="chatBackgroundImage" type="file" accept="image/png,image/jpeg,image/webp"></label><p class="muted">Загруженная картинка заменит выбранный вариант. Для чёткости на большом экране выбирайте изображение от 1920 px по ширине.</p><button class="button primary">Сохранить оформление</button></form>`;
   const form = box.querySelector("#wallpaperSettingsForm");
   box.querySelector(".panel-title").insertAdjacentHTML("afterbegin", '<button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button>');
-  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box, settingsSection); });
+  box.querySelector("[data-settings-back]").addEventListener("click", () => { activeSection = "chats"; renderApp(); });
   form.insertAdjacentHTML("afterbegin", `<fieldset class="dialog-theme-picker"><legend>Режим</legend><div class="theme-mode-options"><label><input type="radio" name="theme" value="light" ${state.me.theme !== "dark" ? "checked" : ""}><span class="theme-mode-option theme-mode-option--light"><i>☀</i><b>Дневной</b><small>Светлый интерфейс</small></span></label><label><input type="radio" name="theme" value="dark" ${state.me.theme === "dark" ? "checked" : ""}><span class="theme-mode-option theme-mode-option--dark"><i>☾</i><b>Ночной</b><small>Мягкий тёмный интерфейс</small></span></label></div></fieldset>`);
-  const dialogColorControls = form.querySelector(".dialog-color-controls");
   form.querySelector(".dialog-theme-picker").insertAdjacentHTML("afterend", `<fieldset class="night-appearance-picker"><legend>Подсветка ночного режима</legend><p class="muted">Цвет обводок и мягкого свечения для кнопок, полей и меню. В дневном режиме не применяется.</p><label class="night-appearance-toggle"><input name="nightAppearanceCustom" type="checkbox" ${usesPersonalNightAppearance ? "checked" : ""}> Использовать мои цвета вместо настроек администратора</label><div class="dialog-color-controls"><label class="dialog-color-control">Цвет обводок<input name="nightOutlineColor" type="color" value="${esc(personalNightAppearance.outlineColor)}"><button class="dialog-color-control__button" type="button" data-open-night-outline-color aria-label="Выбрать цвет обводок"><span class="dialog-color-control__dot" data-night-outline-color-dot style="--dialog-color: ${esc(personalNightAppearance.outlineColor)}"></span><span>Выбрать цвет</span></button></label><label class="dialog-color-control">Цвет свечения<input name="nightGlowColor" type="color" value="${esc(personalNightAppearance.glowColor)}"><button class="dialog-color-control__button" type="button" data-open-night-glow-color aria-label="Выбрать цвет свечения"><span class="dialog-color-control__dot" data-night-glow-color-dot style="--dialog-color: ${esc(personalNightAppearance.glowColor)}"></span><span>Выбрать цвет</span></button></label></div><label class="night-glow-intensity">Яркость свечения <output data-night-glow-intensity-output>${personalNightAppearance.glowIntensity}%</output><input name="nightGlowIntensity" type="range" min="0" max="100" step="1" value="${personalNightAppearance.glowIntensity}"></label><small class="muted" data-night-appearance-defaults>По умолчанию администратора: обводки ${esc(adminNightAppearance.outlineColor)}, свечение ${esc(adminNightAppearance.glowColor)}, ${adminNightAppearance.glowIntensity}%.</small></fieldset>`);
   const wallpaperPreview = box.querySelector("[data-wallpaper-chat-preview]");
   const colorDot = box.querySelector("[data-dialog-color-dot]");
@@ -1175,9 +1376,13 @@ function renderWallpaperSettings(box) {
   form.elements.nightGlowColor.addEventListener("input", updateNightAppearancePreview);
   form.elements.nightGlowIntensity.addEventListener("input", updateNightAppearancePreview);
   form.elements.nightAppearanceCustom.addEventListener("change", syncNightAppearanceControls);
+  updateBubblePreview();
   updateNightAppearancePreview();
   syncNightAppearanceControls();
   form.elements.dialogFont?.addEventListener("change", () => { if (fontPreview) fontPreview.style.fontFamily = dialogMessageFont(form.elements.dialogFont.value); });
+  form.elements.textScale?.addEventListener("change", () => {
+    wallpaperPreview?.style.setProperty("--preview-text-scale", ({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[form.elements.textScale.value] || 1);
+  });
   form.elements.chatBackgroundImage.addEventListener("change", (event) => {
     const image = event.currentTarget.files?.[0];
     if (!image) return;
@@ -1192,10 +1397,15 @@ function renderWallpaperSettings(box) {
     const image = values.get("chatBackgroundImage");
     const chatBackground = image?.size ? "custom" : values.get("chatBackground") || "default";
     const chatBackgroundData = image?.size ? await fileToDataUrl(image, 2_500_000) : chatBackground === "custom" ? state.me.chatBackgroundData || "" : "";
-    await api("/api/preferences", { method: "POST", body: preferencePayload({ theme, dialogColor: values.get("dialogColor"), otherDialogColor: values.get("otherDialogColor"), dialogBubbleStyle: "custom", dialogFont: values.get("dialogFont"), chatBackground, chatBackgroundData, nightAppearanceCustom: values.get("nightAppearanceCustom") === "on", nightOutlineColor: values.get("nightOutlineColor"), nightGlowColor: values.get("nightGlowColor"), nightGlowIntensity: Number(values.get("nightGlowIntensity")) }) });
-    state.me.theme = theme;
+    const dialogColor = values.get("dialogColor");
+    const otherDialogColor = values.get("otherDialogColor");
+    const dialogFont = values.get("dialogFont");
+    const textScale = values.get("textScale");
+    await api("/api/preferences", { method: "POST", body: preferencePayload({ theme, dialogColor, otherDialogColor, dialogBubbleStyle: "custom", dialogFont, textScale, chatBackground, chatBackgroundData, nightAppearanceCustom: values.get("nightAppearanceCustom") === "on", nightOutlineColor: values.get("nightOutlineColor"), nightGlowColor: values.get("nightGlowColor"), nightGlowIntensity: Number(values.get("nightGlowIntensity")) }) });
+    Object.assign(state.me, { theme, dialogColor, otherDialogColor, dialogFont, textScale, chatBackground, chatBackgroundData });
     document.body.classList.toggle("theme-dark", theme === "dark");
     toast("Оформление диалогов сохранено.");
+    activeSection = "wallpapers";
     await refresh();
   });
 }
@@ -1257,12 +1467,13 @@ function renderChat() {
   const previousDistanceToBottom = previousMessages
     ? previousMessages.scrollHeight - previousMessages.scrollTop - previousMessages.clientHeight
     : 0;
-  const shouldScrollToLatest = scrollChatToLatest || !previousMessages || previousDistanceToBottom < 160;
+  const shouldScrollToLatest = scrollChatToLatest || !previousMessages || previousDistanceToBottom < 8;
   scrollChatToLatest = false;
   const chat = state.chats.find((item) => item.id === activeChatId);
   if (!chat) {
     const welcomeBrandLetters = ["C", "h", "a", "t", "‑", "P", "r", "o"].map((letter, index) => `<span aria-hidden="true" style="--letter-delay: ${index * 65}ms">${letter}</span>`).join("");
-    panel.innerHTML = `<div class="empty"><section class="empty__card"><span class="empty__icon empty__icon--welcome" aria-hidden="true"><svg viewBox="0 0 96 96" fill="none"><path d="M18 23.5c0-5.25 4.25-9.5 9.5-9.5h41C73.75 14 78 18.25 78 23.5v26C78 54.75 73.75 59 68.5 59H46L30 75V59h-2.5C22.25 59 18 54.75 18 49.5v-26Z" fill="currentColor" fill-opacity=".16" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><path d="M34 37h28M34 48h17" stroke="white" stroke-width="5" stroke-linecap="round"/><circle cx="72" cy="72" r="12" fill="#A9F1D6"/><path d="m72 64 2.25 5.75L80 72l-5.75 2.25L72 80l-2.25-5.75L64 72l5.75-2.25L72 64Z" fill="#167FAE"/></svg></span><div class="empty__content"><span class="empty__eyebrow welcome-brand-letters" aria-label="Chat-Pro">${welcomeBrandLetters}</span><h2 class="empty__title-gradient">Добро пожаловать в Чат‑Про</h2><p>Найдите пользователя или откройте каналы.</p><p class="empty__motivation">Проявляйте активность и получайте звёзды!</p><div class="empty__tips"><span>Каналы</span><span>Отзывы</span><span>Звёзды</span></div><p class="empty__campaign">Приглашайте друзей и получайте награды, создавайте беседы, рассказывайте о звёздах приложения в своём канале и получайте бонусы за активность.</p></div></section></div>`;
+    panel.innerHTML = `<div class="empty"><section class="empty__card"><span class="empty__icon empty__icon--welcome" aria-hidden="true"><svg viewBox="0 0 96 96" fill="none"><path d="M18 23.5c0-5.25 4.25-9.5 9.5-9.5h41C73.75 14 78 18.25 78 23.5v26C78 54.75 73.75 59 68.5 59H46L30 75V59h-2.5C22.25 59 18 54.75 18 49.5v-26Z" fill="currentColor" fill-opacity=".16" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><path d="M34 37h28M34 48h17" stroke="white" stroke-width="5" stroke-linecap="round"/><circle cx="72" cy="72" r="12" fill="#A9F1D6"/><path d="m72 64 2.25 5.75L80 72l-5.75 2.25L72 80l-2.25-5.75L64 72l5.75-2.25L72 64Z" fill="#167FAE"/></svg></span><div class="empty__content"><span class="empty__eyebrow welcome-brand-letters" aria-label="Chat-Pro">${welcomeBrandLetters}</span><h2 class="empty__title-gradient">Добро пожаловать в Чат‑Про!</h2><p class="empty__motivation">Проявляйте активность и получайте звёзды!</p><button class="button small empty__activity-button" type="button" data-open-activity-rewards>Подробнее</button></div></section></div>`;
+    panel.querySelector("[data-open-activity-rewards]")?.addEventListener("click", () => openMenuSection("activity-rewards"));
     return;
   }
   const channelAppearance = chat.type === "channel" ? chat.settings?.appearance : null;
@@ -1279,26 +1490,25 @@ function renderChat() {
   pinnedMessageIndex = pinnedMessages.length ? pinnedMessageIndex % pinnedMessages.length : 0;
   const activePinnedMessage = pinnedMessages[pinnedMessageIndex];
   const meta = chatMeta(chat);
-  const emptyChatNotice = chat.type === "saved"
-    ? '<section class="empty-chat-notice"><span class="empty-chat-notice__icon">★</span><div><b>Избранное готово</b><p>Сохраняйте здесь важные заметки, ссылки и файлы — всё останется под рукой.</p></div></section>'
-    : `<section class="empty-chat-notice"><span class="empty-chat-notice__icon">✉</span><div><b>Начните диалог</b><p>Пока здесь нет сообщений. Напишите первое сообщение для ${esc(meta.title)}.</p></div></section>`;
-  const mediaButton = '<button class="call-button" data-open-chat-media title="Вложения" aria-label="Вложения">▦</button>';
-  const callButtons = `${mediaButton}${chat.type === "secret" && chat.ownerId === state.me.id ? '<button class="call-button" data-add-secret-member title="Пригласить участника" aria-label="Пригласить участника">+</button>' : ""}${chat.type === "direct" ? '<button class="call-button" data-call="audio" title="Аудиозвонок" aria-label="Аудиозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.1 3.8 8.2 3l1.7 4.2-2 1.8a15.2 15.2 0 0 0 7.1 7.1l1.8-2 4.2 1.7-.8 3.1c-.2.8-1 1.3-1.8 1.2C10.5 19.1 4.9 13.5 3.9 5.6 3.8 4.8 4.3 4 5.1 3.8Z"/></svg></button><button class="call-button" data-call="video" title="Видеозвонок" aria-label="Видеозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3Z"/></svg></button>' : ""}`;
-  const chatIdentity = chat.type === "direct" && meta.user
-    ? `<div class="chat-identity"><button class="chat-profile-avatar" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}" aria-label="Открыть профиль ${esc(meta.title)}">${avatarHtml(meta.user)}</button><button class="chat-profile-name" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}"><div class="chat-head__body"><strong>${esc(meta.title)}</strong><span>${esc(meta.subtitle)}</span></div></button></div>`
-    : `${meta.user ? avatarHtml(meta.user) : chatAvatarHtml(chat)}<div class="chat-head__body"><strong>${esc(meta.title)}</strong><span>${esc(meta.subtitle)}</span></div>`;
+  const emptyChatNotice = "";
   const canPublish = chat.type !== "channel" || isChannelManagerRole(chatMemberRole(chat.id));
+  const channelNeedsMediaBar = chat.type === "channel" && !canPublish;
+  const mediaButton = '<button class="call-button" data-open-chat-media title="Вложения" aria-label="Вложения">▦</button>';
+  const callButtons = `${channelNeedsMediaBar ? "" : mediaButton}${chat.type === "secret" && chat.ownerId === state.me.id ? '<button class="call-button" data-add-secret-member title="Пригласить участника" aria-label="Пригласить участника">+</button>' : ""}${chat.type === "direct" ? '<button class="call-button" data-call="audio" title="Аудиозвонок" aria-label="Аудиозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.1 3.8 8.2 3l1.7 4.2-2 1.8a15.2 15.2 0 0 0 7.1 7.1l1.8-2 4.2 1.7-.8 3.1c-.2.8-1 1.3-1.8 1.2C10.5 19.1 4.9 13.5 3.9 5.6 3.8 4.8 4.3 4 5.1 3.8Z"/></svg></button><button class="call-button" data-call="video" title="Видеозвонок" aria-label="Видеозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3Z"/></svg></button>' : ""}`;
+  const chatIdentity = chat.type === "direct" && meta.user
+    ? `<div class="chat-identity"><button class="chat-profile-avatar" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}" aria-label="Открыть профиль ${esc(meta.title)}">${avatarHtml(meta.user)}</button><button class="chat-profile-name" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}"><div class="chat-head__body"><strong>${esc(meta.title)}</strong>${chatActivityHtml(chat, meta.subtitle)}</div></button></div>`
+    : `${meta.user ? avatarHtml(meta.user) : chatAvatarHtml(chat)}<div class="chat-head__body"><strong>${esc(meta.title)}</strong><span>${esc(meta.subtitle)}</span></div>`;
   const showComposer = chat.type !== "channel" || canPublish;
   const channelJoinButton = chat.type === "channel" && !isMember(chat.id) ? '<button class="button small" type="button" data-join-open-channel>Подписаться</button>' : "";
   panel.innerHTML = `
     <header class="chat-head${["group", "community", "channel"].includes(chat.type) ? " chat-head--group" : ""}${chat.type === "channel" ? " chat-head--channel" : ""}${activePinnedMessage && !selectedMessageIds.size ? " chat-head--with-pinned" : ""}"${["group", "community", "channel"].includes(chat.type) ? ` data-open-group-profile="${chat.id}"` : ""}><button class="chat-back-button chat-head-action" type="button" data-back-to-chats title="Вернуться к списку чатов" aria-label="Вернуться к списку чатов">←</button><button class="chat-mobile-menu-button chat-head-action" type="button" data-open-mobile-chat-menu title="Открыть меню" aria-label="Открыть меню"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>${chatIdentity}${callButtons}${channelJoinButton}${chat.type === "channel" && chat.ownerId !== state.me.id ? `<button class="call-button" type="button" data-report-channel="${chat.id}" aria-label="Пожаловаться на канал">${actionIcon("report")}</button>` : ""}</header>
     ${selectedMessageIds.size ? `<div class="message-selection-toolbar"><b class="message-selection-toolbar__count">Выбрано: ${selectedMessageIds.size}</b><div class="message-selection-toolbar__actions"><button type="button" data-bulk-forward>${actionIcon("forward")}<span>Переслать</span></button><button type="button" data-bulk-confidential>${actionIcon("confidential")}<span>В скрытый чат</span></button><button type="button" data-bulk-delete>${actionIcon("delete")}<span>Удалить</span></button><button type="button" data-bulk-clear>${actionIcon("cancel")}<span>Отмена</span></button></div></div>` : ""}
-    <div class="chat-body${activePinnedMessage && !selectedMessageIds.size ? " chat-body--with-pinned" : ""}">
+    <div class="chat-body${activePinnedMessage && !selectedMessageIds.size ? " chat-body--with-pinned" : ""}${channelNeedsMediaBar ? " chat-body--channel-viewer" : ""}">
       ${activePinnedMessage && !selectedMessageIds.size ? `<div class="pinned-messages"><button class="pinned-messages__content" type="button" data-scroll-pinned-message="${activePinnedMessage.id}" title="Перейти к закреплённому сообщению"><span class="pinned-messages__label">${pinIcon("pinned-messages__pin-icon")}<span>Закреплённое сообщение${pinnedMessages.length > 1 ? ` · ${pinnedMessageIndex + 1} из ${pinnedMessages.length}` : ""}</span></span><span class="pinned-messages__text">${esc(pinnedMessagePreview(activePinnedMessage))}</span></button>${pinnedMessages.length > 1 ? '<button type="button" class="pinned-messages__next" data-next-pinned-message title="Следующее закреплённое сообщение" aria-label="Следующее закреплённое сообщение">⌄</button>' : ""}<button type="button" class="pinned-messages__menu" data-toggle-pinned-actions title="Действия с закрепом" aria-label="Действия с закрепом">${actionIcon("more")}</button></div>` : ""}
       <div class="scroll-date-bubble hidden" data-scroll-date></div><div class="messages ${channelAppearance ? "" : chatBackgroundClass(state.me)}" id="messages"${channelAppearance ? "" : chatBackgroundStyle(state.me)}>${messages.map((message) => `${message.id === firstUnreadMessageId ? '<div class="unread-divider"><span>Новые сообщения</span></div>' : ""}${messageHtml(message)}`).join("") || emptyChatNotice}</div>
       <button class="jump-to-latest hidden" type="button" data-jump-to-latest title="К последним сообщениям" aria-label="К последним сообщениям">↓</button>
     </div>
-    ${showComposer ? `<form class="composer" id="composer">
+    ${channelNeedsMediaBar ? `<div class="channel-viewer-bar" id="channelViewerBar"><button type="button" data-buy-stars-channel aria-label="Купить звёзды через канал">${starButtonIcon()}<span>Звёзды</span></button><button type="button" data-open-chat-media aria-label="Вложения канала">${attachmentButtonIcon()}<span>Вложения</span></button></div>` : showComposer ? `<form class="composer" id="composer">
       <label class="composer-icon attach-button" title="Прикрепить фото, видео или документ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.2 12 19.7a5.3 5.3 0 0 1-7.5-7.5l9-9a3.7 3.7 0 1 1 5.2 5.3l-9.1 9.1a2 2 0 0 1-2.8-2.8l8-8"/></svg><input name="attachment" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,application/pdf,text/plain,.doc,.docx" hidden></label>
       <div class="composer-input"><textarea name="text" placeholder="${chat.type === "channel" ? "Новая публикация" : "Сообщение"}"></textarea><button class="composer-icon composer-icon--emoji" type="button" data-emoji-toggle title="Эмодзи" aria-label="Открыть эмодзи"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.75a8.25 8.25 0 1 0 8.25 8.25"/><path d="M7.8 13.65c1.12 1.44 2.5 2.1 4.2 2.1s3.08-.66 4.2-2.1M8.75 9.75h.01M14.5 9.75h.01"/><path d="m18.6 3.25.48 1.32 1.32.48-1.32.48-.48 1.32-.48-1.32-1.32-.48 1.32-.48.48-1.32Z"/></svg></button></div>
       <div class="composer-tools">
@@ -1309,7 +1519,7 @@ function renderChat() {
       <div class="composer-attachment hidden" data-composer-attachment><span>📎</span><b data-composer-attachment-name></b><button type="button" data-clear-composer-attachment aria-label="Убрать вложение">×</button></div>
       <div class="emoji-panel hidden" data-emoji-panel><div class="emoji-panel__tabs"><button class="emoji-panel__tab active" type="button" data-emoji-tab="recent">Недавние</button><button class="emoji-panel__tab" type="button" data-emoji-tab="all">Все</button></div><div class="emoji-panel__content" data-emoji-content></div></div>
     </form>` : ""}`;
-  if (!channelAppearance) panel.style.background = getComputedStyle(panel.querySelector("#messages")).background;
+  panel.style.background = "";
   const chatHead = panel.querySelector(".chat-head");
   if (chatHead) {
     const updateChatHeadSpace = () => panel.style.setProperty("--chat-head-height", `${chatHead.offsetHeight}px`);
@@ -1328,6 +1538,7 @@ function renderChat() {
     const body = { chatId: chat.id, text: form.get("text") };
     const temporaryId = `pending-${crypto.randomUUID()}`;
     try {
+      stopTypingActivity(chat.id);
       if (attachment?.size) {
         body.mediaType = attachment.type.startsWith("image/") ? "photo" : attachment.type.startsWith("video/") ? "video" : "document";
         body.mediaData = await fileToDataUrl(attachment, 2_500_000);
@@ -1346,27 +1557,21 @@ function renderChat() {
       });
       event.currentTarget.reset();
       attachmentNotice.classList.add("hidden");
+      event.currentTarget.querySelector(".composer-tools")?.classList.remove("composer-tools--with-text");
       updateComposerSpace();
-      scrollChatToLatest = true;
-      renderChat();
+      appendLiveMessage(pendingOutgoingMessages.get(temporaryId));
       const response = await api("/api/messages", { method: "POST", body });
       const remainingAnimation = 360 - (Date.now() - pendingStartedAt);
       if (remainingAnimation > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingAnimation));
-      pendingOutgoingMessages.delete(temporaryId);
-      await refresh(false);
-      renderLeft();
-      requestAnimationFrame(() => {
-        const latestMessages = app.querySelector("#messages");
-        latestMessages?.scrollTo({ top: latestMessages.scrollHeight, behavior: "auto" });
-      });
-      app.querySelector("#composer textarea")?.focus();
+      confirmPendingMessage(temporaryId, response.messageId);
+      app.querySelector("#composer textarea")?.focus({ preventScroll: true });
       return response;
     } catch (error) {
       const failed = pendingOutgoingMessages.get(temporaryId);
       if (failed) {
         failed.deliveryState = "failed";
         pendingOutgoingMessages.set(temporaryId, failed);
-        renderChat();
+        replaceLiveMessage(temporaryId, failed);
       }
       toast(error.message, true);
     }
@@ -1374,6 +1579,10 @@ function renderChat() {
   const attachmentInput = composer.querySelector('input[name="attachment"]');
   const attachmentNotice = composer.querySelector("[data-composer-attachment]");
   const attachmentName = composer.querySelector("[data-composer-attachment-name]");
+  const composerTextarea = composer.querySelector("textarea");
+  const updateComposerActions = () => {
+    composer.querySelector(".composer-tools")?.classList.toggle("composer-tools--with-text", Boolean(composerTextarea.value.trim()));
+  };
   attachmentInput.addEventListener("change", () => {
     const file = attachmentInput.files?.[0];
     attachmentNotice.classList.toggle("hidden", !file);
@@ -1381,9 +1590,16 @@ function renderChat() {
     updateComposerSpace();
   });
   composer.querySelector("[data-clear-composer-attachment]").addEventListener("click", () => { attachmentInput.value = ""; attachmentInput.dispatchEvent(new Event("change")); });
-  composer.querySelector("textarea").addEventListener("keydown", (event) => {
+  composerTextarea.addEventListener("input", () => {
+    updateComposerActions();
+    if (composerTextarea.value.trim()) startTypingActivity(chat.id, composerTextarea);
+    else stopTypingActivity(chat.id);
+  });
+  composerTextarea.addEventListener("blur", () => stopTypingActivity(chat.id));
+  composerTextarea.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); composer.requestSubmit(); }
   });
+  updateComposerActions();
   panel.querySelector("[data-add-secret-member]")?.addEventListener("click", () => openMemberManager(chat));
   const emojiPanel = panel.querySelector("[data-emoji-panel]");
   const renderEmojiPanel = (tab = "recent") => {
@@ -1403,6 +1619,12 @@ function renderChat() {
     if (!emojiPanel.classList.contains("hidden")) renderEmojiPanel("recent");
   });
   emojiPanel.querySelectorAll("[data-emoji-tab]").forEach((button) => button.addEventListener("click", () => renderEmojiPanel(button.dataset.emojiTab)));
+  }
+  const channelViewerBar = panel.querySelector("#channelViewerBar");
+  if (channelViewerBar) {
+    const updateChannelViewerSpace = () => panel.style.setProperty("--channel-viewer-height", `${channelViewerBar.offsetHeight}px`);
+    updateChannelViewerSpace();
+    new ResizeObserver(updateChannelViewerSpace).observe(channelViewerBar);
   }
   panel.querySelector("[data-join-open-channel]")?.addEventListener("click", async (event) => {
     event.stopPropagation();
@@ -1498,6 +1720,7 @@ function renderChat() {
     renderChat();
   });
   panel.querySelectorAll("[data-open-profile]").forEach((btn) => btn.addEventListener("click", () => openProfile(btn.dataset.openProfile)));
+  panel.querySelectorAll("[data-remove-pending-message]").forEach((button) => button.addEventListener("click", () => removePendingMessage(button.dataset.removePendingMessage)));
   panel.querySelectorAll("[data-open-message-media]").forEach((button) => button.addEventListener("click", () => {
     const source = button.dataset.openMessageMediaSource;
     if (source) {
@@ -1531,12 +1754,15 @@ function renderChat() {
     const playButton = circle.querySelector("[data-circle-playback]");
     const progress = circle.querySelector("[data-circle-progress]");
     const updatePlayback = () => {
-      playButton.textContent = video.paused ? "▶" : "Ⅱ";
+      playButton.innerHTML = video.paused
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 8 6-8 6Z"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12M15 6v12"/></svg>';
       circle.classList.toggle("is-playing", !video.paused);
     };
     video.addEventListener("play", updatePlayback);
     video.addEventListener("pause", updatePlayback);
     video.addEventListener("loadeddata", async () => {
+      circle.classList.add("is-ready");
       if (video.dataset.previewReady || !video.paused) return;
       video.dataset.previewReady = "true";
       video.muted = true;
@@ -1563,8 +1789,10 @@ function renderChat() {
     if (!audio) return;
     if (!audio.paused) {
       audio.pause();
+      audio.currentTime = 0;
       return;
     }
+    audio.dataset.playbackAttempted = "true";
     audio.muted = false;
     audio.volume = 1;
     try {
@@ -1578,17 +1806,54 @@ function renderChat() {
     const audio = voice.querySelector(".message-audio");
     const button = voice.querySelector("[data-voice-playback]");
     const duration = voice.querySelector("[data-voice-duration]");
+    const wave = voice.querySelector("[data-voice-wave]");
     const format = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+    const seek = (event) => {
+      if (!audio.duration || !wave) return;
+      const bounds = wave.getBoundingClientRect();
+      const progress = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+      audio.currentTime = progress * audio.duration;
+    };
+    const updateProgress = () => {
+      const progress = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+      wave?.setAttribute("aria-valuenow", String(Math.round(progress)));
+      const playedBars = Math.ceil((progress / 100) * (wave?.children.length || 0));
+      wave?.querySelectorAll("i").forEach((bar, index) => bar.classList.toggle("is-played", index < playedBars));
+      if (audio.duration) duration.textContent = `${format(audio.currentTime)} / ${format(audio.duration)}`;
+    };
     const update = () => {
       button.classList.toggle("is-playing", !audio.paused);
-      button.setAttribute("aria-label", audio.paused ? "Воспроизвести голосовое" : "Приостановить голосовое");
+      button.innerHTML = actionIcon(audio.paused ? "play" : "stop");
+      button.setAttribute("aria-label", audio.paused ? "Воспроизвести голосовое" : "Остановить голосовое");
       voice.classList.toggle("is-playing", !audio.paused);
     };
-    audio.addEventListener("loadedmetadata", () => { if (Number.isFinite(audio.duration)) duration.textContent = format(audio.duration); });
+    audio.addEventListener("loadedmetadata", updateProgress);
+    audio.addEventListener("timeupdate", updateProgress);
     audio.addEventListener("play", update);
-    audio.addEventListener("pause", update);
-    audio.addEventListener("ended", () => { audio.currentTime = 0; update(); });
-    audio.addEventListener("error", () => toast("Не удалось воспроизвести это голосовое. Возможно, его формат не поддерживается браузером.", true));
+    audio.addEventListener("pause", () => { update(); updateProgress(); });
+    audio.addEventListener("ended", () => { audio.currentTime = 0; updateProgress(); update(); });
+    wave?.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      seek(event);
+      wave.setPointerCapture?.(event.pointerId);
+      const move = (moveEvent) => seek(moveEvent);
+      const stop = () => {
+        wave.removeEventListener("pointermove", move);
+        wave.removeEventListener("pointerup", stop);
+        wave.removeEventListener("pointercancel", stop);
+      };
+      wave.addEventListener("pointermove", move);
+      wave.addEventListener("pointerup", stop);
+      wave.addEventListener("pointercancel", stop);
+    });
+    wave?.addEventListener("keydown", (event) => {
+      if (!audio.duration || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      if (event.key === "Home") audio.currentTime = 0;
+      else if (event.key === "End") audio.currentTime = audio.duration;
+      else audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + (event.key === "ArrowRight" ? 5 : -5)));
+      updateProgress();
+    });
   });
   panel.querySelectorAll("[data-record]").forEach((btn) => btn.addEventListener("click", () => recordMediaMessage(chat.id, btn.dataset.record)));
   panel.querySelectorAll(".message").forEach((message) => message.addEventListener("click", (event) => {
@@ -1605,10 +1870,12 @@ function renderChat() {
   }));
   panel.querySelectorAll("[data-call]").forEach((btn) => btn.addEventListener("click", () => startCall(chat, btn.dataset.call)));
   panel.querySelector("[data-open-chat-media]")?.addEventListener("click", () => openChatMedia(chat));
+  panel.querySelector("[data-buy-stars-channel]")?.addEventListener("click", () => openChannelStarPurchase(chat));
   panel.querySelector("[data-open-group-profile]")?.addEventListener("click", (event) => {
     if (!event.target.closest("button, input, label")) openGroupProfile(chat);
   });
   panel.querySelectorAll("[data-media-message]").forEach((media) => media.addEventListener("error", () => {
+    if (media.dataset.mediaMessage === "voice" && media.dataset.playbackAttempted !== "true") return;
     const message = media.closest(".message");
     if (!message || message.querySelector(".media-error")) return;
     const label = media.dataset.mediaMessage === "voice" ? "Голосовое сообщение" : "Видеокружок";
@@ -1623,7 +1890,7 @@ function renderChat() {
           : "Не удалось воспроизвести файл. Обновите страницу и попробуйте ещё раз.";
     message.insertAdjacentHTML("afterbegin", `<p class="media-error">${esc(label)}: ${esc(details)}</p>`);
   }, { once: true }));
-  const closeChat = (event) => { event?.stopPropagation(); activeChatId = null; renderApp(); };
+  const closeChat = (event) => { event?.stopPropagation(); stopChatActivity(chat.id); activeChatId = null; renderApp(); };
   panel.querySelector("[data-close-chat]")?.addEventListener("click", closeChat);
   panel.querySelector("[data-back-to-chats]").addEventListener("click", closeChat);
   panel.querySelector("[data-open-mobile-chat-menu]").addEventListener("click", (event) => {
@@ -1633,8 +1900,8 @@ function renderChat() {
   const messagesBox = panel.querySelector("#messages");
   const jumpToLatest = panel.querySelector("[data-jump-to-latest]");
   const dateBubble = panel.querySelector("[data-scroll-date]");
-  const scrollToLatest = () => messagesBox.scrollTo({ top: messagesBox.scrollHeight, behavior: "auto" });
-  const updateJumpButton = () => jumpToLatest.classList.toggle("hidden", messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 160);
+  const scrollToLatest = () => messagesBox.scrollTo({ top: Math.max(0, messagesBox.scrollHeight - messagesBox.clientHeight), behavior: "auto" });
+  const updateJumpButton = () => jumpToLatest.classList.toggle("hidden", messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 8);
   const updateScrollDate = () => {
     const visible = [...messagesBox.querySelectorAll(".message")].find((message) => message.offsetTop + message.offsetHeight >= messagesBox.scrollTop + 12);
     const item = visible ? messages.find((message) => message.id === visible.id.replace("message-", "")) : messages[0];
@@ -1648,7 +1915,7 @@ function renderChat() {
   jumpToLatest.addEventListener("click", (event) => { event.preventDefault(); scrollToLatest(); jumpToLatest.blur(); updateJumpButton(); });
   if (shouldScrollToLatest) {
     scrollToLatest();
-    requestAnimationFrame(scrollToLatest);
+    requestAnimationFrame(() => requestAnimationFrame(scrollToLatest));
   }
   else messagesBox.scrollTop = previousScrollTop;
   updateJumpButton();
@@ -1815,7 +2082,9 @@ function openSimpleActions(anchor, actions) {
   menu.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 8)}px`;
   menu.style.left = `${Math.max(12, Math.min(window.innerWidth - 230, rect.left - 170))}px`;
   const close = () => overlay.remove();
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  const closeIfOutside = (event) => { if (!menu.contains(event.target)) close(); };
+  document.addEventListener("pointerdown", closeIfOutside, { capture: true, once: true });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); }, { once: true });
   overlay.querySelectorAll("[data-action-index]").forEach((button) => button.addEventListener("click", async () => {
     close();
     try { await actions[Number(button.dataset.actionIndex)]?.action(); }
@@ -2047,6 +2316,14 @@ function openChatMenu(chatId) {
   }));
 }
 
+function removePendingMessage(messageId) {
+  const message = pendingOutgoingMessages.get(messageId);
+  if (!message || message.deliveryState !== "failed") return;
+  pendingOutgoingMessages.delete(messageId);
+  renderChat();
+  toast("Неотправленное сообщение удалено.");
+}
+
 function messageHtml(msg) {
   const chat = state.chats.find((item) => item.id === msg.chatId);
   const settings = chat.settings || {};
@@ -2058,12 +2335,7 @@ function messageHtml(msg) {
   const isGroup = ["group", "community", "channel"].includes(chat?.type);
   const author = userById(msg.senderId);
   const sharedProfile = msg.profileUserId ? userById(msg.profileUserId) : null;
-  const sourceItem = msg.sourceType === "profile-post"
-    ? state.posts.find((post) => post.id === msg.sourceId)
-    : msg.sourceType === "story"
-      ? state.stories.find((story) => story.id === msg.sourceId)
-      : null;
-  const sourceAuthorId = sourceItem?.user_id;
+  const forwardedFromUser = msg.forwardedFromUserId ? userById(msg.forwardedFromUserId) : null;
   const showAuthor = isGroup && msg.senderId !== state.me.id;
   const showInlineDelivery = !msg.mediaType
     && !msg.forwardedFrom
@@ -2071,7 +2343,7 @@ function messageHtml(msg) {
     && !msg.profileUserId
     && !String(msg.text || "").includes("\n")
     && String(msg.text || "").length <= 52;
-  const canDeleteRssPost = msg.sourceType === "rss" && chat?.type === "channel" && isChannelManagerRole(chatMemberRole(msg.chatId));
+  const canDeleteRssPost = ["rss", "vk"].includes(msg.sourceType) && chat?.type === "channel" && isChannelManagerRole(chatMemberRole(msg.chatId));
   const sourcePostActions = canDeleteRssPost
     ? `<div class="group-post-actions"><button type="button" data-delete-message="${msg.id}" data-delete-scope="everyone">Удалить публикацию</button></div>`
     : msg.sourceType && !["telegram", "rss"].includes(msg.sourceType)
@@ -2083,12 +2355,13 @@ function messageHtml(msg) {
     ${showAuthor ? `<button class="message__author" type="button" data-open-profile="${msg.senderId}" title="Открыть профиль ${esc(author?.name || "участника")}">${avatarHtml(author, "message__author-avatar")}</button>` : ""}
     <div class="message__content">
       <div class="message__bubble${showInlineDelivery ? " message__bubble--inline-meta" : " message__bubble--with-meta"}">
-        ${msg.forwardedFrom ? sourceAuthorId ? `<button type="button" class="message__forwarded message__forwarded--link" data-open-profile="${sourceAuthorId}" title="Открыть профиль автора источника">↪ ${esc(msg.forwardedFrom)}</button>` : `<div class="message__forwarded">↪ ${esc(msg.forwardedFrom)}</div>` : ""}
+        ${msg.forwardedFrom ? forwardedFromUser ? `<button type="button" class="message__forwarded message__forwarded--link" data-open-profile="${forwardedFromUser.id}" title="Открыть профиль автора источника"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 3 12l6 7M4 12h10a6 6 0 0 1 6 6v1"/></svg>Переслано от ${esc(msg.forwardedFrom)}</button>` : `<div class="message__forwarded"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 3 12l6 7M4 12h10a6 6 0 0 1 6 6v1"/></svg>Переслано от ${esc(msg.forwardedFrom)}</div>` : ""}
         ${messageMediaHtml(msg)}
         ${sharedProfile ? `<button type="button" class="shared-profile-card" data-open-profile="${sharedProfile.id}" title="Открыть профиль ${esc(sharedProfile.name)}">${avatarHtml(sharedProfile, "shared-profile-card__avatar")}<span><b>${esc(sharedProfile.name)}</b><small>@${esc(sharedProfile.username)}</small></span><em>Профиль</em></button>` : msg.profileUserId ? '<div class="shared-profile-card shared-profile-card--missing"><span><b>Профиль недоступен</b><small>Пользователь больше не найден</small></span></div>' : ""}
-        ${msg.text ? (msg.sourceType === "rss" ? rssPostHtml(msg) : `<div class="message__text">${esc(msg.text)}</div>`) : ""}
+        ${["rss", "vk"].includes(msg.sourceType) ? rssPostHtml(msg) : msg.text ? `<div class="message__text">${esc(msg.text)}</div>` : ""}
         ${selectedMessageIds.has(msg.id) ? `<span class="message__selected-marker" aria-label="Сообщение выбрано">${actionIcon("select")}</span>` : ""}
         ${messageDeliveryHtml(msg, showInlineDelivery ? "inline" : "inside")}
+        ${msg.deliveryState === "failed" ? `<button class="message__pending-delete" type="button" data-remove-pending-message="${msg.id}" title="Удалить неотправленное сообщение" aria-label="Удалить неотправленное сообщение">${actionIcon("delete")}</button>` : ""}
       </div>
       ${settings.showReactions !== false ? reactionHtml : ""}
       ${commentsHtml}
@@ -2152,7 +2425,7 @@ function openMessageMenu(msg) {
   const downloadLabel = msg.mediaType === "voice" ? "Скачать голосовое" : msg.mediaType === "circle" ? "Скачать видеокружок" : "";
   const overlay = document.createElement("div");
   overlay.className = "message-menu-overlay";
-  overlay.innerHTML = `<section class="message-menu" role="dialog" aria-modal="true" aria-label="Действия с сообщением"><header><div><b>Сообщение</b><small>${esc(user?.name || "Пользователь")} · ${esc(dateFmt(msg.createdAt))} · ${timeFmt(msg.createdAt)}</small></div><button type="button" data-close-message-menu aria-label="Закрыть">×</button></header><p class="message-menu__preview">${esc(pinnedMessagePreview(msg))}</p><div class="message-menu__actions">${settings.showReactions !== false ? `<button type="button" data-toggle-message-reactions>${actionIcon("reaction", "message-menu__icon")}<span>Реакция</span></button><div class="message-menu__reactions hidden" data-message-reactions>${reactions.map((emoji) => `<button type="button" data-message-menu-react="${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div>` : ""}<button type="button" data-message-menu-action="select">${actionIcon("select", "message-menu__icon")}<span>${selectedMessageIds.has(msg.id) ? "Убрать из выбора" : "Выбрать"}</span></button><button type="button" data-message-menu-action="profile">${actionIcon("profile", "message-menu__icon")}<span>Открыть профиль</span></button>${chat?.type === "channel" && msg.mediaType !== "system" ? `<button type="button" data-message-menu-action="report">${actionIcon("report", "message-menu__icon")}<span>Пожаловаться</span></button><button type="button" data-message-menu-action="donate">${actionIcon("donate", "message-menu__icon")}<span>Подарить звёзды</span></button>` : ""}${downloadLabel ? `<button type="button" data-message-menu-action="download-media">${actionIcon("download", "message-menu__icon")}<span>${downloadLabel}</span></button>` : ""}${canPinForEveryone ? `<button type="button" data-message-menu-action="pin">${pinIcon("message-menu__icon")}<span>${msg.pinned ? "Открепить у всех" : "Закрепить у всех"}</span></button>` : ""}<button type="button" data-toggle-message-delete>${actionIcon("delete", "message-menu__icon")}<span>Удалить</span></button><div class="message-menu__nested hidden" data-message-delete-options><button type="button" data-message-menu-action="delete-me">Удалить у себя</button>${canDeleteForEveryone ? '<button type="button" class="danger" data-message-menu-action="delete-everyone">Удалить у всех</button>' : ""}</div></div></section>`;
+  overlay.innerHTML = `<section class="message-menu" role="dialog" aria-modal="true" aria-label="Действия с сообщением"><header><div><b>Сообщение</b><small>${esc(user?.name || "Пользователь")} · ${esc(dateFmt(msg.createdAt))} · ${timeFmt(msg.createdAt)}</small></div><button type="button" data-close-message-menu aria-label="Закрыть">×</button></header><p class="message-menu__preview">${esc(pinnedMessagePreview(msg))}</p><div class="message-menu__actions">${settings.showReactions !== false ? `<button type="button" data-toggle-message-reactions>${actionIcon("reaction", "message-menu__icon")}<span>Реакция</span></button><div class="message-menu__reactions hidden" data-message-reactions>${reactions.map((emoji) => `<button type="button" data-message-menu-react="${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div>` : ""}${msg.senderId === state.me.id && msg.mediaType !== "system" ? `<button type="button" data-message-menu-action="edit">${actionIcon("edit", "message-menu__icon")}<span>Редактировать</span></button>` : ""}<button type="button" data-message-menu-action="forward">${actionIcon("forward", "message-menu__icon")}<span>Переслать</span></button><button type="button" data-message-menu-action="select">${actionIcon("select", "message-menu__icon")}<span>${selectedMessageIds.has(msg.id) ? "Убрать из выбора" : "Выбрать"}</span></button><button type="button" data-message-menu-action="profile">${actionIcon("profile", "message-menu__icon")}<span>Открыть профиль</span></button>${chat?.type === "channel" && msg.mediaType !== "system" ? `<button type="button" data-message-menu-action="report">${actionIcon("report", "message-menu__icon")}<span>Пожаловаться</span></button><button type="button" data-message-menu-action="donate">${actionIcon("donate", "message-menu__icon")}<span>Подарить звёзды</span></button>` : ""}${downloadLabel ? `<button type="button" data-message-menu-action="download-media">${actionIcon("download", "message-menu__icon")}<span>${downloadLabel}</span></button>` : ""}${canPinForEveryone ? `<button type="button" data-message-menu-action="pin">${pinIcon("message-menu__icon")}<span>${msg.pinned ? "Открепить у всех" : "Закрепить у всех"}</span></button>` : ""}<button type="button" data-toggle-message-delete>${actionIcon("delete", "message-menu__icon")}<span>Удалить</span></button><div class="message-menu__nested hidden" data-message-delete-options><button type="button" data-message-menu-action="delete-me">Удалить у себя</button>${canDeleteForEveryone ? '<button type="button" class="danger" data-message-menu-action="delete-everyone">Удалить у всех</button>' : ""}</div></div></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-message-menu]").addEventListener("click", close);
@@ -2177,6 +2450,8 @@ function openMessageMenu(msg) {
         renderChat();
         return;
       }
+      if (action === "forward") { close(); openForwardPicker([msg.id]); return; }
+      if (action === "edit") { close(); openMessageEditor(msg); return; }
       if (action === "profile") { close(); openProfile(msg.senderId); return; }
       if (action === "report") { close(); await reportTarget("group-post", msg.id); return; }
       if (action === "download-media") { close(); await downloadMessageMedia(msg); return; }
@@ -2197,6 +2472,26 @@ function openMessageMenu(msg) {
       await refresh(false);
     } catch (error) { toast(error.message, true); }
   }));
+}
+
+function openMessageEditor(msg) {
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Редактирование публикации"><header><div><b>Редактировать публикацию</b><small>Изменения увидят все участники чата.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-message-edit-form><label>Текст<textarea name="text" required maxlength="3000">${esc(msg.text || "")}</textarea></label><button class="button primary">Сохранить</button></form></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  overlay.querySelector("[data-message-edit-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/messages/edit", { method: "POST", body: { messageId: msg.id, text: new FormData(event.currentTarget).get("text") } });
+      close();
+      toast("Публикация обновлена.");
+      await refresh(false);
+    } catch (error) { toast(error.message, true); }
+  });
+  overlay.querySelector("textarea").focus();
 }
 
 function pinnedMessagePreview(msg) {
@@ -2270,7 +2565,10 @@ function openGroupProfile(chat) {
   }).join("");
   const overlay = document.createElement("div");
   overlay.className = `group-card-overlay${isChannel ? " group-card-overlay--channel" : ""}`;
-  const channelSettings = isChannel && canEditProfile ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Настройки канала</b><small>Видимость и взаимодействия</small></div></div><div class="channel-settings">${[["showSubscribers", "Подписчики", "Показывать число подписчиков"], ["showReactions", "Реакции", "Показывать реакции под публикациями"], ["commentsEnabled", "Комментарии", "Разрешить комментарии к постам"], ["isPublic", "Публичный канал", "Показывать канал в общем поиске"]].map(([key, title, hint]) => `<label class="channel-setting"><span><b>${title}</b><small>${hint}</small></span><input type="checkbox" name="${key}" ${chat.settings?.[key] !== false ? "checked" : ""}></label>`).join("")}<div class="channel-settings__actions"><button class="button small" type="button" data-link-telegram>Импорт из Telegram</button><button class="button small" type="button" data-link-rss>Автопостинг из RSS</button></div></div></section>` : "";
+  const bonus = channelStarBonus(chat);
+  const channelPurchases = state.channelStarPurchases.filter((purchase) => purchase.channel_id === chat.id);
+  const channelSettings = isChannel && canEditProfile ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Настройки канала</b><small>Видимость и взаимодействия</small></div></div><div class="channel-settings">${[["showSubscribers", "Подписчики", "Показывать число подписчиков"], ["showReactions", "Реакции", "Показывать реакции под публикациями"], ["commentsEnabled", "Комментарии", "Разрешить комментарии к постам"], ["isPublic", "Публичный канал", "Показывать канал в общем поиске"]].map(([key, title, hint]) => `<label class="channel-setting"><span><b>${title}</b><small>${hint}</small></span><input type="checkbox" name="${key}" ${chat.settings?.[key] !== false ? "checked" : ""}></label>`).join("")}<label class="channel-setting"><span><b>Бонус за покупку звёзд</b><small>Покупатели увидят условие до оплаты.</small></span><select name="starBonusType"><option value="stars" ${bonus.type === "stars" ? "selected" : ""}>Звёздный бонус</option><option value="money" ${bonus.type === "money" ? "selected" : ""}>Денежный бонус</option></select></label><label class="channel-setting"><span><b>Размер бонуса</b><small>Процент от купленных звёзд или суммы оплаты.</small></span><input name="starBonusPercent" type="number" min="1" max="100" value="${bonus.percent}"></label><div class="channel-settings__actions"><button class="button small" type="button" data-link-telegram>Импорт из Telegram</button><button class="button small" type="button" data-link-rss>Автопостинг из RSS</button><button class="button small" type="button" data-link-vk>Автопостинг из VK</button></div></div></section>` : "";
+  const channelPurchaseHistory = isChannel && canEditProfile ? `<section class="group-card__section channel-purchase-history"><div class="group-card__section-head"><div><b>Покупки через канал</b><small>${channelPurchases.length ? "Покупатели и начисленные бонусы" : "Покупок пока не было"}</small></div></div>${channelPurchases.length ? `<div class="channel-purchase-list">${channelPurchases.map((purchase) => `<article><span><b>${esc(purchase.buyer_name)}</b><small>@${esc(purchase.buyer_username)} · ${timeFmt(purchase.created_at)}</small></span><strong>★ ${purchase.stars}<small>${purchase.bonus_type === "money" ? `${esc(purchase.bonus_amount)} ₽ к выплате` : `+ ★ ${esc(purchase.bonus_amount)}`}</small></strong></article>`).join("")}</div>` : ""}</section>` : "";
   const channelAdminTools = canAuthorChannel ? `<section class="group-card__section group-card__section--tools"><div class="group-card__section-head"><div><b>Инструменты администратора</b><small>Публикации, оформление и связь с группой</small></div></div><div class="channel-settings__actions"><button class="button small" type="button" data-schedule-channel-post>Запланировать пост</button><button class="button small" type="button" data-link-channel>Привязать группу / беседу</button><button class="button small" type="button" data-channel-appearance>Оформление канала</button></div></section>` : "";
   const channelMedia = isChannel ? `<section class="group-card__section group-card__section--media"><div class="group-card__section-head"><div><b>Вложения</b><small>${media.length ? `${media.length} ${media.length === 1 ? "файл" : "файлов"}` : "Фото, документы, голосовые и кружки"}</small></div><button class="button small" type="button" data-open-group-media>Открыть</button></div></section>` : "";
   const groupTools = !isChannel ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Вложения</b><small>${media.length ? `${media.length} ${media.length === 1 ? "файл" : "файлов"}` : "Пока нет файлов"}</small></div><button class="button small" type="button" data-open-group-media>Открыть</button></div></section><section class="group-card__section"><div class="group-card__section-head"><div><b>Ссылка-приглашение</b><small>${inviteEnabled ? "Доступна всем, у кого есть ссылка" : "Выдавать ссылку могут только администраторы"}</small></div></div>${canModerate ? `<div class="invite-link"><code>${esc(inviteLink)}</code><button class="button small" type="button" data-copy-invite-link>Копировать</button></div><label class="channel-setting"><span><b>Публичная ссылка</b><small>Разрешить вступление по ссылке без приглашения администратора</small></span><input type="checkbox" name="inviteLinkEnabled" ${inviteEnabled ? "checked" : ""}></label>` : '<p class="muted">Ссылка доступна у владельца и администраторов группы.</p>'}</section>` : "";
@@ -2281,7 +2579,7 @@ function openGroupProfile(chat) {
     ? `<section class="group-card__section group-card__section--subscriber-count"><div class="group-card__section-head"><div><b>Подписчики</b><small>Список подписчиков скрыт создателем канала</small></div><strong>${subscriberCount}</strong></div></section>`
     : `<section class="group-card__section"><div class="group-card__section-head"><div><b>${isChannel ? "Подписчики и администраторы" : "Участники"}</b><small>${isChannel ? `${subscriberCount} ${subscriberWord(subscriberCount)}` : `${members.length} ${memberWord(members.length)}`}</small></div>${myRole === "owner" ? '<button class="button small" type="button" data-add-group-member>Добавить</button>' : ""}</div><div class="group-card__members">${memberHtml}</div></section>`;
   const profileCount = isChannel ? subscriberCount : members.length;
-  overlay.innerHTML = `<section class="group-card${isChannel ? " group-card--channel" : ""}" role="dialog" aria-modal="true" aria-label="Профиль ${isChannel ? "канала" : "группы"}"><header class="group-card__header"><div class="group-card__identity">${chatAvatarHtml(chat, "group-card__avatar")}<div><b>${esc(chat.title)}</b><small>${profileCount} ${isChannel ? subscriberWord(profileCount) : memberWord(profileCount)} · ${isChannel ? "канал" : chat.type === "group" ? "группа" : "комьюнити"}</small></div></div><button type="button" data-close-group-card aria-label="Закрыть">×</button></header>${profileEditor}${channelSettings}${channelAdminTools}${channelMedia}${groupTools}${memberSection}<footer class="group-card__footer${isChannel ? " group-card__footer--channel" : ""}">${isChannel ? '<button class="button primary group-card__buy-stars" type="button" data-buy-stars-through-channel><span aria-hidden="true">★</span> Купить звёзды</button>' : ""}${isChannel && chat.ownerId !== state.me.id ? `<button class="button small" type="button" data-report-channel-profile="${chat.id}">Пожаловаться на канал</button>` : ""}<button class="button danger" type="button" data-group-leave>Выйти из ${isChannel ? "канала" : "беседы"}</button></footer></section>`;
+  overlay.innerHTML = `<section class="group-card${isChannel ? " group-card--channel" : ""}" role="dialog" aria-modal="true" aria-label="Профиль ${isChannel ? "канала" : "группы"}"><header class="group-card__header"><div class="group-card__identity">${chatAvatarHtml(chat, "group-card__avatar")}<div><b>${esc(chat.title)}</b><small>${profileCount} ${isChannel ? subscriberWord(profileCount) : memberWord(profileCount)} · ${isChannel ? "канал" : chat.type === "group" ? "группа" : "комьюнити"}</small></div></div><button type="button" data-close-group-card aria-label="Закрыть">×</button></header>${profileEditor}${channelSettings}${channelPurchaseHistory}${channelAdminTools}${channelMedia}${groupTools}${memberSection}<footer class="group-card__footer${isChannel ? " group-card__footer--channel" : ""}">${isChannel ? `<button class="button primary group-card__buy-stars" type="button" data-buy-stars-through-channel>${starButtonIcon()} Купить звёзды</button>` : ""}${isChannel && chat.ownerId !== state.me.id ? `<button class="button small" type="button" data-report-channel-profile="${chat.id}">Пожаловаться на канал</button>` : ""}<button class="button danger" type="button" data-group-leave>Выйти из ${isChannel ? "канала" : "беседы"}</button></footer></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-group-card]").addEventListener("click", close);
@@ -2293,7 +2591,11 @@ function openGroupProfile(chat) {
       const avatar = form.get("avatar");
       const avatarData = avatar?.size ? await fileToDataUrl(avatar, 1_800_000) : (chat.avatarData || "");
       const body = { chatId: chat.id, title: form.get("title"), description: form.get("description"), avatarData };
-      if (isChannel) ["showSubscribers", "showReactions", "commentsEnabled", "isPublic"].forEach((key) => { body[key] = overlay.querySelector(`[name="${key}"]`)?.checked; });
+      if (isChannel) {
+        ["showSubscribers", "showReactions", "commentsEnabled", "isPublic"].forEach((key) => { body[key] = overlay.querySelector(`[name="${key}"]`)?.checked; });
+        body.starBonusType = form.get("starBonusType");
+        body.starBonusPercent = form.get("starBonusPercent");
+      }
       if (!isChannel && canModerate) body.inviteLinkEnabled = overlay.querySelector('[name="inviteLinkEnabled"]')?.checked;
       await api("/api/chats/update", { method: "POST", body });
       await refresh();
@@ -2317,10 +2619,9 @@ function openGroupProfile(chat) {
   overlay.querySelector("[data-link-channel]")?.addEventListener("click", () => openChannelLinkDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
   overlay.querySelector("[data-link-telegram]")?.addEventListener("click", () => openChannelTelegramDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
   overlay.querySelector("[data-link-rss]")?.addEventListener("click", () => openChannelRssDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
+  overlay.querySelector("[data-link-vk]")?.addEventListener("click", () => openChannelVkDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
   overlay.querySelector("[data-channel-appearance]")?.addEventListener("click", () => openChannelAppearanceDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
-  overlay.querySelector("[data-buy-stars-through-channel]")?.addEventListener("click", () => {
-    toast("Покупка звёзд через канал будет доступна после подключения платёжного провайдера.");
-  });
+  overlay.querySelector("[data-buy-stars-through-channel]")?.addEventListener("click", () => { close(); openChannelStarPurchase(chat); });
   overlay.querySelector("[data-report-channel-profile]")?.addEventListener("click", async (event) => {
     try { await reportTarget("channel", event.currentTarget.dataset.reportChannelProfile); } catch (error) { toast(error.message, true); }
   });
@@ -2472,10 +2773,49 @@ function openChannelRssDialog(chat, afterSave) {
   }));
 }
 
+function openChannelVkDialog(chat, afterSave) {
+  const sources = state.vkChannelLinks.filter((item) => item.channel_id === chat.id);
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  const sourceList = sources.length
+    ? `<div class="rss-source-list">${sources.map((source) => {
+      const status = source.last_error ? `Ошибка: ${source.last_error}` : source.last_sync_at ? `Проверено: ${dateFmt(source.last_sync_at)} ${timeFmt(source.last_sync_at)}` : "Ожидается первая проверка";
+      const keywords = Array.isArray(source.keywords) && source.keywords.length ? `Фильтр: ${source.keywords.join(", ")}` : "Без фильтра по словам";
+      return `<article class="rss-source"><div><b>${esc(source.source_title || "VK-группа")}</b><small title="${esc(source.source_url)}">${esc(source.source_url)}</small><small>${esc(keywords)}</small><em class="${source.last_error ? "rss-source__error" : ""}">${esc(status)}</em></div><button class="button small danger" type="button" data-disconnect-vk="${source.id}">Отключить</button></article>`;
+    }).join("")}</div>`
+    : '<p class="telegram-link-status">VK-группы ещё не подключены.</p>';
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Автопостинг из VK"><header><div><b>Автопостинг из VK</b><small>Новые публикации публичных групп будут появляться в «${esc(chat.title)}» со ссылкой на оригинал.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-vk-link-form><label>Ссылка на публичную группу VK<input name="sourceUrl" required type="url" placeholder="https://vk.com/имя_группы" autocomplete="url"></label><label>Токен доступа VK API<input name="accessToken" required type="password" placeholder="vk1.a..." autocomplete="new-password"></label><label>Ключевые слова — необязательно<textarea name="keywords" maxlength="3600" placeholder="Одно слово или фраза на строку"></textarea></label><p class="muted">Можно подключить до 10 групп. Проверка идёт примерно раз в 5 минут. Пустой список ключевых слов импортирует все новые посты; иначе импортируется пост, содержащий хотя бы одно указанное слово. История публикаций при подключении не переносится. Токен хранится только на локальном сервере и не показывается после сохранения.</p><div class="group-card__form-actions"><button class="button primary">Подключить VK-группу</button></div></form><section class="rss-sources"><div class="panel-title"><div><b>Подключённые VK-группы</b><small>${sources.length} из 10</small></div></div>${sourceList}</section></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  overlay.querySelector("[data-vk-link-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const form = new FormData(event.currentTarget);
+      const result = await api("/api/channels/vk", { method: "POST", body: { channelId: chat.id, sourceUrl: form.get("sourceUrl"), accessToken: form.get("accessToken"), keywords: form.get("keywords") } });
+      await refresh(false);
+      close();
+      toast(`VK-группа «${result.sourceTitle}» подключена. Ожидаются новые публикации.`);
+      afterSave?.();
+    } catch (error) { toast(error.message, true); }
+  });
+  overlay.querySelectorAll("[data-disconnect-vk]").forEach((button) => button.addEventListener("click", async () => {
+    if (!window.confirm("Отключить автопостинг VK? Уже импортированные публикации останутся в канале.")) return;
+    try {
+      await api("/api/channels/vk", { method: "POST", body: { channelId: chat.id, sourceId: button.dataset.disconnectVk, disconnect: true } });
+      await refresh(false);
+      close();
+      toast("VK-группа отключена.");
+      afterSave?.();
+    } catch (error) { toast(error.message, true); }
+  }));
+}
+
 function openChannelAppearanceDialog(chat, afterSave) {
   const current = chat.settings?.appearance || {};
   const wallpaper = CHAT_WALLPAPERS.some((item) => item.id === current.wallpaper) || current.wallpaper === "custom" ? current.wallpaper : "default";
-  const ownBubble = /^#[\da-f]{6}$/i.test(current.ownBubble || "") ? current.ownBubble : state.me.dialogColor || "#ffffff";
+  const ownBubble = /^#[\da-f]{6}$/i.test(current.ownBubble || "") ? current.ownBubble : state.me.dialogColor || "#dff9f9";
   const otherBubble = /^#[\da-f]{6}$/i.test(current.otherBubble || "") ? current.otherBubble : state.me.otherDialogColor || "#ffffff";
   const panelColor = /^#[\da-f]{6}$/i.test(current.panelColor || "") ? current.panelColor : state.me.dialogPanelColor || "#f4f8fc";
   const font = DIALOG_FONTS.some((item) => item.id === current.font) ? current.font : state.me.dialogFont || "business";
@@ -2540,7 +2880,7 @@ function openChannelComments(messageId) {
   const commentForm = canComment
     ? `<form class="form" data-channel-comment-form><label>Ваш комментарий<textarea name="text" maxlength="1000" placeholder="Напишите комментарий"></textarea></label><label>Фото<input name="photo" type="file" accept="image/png,image/jpeg,image/webp"></label><button class="button primary">Отправить</button></form>`
     : `<section class="channel-comment-join"><p class="muted">Подпишитесь на канал, чтобы оставить комментарий.</p>${channel?.type === "channel" ? '<button class="button primary small" type="button" data-join-comment-channel>Подписаться</button>' : ""}</section>`;
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Комментарии"><header><div><b>Комментарии</b><small>${esc(pinnedMessagePreview(message))}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-comment-list">${comments.map((comment) => { const author = userById(comment.user_id); return `<article><div class="channel-comment__author">${avatarHtml(author, "channel-comment__avatar")}<b>${esc(author?.name || "Пользователь")}</b>${comment.automated ? '<span class="channel-comment__automated">Автокомментарий</span>' : ""}</div>${comment.media_data ? `<button class="channel-comment-photo" type="button" data-open-comment-media="${esc(comment.media_data)}"><img src="${esc(comment.media_data)}" alt="Фото в комментарии"></button>` : ""}${comment.text ? `<p>${esc(comment.text)}</p>` : ""}<small>${timeFmt(comment.created_at)}</small></article>`; }).join("") || '<p class="muted">Комментариев пока нет.</p>'}</div>${commentForm}</section>`;
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Комментарии"><header><div><b>Комментарии</b><small>${esc(pinnedMessagePreview(message))}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-comment-list">${comments.map((comment) => { const author = userById(comment.user_id); return `<article><div class="channel-comment__author">${avatarHtml(author, "channel-comment__avatar")}<b>${esc(author?.name || "Пользователь")}</b></div>${comment.media_data ? `<button class="channel-comment-photo" type="button" data-open-comment-media="${esc(comment.media_data)}"><img src="${esc(comment.media_data)}" alt="Фото в комментарии"></button>` : ""}${comment.text ? `<p>${esc(comment.text)}</p>` : ""}<small>${timeFmt(comment.created_at)}</small></article>`; }).join("") || '<p class="muted">Комментариев пока нет.</p>'}</div>${commentForm}</section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector(".member-manager__close").addEventListener("click", close);
@@ -2594,16 +2934,16 @@ function messageMediaHtml(msg) {
   if (!msg.mediaType) return "";
   if (msg.mediaType === "photo") {
     const source = messageMediaUrl(msg);
-    return `<button class="message-photo-button${msg.sourceType === "rss" ? " message-photo-button--rss" : ""}" type="button" data-open-message-media="${msg.id}" data-open-message-media-source="${esc(source)}" data-media-type="photo" title="Открыть фото на весь экран" aria-label="Открыть фото на весь экран"><img class="message-photo" src="${esc(source)}" alt="Фото"></button>`;
+    return `<button class="message-photo-button${["rss", "vk"].includes(msg.sourceType) ? " message-photo-button--rss" : ""}" type="button" data-open-message-media="${msg.id}" data-open-message-media-source="${esc(source)}" data-media-type="photo" title="Открыть фото на весь экран" aria-label="Открыть фото на весь экран"><img class="message-photo" src="${esc(source)}" alt="Фото"></button>`;
   }
   if (msg.mediaType === "document") return `<a class="message-document" href="${esc(messageMediaUrl(msg))}" target="_blank" rel="noopener"><span>📄</span><b>${esc(msg.text?.replace(/^Документ:\s*/, "") || "Документ")}</b><small>Открыть документ</small></a>`;
   const source = messageMediaUrl(msg);
-  if (msg.mediaType === "video") return `<div class="message-video"><video controls playsinline preload="metadata" src="${esc(source)}"></video><button type="button" data-open-message-media="${msg.id}" title="Открыть видео на весь экран" aria-label="Открыть видео на весь экран">⤢</button></div>`;
+  if (msg.mediaType === "video") return `<div class="message-video"><video controls playsinline preload="metadata" src="${esc(source)}"></video><button type="button" data-open-message-media="${msg.id}" title="Открыть видео на весь экран" aria-label="Открыть видео на весь экран"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg></button></div>`;
   if (msg.mediaType === "voice") {
     const waveform = Array.isArray(msg.voiceWaveform) && msg.voiceWaveform.length ? msg.voiceWaveform : voiceWaveformFallback(msg.id);
-    return `<div class="message-voice"><audio class="message-audio" preload="metadata" data-media-message="voice" src="${esc(source)}"></audio><button class="message-voice__play" type="button" data-voice-playback aria-label="Воспроизвести голосовое"></button><div class="message-voice__wave" data-voice-wave>${waveform.map((value) => `<i style="--voice-level:${Math.max(8, Number(value) || 8)}%"></i>`).join("")}</div><span class="message-voice__duration" data-voice-duration>0:00</span></div>`;
+    return `<div class="message-voice"><audio class="message-audio" preload="metadata" data-media-message="voice" src="${esc(source)}"></audio><button class="message-voice__play" type="button" data-voice-playback aria-label="Воспроизвести голосовое">${actionIcon("play")}</button><div class="message-voice__wave" data-voice-wave role="slider" tabindex="0" aria-label="Перемотать голосовое" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">${waveform.map((value) => `<i style="--voice-level:${Math.max(8, Number(value) || 8)}%"></i>`).join("")}</div><span class="message-voice__duration" data-voice-duration>0:00</span></div>`;
   }
-  if (msg.mediaType === "circle") return `<div class="circle-message"><div class="circle-message__mask"><video class="message-circle" playsinline preload="auto" data-media-message="circle" src="${esc(source)}"></video></div><button class="circle-expand" type="button" data-open-circle="${msg.id}" title="Открыть видеокружок" aria-label="Открыть видеокружок">⤢</button><div class="circle-player" aria-label="Управление видеокружком"><button type="button" data-circle-playback aria-label="Воспроизвести видеокружок">▶</button><input type="range" min="0" max="100" value="0" step="0.1" data-circle-progress aria-label="Прогресс видеокружка"></div></div>`;
+  if (msg.mediaType === "circle") return `<div class="circle-message"><div class="circle-message__mask"><video class="message-circle" playsinline preload="auto" data-media-message="circle" src="${esc(source)}"></video></div><button class="circle-expand" type="button" data-open-circle="${msg.id}" title="Открыть видеокружок" aria-label="Открыть видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg></button><div class="circle-player" aria-label="Управление видеокружком"><button type="button" data-circle-playback aria-label="Воспроизвести видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 8 6-8 6Z"/></svg></button><input type="range" min="0" max="100" value="0" step="0.1" data-circle-progress aria-label="Прогресс видеокружка"></div></div>`;
   return "";
 }
 
@@ -2656,6 +2996,7 @@ function insertIntoComposer(value) {
   if (!input) return;
   const start = input.selectionStart || input.value.length;
   input.value = `${input.value.slice(0, start)}${value}${input.value.slice(input.selectionEnd || start)}`;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
   input.focus();
   input.selectionStart = input.selectionEnd = start + value.length;
 }
@@ -2742,24 +3083,35 @@ function pickRecordingMimeType(type) {
 async function recordMediaMessage(chatId, type) {
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast("Браузер не поддерживает запись.", true);
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === "circle" });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === "circle" ? cameraVideoConstraints("user") : false });
+    setChatActivity(chatId, "recording", true);
+    const circleRecorderStream = type === "circle" ? createCircleRecorderStream(stream) : null;
+    const recordingStream = circleRecorderStream?.stream || stream;
     const mimeType = pickRecordingMimeType(type);
-    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    const recorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
     const chunks = [];
     const recordingUi = showRecordingOverlay(type, stream);
+    let cameraFacing = "user";
     let cancelled = false;
     recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
     recorder.onerror = () => {
       cancelled = true;
+      circleRecorderStream?.stop();
       stream.getTracks().forEach((track) => track.stop());
       recordingUi.close();
+      stopChatActivity(chatId);
       toast("Не удалось записать медиа. Проверьте разрешения камеры и микрофона.", true);
     };
     recorder.onstop = async () => {
+      circleRecorderStream?.stop();
       stream.getTracks().forEach((track) => track.stop());
       recordingUi.close();
-      if (cancelled) return;
+      if (cancelled) {
+        stopChatActivity(chatId);
+        return;
+      }
       try {
+        setChatActivity(chatId, "sending", true);
         const recordedMimeType = recorder.mimeType || chunks.find((chunk) => chunk.type)?.type || mimeType;
         if (!chunks.length || !recordedMimeType.startsWith(type === "voice" ? "audio/" : "video/")) return toast("Запись не была создана. Попробуйте ещё раз.", true);
         const blob = new Blob(chunks, { type: recordedMimeType });
@@ -2778,36 +3130,83 @@ async function recordMediaMessage(chatId, type) {
           createdAt: Math.floor(pendingStartedAt / 1000),
           deliveryState: "sending",
         });
-        scrollChatToLatest = true;
-        renderChat();
-        await api("/api/messages", { method: "POST", body: { chatId, text: "", mediaType: type, mediaData, voiceWaveform: type === "voice" ? recordingUi.waveform() : [] } });
+        appendLiveMessage(pendingOutgoingMessages.get(temporaryId));
+        const response = await api("/api/messages", { method: "POST", body: { chatId, text: "", mediaType: type, mediaData, voiceWaveform: type === "voice" ? recordingUi.waveform() : [] } });
         const remainingAnimation = 360 - (Date.now() - pendingStartedAt);
         if (remainingAnimation > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingAnimation));
-        pendingOutgoingMessages.delete(temporaryId);
-        await refresh(false);
+        confirmPendingMessage(temporaryId, response.messageId);
       } catch (error) {
         const pending = [...pendingOutgoingMessages.entries()].find(([, message]) => message.chatId === chatId && message.mediaType === type && message.deliveryState === "sending");
         if (pending) {
           pending[1].deliveryState = "failed";
           pendingOutgoingMessages.set(pending[0], pending[1]);
-          renderChat();
+          replaceLiveMessage(pending[0], pending[1]);
         }
+        stopChatActivity(chatId);
         toast(error.message || "Не удалось подготовить запись к отправке.", true);
+      } finally {
+        stopChatActivity(chatId);
       }
     };
     recordingUi.onCancel(() => { cancelled = true; if (recorder.state !== "inactive") recorder.stop(); });
     recordingUi.onStop(() => { if (recorder.state !== "inactive") recorder.stop(); });
+    recordingUi.onSwitchCamera(async () => {
+      const nextFacing = cameraFacing === "user" ? "environment" : "user";
+      await switchMediaStreamCamera(stream, nextFacing, recordingUi.preview(), cameraFacing);
+      circleRecorderStream?.refresh();
+      cameraFacing = nextFacing;
+    });
     recorder.start(250);
   } catch (error) {
     toast(error.name === "NotAllowedError" ? "Разрешите доступ к микрофону/камере." : error.message, true);
   }
 }
 
+function createCircleRecorderStream(sourceStream) {
+  const canvas = document.createElement("canvas");
+  if (typeof canvas.captureStream !== "function") return null;
+  const sourceVideo = document.createElement("video");
+  sourceVideo.autoplay = true;
+  sourceVideo.muted = true;
+  sourceVideo.playsInline = true;
+  sourceVideo.srcObject = sourceStream;
+  sourceVideo.play().catch(() => {});
+  canvas.width = 720;
+  canvas.height = 720;
+  const context = canvas.getContext("2d");
+  let frame = 0;
+  const draw = () => {
+    if (sourceVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      const sourceWidth = sourceVideo.videoWidth || 720;
+      const sourceHeight = sourceVideo.videoHeight || 720;
+      const side = Math.min(sourceWidth, sourceHeight);
+      context.drawImage(sourceVideo, (sourceWidth - side) / 2, (sourceHeight - side) / 2, side, side, 0, 0, canvas.width, canvas.height);
+    }
+    frame = requestAnimationFrame(draw);
+  };
+  draw();
+  const canvasStream = canvas.captureStream(30);
+  return {
+    stream: new MediaStream([...sourceStream.getAudioTracks(), ...canvasStream.getVideoTracks()]),
+    refresh() {
+      sourceVideo.srcObject = null;
+      sourceVideo.srcObject = sourceStream;
+      sourceVideo.play().catch(() => {});
+    },
+    stop() {
+      cancelAnimationFrame(frame);
+      canvasStream.getTracks().forEach((track) => track.stop());
+      sourceVideo.pause();
+      sourceVideo.srcObject = null;
+    },
+  };
+}
+
 function showRecordingOverlay(type, stream) {
   const overlay = document.createElement("div");
   overlay.className = "recording-overlay";
   overlay.innerHTML = type === "circle"
-    ? `<div class="recording-card recording-circle-card"><video autoplay muted playsinline></video><div class="recording-status"><span class="recording-dot"></span> Запись кружка <b data-record-time>0:00</b></div><div class="recording-actions"><button class="button" data-cancel>Отмена</button><button class="button danger" data-stop>Остановить и отправить</button></div></div>`
+    ? `<div class="recording-card recording-circle-card"><video autoplay muted playsinline></video><div class="recording-status"><span class="recording-dot"></span> Запись кружка <b data-record-time>0:00</b></div><div class="recording-actions"><button class="button" type="button" data-switch-camera>${callControlIcon("cameraFlip")}<span>Сменить камеру</span></button><button class="button" data-cancel>Отмена</button><button class="button danger" data-stop>Остановить и отправить</button></div></div>`
     : `<div class="recording-card"><div class="recording-status"><span class="recording-dot"></span> Голосовое сообщение <b data-record-time>0:00</b></div><div class="voice-wave" data-wave>${Array.from({ length: 34 }, () => '<i></i>').join("")}</div><p class="muted">Говорите — дорожка показывает уровень звука</p><div class="recording-actions"><button class="button" data-cancel>Отмена</button><button class="button danger" data-stop>Остановить и отправить</button></div></div>`;
   document.body.append(overlay);
   const video = overlay.querySelector("video");
@@ -2848,8 +3247,18 @@ function showRecordingOverlay(type, stream) {
   return {
     close,
     waveform() { return waveform.length ? waveform : Array.from({ length: 40 }, () => 12); },
+    preview() { return video; },
     onCancel(handler) { overlay.querySelector("[data-cancel]").addEventListener("click", handler); },
     onStop(handler) { overlay.querySelector("[data-stop]").addEventListener("click", handler); },
+    onSwitchCamera(handler) {
+      const button = overlay.querySelector("[data-switch-camera]");
+      button?.addEventListener("click", async () => {
+        button.disabled = true;
+        try { await handler(); }
+        catch (error) { toast(error.name === "NotAllowedError" ? "Разрешите доступ к камере." : "Не удалось переключить камеру.", true); }
+        finally { button.disabled = false; }
+      });
+    },
   };
 }
 
@@ -2887,6 +3296,158 @@ async function editUsername() {
 
 async function refresh(full = true) { await loadState(); full ? renderApp() : (renderChat(), renderRight()); }
 
+const CHAT_ACTIVITY_LABELS = { typing: "печатает", sending: "отправляет", recording: "записывает" };
+
+function chatActivityHtml(chat, fallback = "") {
+  const activity = state.activities?.[chat.id] || "";
+  const label = CHAT_ACTIVITY_LABELS[activity];
+  return `<span data-chat-activity="${chat.id}" class="chat-activity${label ? " is-active" : ""}">${esc(label || fallback)}</span>`;
+}
+
+function updateActiveChatActivity() {
+  const chat = state.chats.find((item) => item.id === activeChatId);
+  if (!chat || chat.type !== "direct") return;
+  const activity = state.activities?.[chat.id] || "";
+  const label = CHAT_ACTIVITY_LABELS[activity];
+  const subtitle = chatMeta(chat).subtitle;
+  const element = app.querySelector(`[data-chat-activity="${chat.id}"]`);
+  if (!element) return;
+  element.textContent = label || subtitle;
+  element.classList.toggle("is-active", Boolean(label));
+}
+
+function isDirectChat(chatId) {
+  return state?.chats.some((chat) => chat.id === chatId && chat.type === "direct");
+}
+
+function setChatActivity(chatId, activity, force = false) {
+  if (!isDirectChat(chatId) || !CHAT_ACTIVITY_LABELS[activity]) return;
+  const timestamp = Date.now();
+  if (!force && lastChatActivity.chatId === chatId && lastChatActivity.activity === activity && timestamp - lastChatActivity.sentAt < 3500) return;
+  clearTimeout(chatActivityPingTimer);
+  lastChatActivity = { chatId, activity, sentAt: timestamp };
+  api("/api/chats/activity", { method: "POST", body: { chatId, activity } }).catch(() => {});
+  chatActivityPingTimer = window.setTimeout(() => {
+    const textarea = app.querySelector("#composer textarea");
+    if (activity === "typing" && textarea?.value.trim()) setChatActivity(chatId, activity, true);
+    else if (["recording", "sending"].includes(activity)) setChatActivity(chatId, activity, true);
+  }, 4000);
+}
+
+function stopChatActivity(chatId) {
+  clearTimeout(chatActivityPingTimer);
+  if (!isDirectChat(chatId)) return;
+  chatActivityPingTimer = null;
+  if (lastChatActivity.chatId !== chatId || !lastChatActivity.activity) return;
+  lastChatActivity = { chatId: null, activity: "", sentAt: 0 };
+  api("/api/chats/activity", { method: "POST", body: { chatId, activity: "" } }).catch(() => {});
+}
+
+function startTypingActivity(chatId) { setChatActivity(chatId, "typing"); }
+function stopTypingActivity(chatId) { stopChatActivity(chatId); }
+
+function appendLiveMessage(message) {
+  if (!message || message.chatId !== activeChatId) return;
+  const messagesBox = app.querySelector("#messages");
+  if (!messagesBox || messagesBox.querySelector(`#message-${CSS.escape(message.id)}`)) return;
+  const shouldScroll = message.senderId === state.me.id || messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 8;
+  messagesBox.querySelector(".empty-chat-notice")?.remove();
+  messagesBox.insertAdjacentHTML("beforeend", messageHtml(message));
+  const element = messagesBox.querySelector(`#message-${CSS.escape(message.id)}`);
+  bindLiveMessageElement(element);
+  if (shouldScroll) messagesBox.scrollTo({ top: messagesBox.scrollHeight, behavior: "auto" });
+}
+
+function replaceLiveMessage(previousId, message) {
+  const element = app.querySelector(`#message-${CSS.escape(previousId)}`);
+  if (!element) return appendLiveMessage(message);
+  element.outerHTML = messageHtml(message);
+  bindLiveMessageElement(app.querySelector(`#message-${CSS.escape(message.id)}`));
+}
+
+function confirmPendingMessage(temporaryId, messageId) {
+  const pending = pendingOutgoingMessages.get(temporaryId);
+  if (!pending || !messageId) return;
+  pending.id = messageId;
+  pending.deliveryState = "sent";
+  pendingOutgoingMessages.delete(temporaryId);
+  if (!state.messages.some((message) => message.id === messageId)) state.messages.push(pending);
+  app.querySelector(`#message-${CSS.escape(messageId)}`)?.remove();
+  replaceLiveMessage(temporaryId, pending);
+  stopChatActivity(pending.chatId);
+}
+
+function bindLiveMessageElement(element) {
+  if (!element) return;
+  element.querySelectorAll("[data-open-profile]").forEach((button) => button.addEventListener("click", () => openProfile(button.dataset.openProfile)));
+  element.querySelectorAll("[data-remove-pending-message]").forEach((button) => button.addEventListener("click", () => removePendingMessage(button.dataset.removePendingMessage)));
+  element.querySelectorAll("[data-open-message-media]").forEach((button) => button.addEventListener("click", () => {
+    const source = button.dataset.openMessageMediaSource;
+    if (source) openMedia(source, button.dataset.mediaType || "photo");
+    else {
+      const message = state.messages.find((item) => item.id === button.dataset.openMessageMedia);
+      if (message) openMedia(messageMediaUrl(message), message.mediaType);
+    }
+  }));
+  element.querySelectorAll("[data-open-circle]").forEach((button) => button.addEventListener("click", () => openCircle(button.dataset.openCircle)));
+  element.querySelectorAll("[data-circle-playback]").forEach((button) => button.addEventListener("click", () => {
+    const video = button.closest(".circle-message")?.querySelector(".message-circle");
+    if (!video) return;
+    if (video.paused) video.play().catch(() => toast("Не удалось запустить видеокружок.", true));
+    else video.pause();
+  }));
+  element.querySelectorAll("[data-circle-progress]").forEach((input) => input.addEventListener("input", () => {
+    const video = input.closest(".circle-message")?.querySelector(".message-circle");
+    if (video?.duration) video.currentTime = (Number(input.value) / 100) * video.duration;
+  }));
+  element.querySelectorAll(".message-circle").forEach((video) => {
+    const circle = video.closest(".circle-message");
+    const button = circle?.querySelector("[data-circle-playback]");
+    const progress = circle?.querySelector("[data-circle-progress]");
+    const update = () => {
+      if (!button) return;
+      button.innerHTML = video.paused
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 8 6-8 6Z"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12M15 6v12"/></svg>';
+    };
+    video.addEventListener("play", update);
+    video.addEventListener("pause", update);
+    video.addEventListener("loadeddata", () => circle?.classList.add("is-ready"), { once: true });
+    video.addEventListener("timeupdate", () => { if (video.duration && progress) progress.value = String((video.currentTime / video.duration) * 100); });
+    video.addEventListener("click", () => { if (video.paused) video.play().catch(() => toast("Не удалось запустить видеокружок.", true)); else video.pause(); });
+  });
+  element.querySelectorAll("[data-voice-playback]").forEach((button) => button.addEventListener("click", async () => {
+    const voice = button.closest(".message-voice");
+    const audio = voice?.querySelector(".message-audio");
+    if (!audio) return;
+    if (!audio.paused) { audio.pause(); audio.currentTime = 0; return; }
+    try { await audio.play(); }
+    catch { toast("Не удалось запустить голосовое сообщение.", true); }
+  }));
+  element.querySelectorAll(".message-voice").forEach((voice) => {
+    const audio = voice.querySelector(".message-audio");
+    const button = voice.querySelector("[data-voice-playback]");
+    const duration = voice.querySelector("[data-voice-duration]");
+    const wave = voice.querySelector("[data-voice-wave]");
+    const format = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+    const update = () => {
+      button.innerHTML = actionIcon(audio.paused ? "play" : "stop");
+      if (audio.duration) duration.textContent = `${format(audio.currentTime)} / ${format(audio.duration)}`;
+      const bars = Math.ceil(((audio.currentTime / audio.duration) || 0) * wave.children.length);
+      wave.querySelectorAll("i").forEach((bar, index) => bar.classList.toggle("is-played", index < bars));
+    };
+    audio.addEventListener("loadedmetadata", update);
+    audio.addEventListener("timeupdate", update);
+    audio.addEventListener("play", update);
+    audio.addEventListener("pause", update);
+  });
+  element.addEventListener("click", (event) => {
+    if (event.target.closest("button, audio, video, input, label")) return;
+    const message = [...state.messages, ...pendingOutgoingMessages.values()].find((item) => item.id === element.id.replace("message-", ""));
+    if (message && !message.mediaType?.includes("system")) openMessageMenu(message);
+  });
+}
+
 async function markChatRead(chatId) {
   const chat = state.chats.find((item) => item.id === chatId);
   if (!chat?.unreadCount) return;
@@ -2902,7 +3463,8 @@ async function markChatRead(chatId) {
 function beginMessagePolling() {
   clearInterval(messagePollTimer);
   messagePollTimer = setInterval(async () => {
-    if (!token || !state) return;
+    if (!token || !state || messagePollInProgress) return;
+    messagePollInProgress = true;
     const knownMessageIds = new Set(state.messages.map((message) => message.id));
     const previousListSignature = chatListSignature();
     const previousStoriesSignature = state.stories.map((story) => `${story.id}:${Number(story.viewed)}`).join("|");
@@ -2911,10 +3473,16 @@ function beginMessagePolling() {
       const hasNewActiveMessage = activeChatId && state.messages.some((message) => message.chatId === activeChatId && !knownMessageIds.has(message.id));
       const shouldUpdateLeft = previousListSignature !== chatListSignature() || previousStoriesSignature !== state.stories.map((story) => `${story.id}:${Number(story.viewed)}`).join("|");
       if (shouldUpdateLeft && activeSection !== "settings" && document.activeElement?.id !== "userSearch") renderLeft();
-      const composer = app.querySelector("#composer textarea");
-      if (hasNewActiveMessage && !composer?.value) renderChat();
+      if (hasNewActiveMessage) {
+        state.messages
+          .filter((message) => message.chatId === activeChatId && !knownMessageIds.has(message.id))
+          .forEach(appendLiveMessage);
+        markChatRead(activeChatId);
+      }
+      updateActiveChatActivity();
     } catch { /* The next cycle will retry after a temporary connection error. */ }
-  }, 3000);
+    finally { messagePollInProgress = false; }
+  }, 1500);
 }
 
 function beginCallPolling() {
@@ -2931,7 +3499,7 @@ async function startCall(chat, callType) {
   if (activeCall) { toast("Сначала завершите текущий звонок.", true); return; }
   let stream = null;
   let peer = null;
-  const pendingCall = { callType, role: "caller", chatId: chat.id, pending: true, peer: null, stream: null, remoteStream: null };
+  const pendingCall = { callType, role: "caller", chatId: chat.id, pending: true, peer: null, stream: null, remoteStream: null, cameraFacing: "user" };
   try {
     activeCall = pendingCall;
     showCallOverlay(`Звоним: ${chatMeta(chat).title}`, callType, null);
@@ -3013,7 +3581,7 @@ async function acceptCall(call) {
     await peer.setLocalDescription(answer);
     await waitForIce(peer);
     await api("/api/calls/answer", { method: "POST", body: { callId: call.id, answerSdp: peer.localDescription } });
-    activeCall = { id: call.id, peer, stream, remoteStream: peer.remoteStream || null, callType: call.callType, role: "receiver", chatId: call.chatId };
+    activeCall = { id: call.id, peer, stream, remoteStream: peer.remoteStream || null, callType: call.callType, role: "receiver", chatId: call.chatId, cameraFacing: "user" };
     showCallOverlay(`Звонок: ${call.callerName}`, call.callType, stream, null);
     updateCallOverlay("Звонок подключён");
   } catch (error) {
@@ -3024,13 +3592,78 @@ async function acceptCall(call) {
   }
 }
 
-function callMediaConstraints(callType) {
+function cameraVideoConstraints(facingMode = "user", exact = false) {
+  return { facingMode: exact ? { exact: facingMode } : { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } };
+}
+
+function callMediaConstraints(callType, facingMode = "user") {
   return {
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    video: callType === "video"
-      ? { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } }
-      : false,
+    video: callType === "video" ? cameraVideoConstraints(facingMode) : false,
   };
+}
+
+async function switchMediaStreamCamera(stream, facingMode, preview, previousFacing = "user") {
+  const currentTrack = stream?.getVideoTracks?.()[0];
+  if (!currentTrack) throw new Error("Камера недоступна.");
+  const wasEnabled = currentTrack.enabled;
+  let replacement;
+  currentTrack.stop();
+  try {
+    replacement = await requestCameraStream(facingMode);
+    const nextTrack = replacement.getVideoTracks()[0];
+    if (!nextTrack) throw new Error("Камера недоступна.");
+    nextTrack.enabled = wasEnabled;
+    stream.removeTrack(currentTrack);
+    stream.addTrack(nextTrack);
+    updateCameraPreview(preview, stream);
+    return nextTrack;
+  } catch (error) {
+    replacement?.getTracks().forEach((track) => track.stop());
+    await restoreCameraStream(stream, currentTrack, previousFacing, wasEnabled, preview);
+    throw error;
+  }
+}
+
+async function requestCameraStream(facingMode) {
+  let firstError;
+  for (const exact of [true, false]) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: cameraVideoConstraints(facingMode, exact) });
+      const track = stream.getVideoTracks()[0];
+      const actualFacing = track?.getSettings?.().facingMode;
+      if (actualFacing && actualFacing !== facingMode) {
+        stream.getTracks().forEach((item) => item.stop());
+        continue;
+      }
+      return stream;
+    } catch (error) { firstError ||= error; }
+  }
+  const error = firstError || new Error("Камера недоступна.");
+  error.message = facingMode === "environment" ? "Задняя камера недоступна на этом устройстве." : "Фронтальная камера недоступна на этом устройстве.";
+  throw error;
+}
+
+async function restoreCameraStream(stream, previousTrack, facingMode, enabled, preview) {
+  try {
+    const recovery = await requestCameraStream(facingMode);
+    const recoveryTrack = recovery.getVideoTracks()[0];
+    if (!recoveryTrack) throw new Error("Камера недоступна.");
+    recoveryTrack.enabled = enabled;
+    stream.removeTrack(previousTrack);
+    stream.addTrack(recoveryTrack);
+    updateCameraPreview(preview, stream);
+    return recoveryTrack;
+  } catch {
+    return null;
+  }
+}
+
+function updateCameraPreview(preview, stream) {
+  if (!preview) return;
+  preview.srcObject = null;
+  preview.srcObject = stream;
+  preview.play().catch(() => {});
 }
 
 function attachRemoteStream(stream) {
@@ -3099,6 +3732,7 @@ function createPeer(stream) {
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
       { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun.cloudflare.com:3478" },
     ],
   });
   stream.getTracks().forEach((track) => peer.addTrack(track, stream));
@@ -3122,7 +3756,10 @@ function createPeer(stream) {
       }, 8000);
       return;
     }
-    if (["failed", "closed"].includes(peer.connectionState) && activeCall?.peer === peer) finishCall(false);
+    if (peer.connectionState === "failed" && activeCall?.peer === peer) {
+      updateCallOverlay("Не удалось соединить устройства. Для разных сетей нужен защищённый relay-сервер.");
+    }
+    if (peer.connectionState === "closed" && activeCall?.peer === peer) finishCall(false);
   };
   return peer;
 }
@@ -3144,8 +3781,8 @@ function showCallOverlay(title, callType, stream) {
   if (state.me.chatBackground === "custom" && state.me.chatBackgroundData) {
     box.style.setProperty("--call-chat-wallpaper", `url('${state.me.chatBackgroundData.replace(/'/g, "\\'")}')`);
   }
-  const cameraControl = callType === "video" ? `<button class="button call-control" data-toggle-camera>${callControlIcon("camera")}<span data-camera-label>Камера вкл.</span></button>` : "";
-  box.innerHTML = `<div class="call-window"><div class="call-window__head"><div><h2>${esc(title)}</h2><p data-call-status>Подключение…</p></div><div class="call-window__view-actions"><button class="button call-control" data-toggle-call-fullscreen aria-label="На весь экран" title="На весь экран">${callControlIcon("expand")}<span data-fullscreen-label>На весь экран</span></button><button class="button call-control" data-toggle-call-minimized aria-label="Свернуть звонок" title="Свернуть звонок">${callControlIcon("minimize")}<span data-minimize-label>Свернуть</span></button></div></div><div class="call-videos ${callType === "audio" ? "audio-only" : ""}"><video class="call-videos__remote" data-remote-video autoplay playsinline></video><video class="call-videos__local" data-local-video autoplay muted playsinline></video></div><div class="call-actions"><button class="button call-control" data-toggle-mic>${callControlIcon("microphone")}<span data-mic-label>Микрофон вкл.</span></button>${cameraControl}<button class="button call-control" data-toggle-pause>${callControlIcon("pause")}<span data-pause-label>Пауза</span></button><button class="button danger call-control" data-end-call>${callControlIcon("end")}<span>Завершить звонок</span></button></div></div>`;
+  const cameraControl = callType === "video" ? `<button class="button call-control" data-toggle-camera>${callControlIcon("camera")}<span data-camera-label>Камера вкл.</span></button><button class="button call-control" data-switch-call-camera aria-label="Сменить камеру" title="Сменить камеру">${callControlIcon("cameraFlip")}<span>Сменить камеру</span></button>` : "";
+  box.innerHTML = `<div class="call-window"><div class="call-window__head"><div><h2>${esc(title)}</h2><p data-call-status>Подключение…</p></div><div class="call-window__view-actions"><button class="button call-control" data-toggle-call-fullscreen aria-label="На весь экран" title="На весь экран">${callControlIcon("expand")}<span data-fullscreen-label>На весь экран</span></button><button class="button call-control" data-toggle-call-minimized aria-label="Свернуть звонок" title="Свернуть звонок">${callControlIcon("minimize")}<span data-minimize-label>Свернуть</span></button></div></div><div class="call-videos ${callType === "audio" ? "audio-only" : ""}" data-call-videos><video class="call-videos__remote" data-remote-video autoplay playsinline title="Сделать главным видео"></video><video class="call-videos__local" data-local-video autoplay muted playsinline title="Сделать главным видео"></video></div><div class="call-actions"><button class="button call-control" data-toggle-mic>${callControlIcon("microphone")}<span data-mic-label>Микрофон вкл.</span></button>${cameraControl}<button class="button call-control" data-toggle-pause>${callControlIcon("pause")}<span data-pause-label>Пауза</span></button><button class="button danger call-control" data-end-call>${callControlIcon("end")}<span>Завершить звонок</span></button></div></div>`;
   document.body.append(box);
   const localVideo = box.querySelector("[data-local-video]");
   if (stream) {
@@ -3157,9 +3794,15 @@ function showCallOverlay(title, callType, stream) {
   box.querySelector("[data-end-call]").addEventListener("click", () => finishCall());
   box.querySelector("[data-toggle-mic]").addEventListener("click", toggleMicrophone);
   box.querySelector("[data-toggle-camera]")?.addEventListener("click", toggleCamera);
+  box.querySelector("[data-switch-call-camera]")?.addEventListener("click", switchCallCamera);
   box.querySelector("[data-toggle-pause]").addEventListener("click", toggleCallPause);
   box.querySelector("[data-toggle-call-fullscreen]").addEventListener("click", toggleCallFullscreen);
   box.querySelector("[data-toggle-call-minimized]").addEventListener("click", toggleCallMinimized);
+  box.querySelector("[data-remote-video]").addEventListener("click", () => setCallPrimaryVideo("remote"));
+  box.querySelector("[data-local-video]").addEventListener("click", () => setCallPrimaryVideo("local"));
+  box.querySelector(".call-window").addEventListener("click", (event) => {
+    if (box.classList.contains("is-minimized") && !event.target.closest("button")) toggleCallMinimized();
+  });
 }
 
 function updateCallOverlay(message) { const status = document.querySelector("[data-call-status]"); if (status) status.textContent = message; }
@@ -3195,6 +3838,11 @@ function toggleCallMinimized() {
     button.innerHTML = `${callControlIcon(minimized ? "expand" : "minimize")}<span data-minimize-label>${minimized ? "Открыть" : "Свернуть"}</span>`;
   }
 }
+function setCallPrimaryVideo(side) {
+  if (activeCall?.callType !== "video") return;
+  activeCall.primaryVideo = side;
+  document.querySelector("[data-call-videos]")?.classList.toggle("primary-local", side === "local");
+}
 function toggleMicrophone(event) {
   const audioTrack = activeCall?.stream?.getAudioTracks()[0];
   if (!audioTrack) return;
@@ -3206,6 +3854,43 @@ function toggleCamera(event) {
   if (!videoTrack) return;
   videoTrack.enabled = !videoTrack.enabled;
   event.currentTarget.innerHTML = `${callControlIcon(videoTrack.enabled ? "camera" : "cameraOff")}<span data-camera-label>${videoTrack.enabled ? "Камера вкл." : "Камера выкл."}</span>`;
+}
+async function switchCallCamera(event) {
+  const call = activeCall;
+  if (!call?.stream || !call.peer || call.callType !== "video") return;
+  const button = event.currentTarget;
+  const nextFacing = call.cameraFacing === "user" ? "environment" : "user";
+  const currentFacing = call.cameraFacing;
+  let replacement;
+  let currentTrack;
+  let sender;
+  try {
+    button.disabled = true;
+    currentTrack = call.stream.getVideoTracks()[0];
+    sender = call.peer.getSenders().find((entry) => entry.track?.kind === "video");
+    if (!currentTrack || !sender) throw new Error("Камера недоступна.");
+    const wasEnabled = currentTrack.enabled;
+    currentTrack.stop();
+    replacement = await requestCameraStream(nextFacing);
+    const nextTrack = replacement.getVideoTracks()[0];
+    if (!nextTrack) throw new Error("Камера недоступна.");
+    nextTrack.enabled = wasEnabled;
+    await sender.replaceTrack(nextTrack);
+    call.stream.removeTrack(currentTrack);
+    call.stream.addTrack(nextTrack);
+    call.cameraFacing = nextFacing;
+    updateCameraPreview(document.querySelector("[data-local-video]"), call.stream);
+  } catch (error) {
+    replacement?.getTracks().forEach((track) => track.stop());
+    const recoveryTrack = currentTrack && sender
+      ? await restoreCameraStream(call.stream, currentTrack, currentFacing, currentTrack.enabled, document.querySelector("[data-local-video]"))
+      : null;
+    if (recoveryTrack) {
+      try { await sender.replaceTrack(recoveryTrack); }
+      catch { recoveryTrack.stop(); }
+    }
+    toast(error.name === "NotAllowedError" ? "Разрешите доступ к камере." : error.message || "Не удалось переключить камеру.", true);
+  } finally { button.disabled = false; }
 }
 function toggleCallPause(event) {
   if (!activeCall?.stream) return;
@@ -3310,10 +3995,10 @@ function sourceTypeBadge(sourceType) { const labels = { telegram: "Telegram", in
 function reviewWord(count) { return count % 10 === 1 && count % 100 !== 11 ? "отзыв" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) ? "отзыва" : "отзывов"; }
 function myStatuses() { return state.userStatuses.filter((us) => us.user_id === state.me.id).map((us) => state.statuses.find((s) => s.id === us.status_id)).filter(Boolean); }
 function visibleStatusesFor(userId) { const hidden = new Set(userById(userId)?.hiddenStatusIds || []); return state.userStatuses.filter((us) => us.user_id === userId && !hidden.has(us.status_id)).map((us) => state.statuses.find((s) => s.id === us.status_id)).filter(Boolean); }
-function currentLimits() { return state.accountLevel?.limits || state.accountLevel?.current?.limits || state.settings.limits?.[isPremium(state.me) ? "premium" : "regular"] || {}; }
-function isPremium(user) { return user.premiumUntil && user.premiumUntil > Math.floor(Date.now() / 1000); }
-function premiumBadge(user) { return isPremium(user) ? '<span class="badge">PREMIUM</span>' : ""; }
-function avatarHtml(user, className = "avatar") { const storyClass = user?.id && hasUnseenStory(user.id) && !className.includes("message__author-avatar") ? " has-story" : ""; return user?.avatarData ? `<img class="${className}${storyClass}" src="${esc(user.avatarData)}" alt="">` : `<div class="${className}${storyClass}">${esc(initials(user?.name || "U"))}</div>`; }
+function currentLimits() { return state.accountLevel?.limits || state.accountLevel?.current?.limits || {}; }
+function premiumBadge() { return ""; }
+function avatarTone(user) { const source = String(user?.id || user?.username || user?.name || "user"); let hash = 0; for (let index = 0; index < source.length; index += 1) hash = ((hash * 31) + source.charCodeAt(index)) | 0; return Math.abs(hash) % 8; }
+function avatarHtml(user, className = "avatar") { const storyClass = user?.id && hasUnseenStory(user.id) && !className.includes("message__author-avatar") ? " has-story" : ""; return user?.avatarData ? `<img class="${className}${storyClass}" src="${esc(user.avatarData)}" alt="">` : `<div class="${className} avatar-tone-${avatarTone(user)}${storyClass}">${esc(initials(user?.name || "U"))}</div>`; }
 function storyHtml(story) { const user = userById(story.user_id); const own = story.user_id === state.me.id; return `<button class="story${story.viewed ? "" : " has-story"}" data-open-story="${story.id}"><img src="${esc(story.media_data)}" alt="Сторис"><b>${esc(user?.name || "Пользователь")}</b><span>${own ? `👁 ${story.viewerCount || 0}${story.permanent ? " · постоянная" : ""}` : esc(story.caption || "")}</span></button>`; }
 function postHtml(post) {
   const user = userById(post.user_id);
@@ -3356,7 +4041,7 @@ function openProfilePost(postId) {
   });
 }
 function galleryPostHtml(post) { return `<button class="gallery-photo" data-open-profile-post="${post.id}"><img src="${esc(post.media_data)}" alt="Фото поста"></button>`; }
-function limitLabel(key) { return ({ maxStars: "Звёзд на балансе", postsPerDay: "Постов в сутки", storiesPerDay: "Сторис в сутки", storiesPerMonth: "Сторис за 30 дней", groupsJoined: "Подписок на группы", groupsCreated: "Созданных групп", communitiesJoined: "Вступлений в беседы", communitiesCreated: "Созданных бесед", channelsJoined: "Подписок на каналы", channelsCreated: "Созданных каналов", savedAccounts: "Сохранённых входов" })[key] || key; }
+function limitLabel(key) { return ({ maxStars: "Звёзд на балансе", postsPerDay: "Постов в сутки (профиль и каналы)", storiesPerDay: "Сторис в сутки", storiesPerMonth: "Сторис за 30 дней", groupsJoined: "Подписок на группы", groupsCreated: "Созданных групп", communitiesJoined: "Вступлений в беседы", communitiesCreated: "Созданных бесед", channelsJoined: "Подписок на каналы", channelsCreated: "Созданных каналов", savedAccounts: "Сохранённых входов", autopostSourcesTotal: "Всех источников автопостинга", autopostSourcesPerChannel: "Источников автопостинга на канал" })[key] || key; }
 function openMedia(source, mediaType = "photo") {
   if (!source) return;
   const isVideo = mediaType === "video";
@@ -3392,6 +4077,7 @@ function openCircle(messageId) {
   const updatePlayback = () => {
     playButton.textContent = video.paused ? "▶" : "Ⅱ";
     playButton.setAttribute("aria-label", video.paused ? "Воспроизвести" : "Пауза");
+    overlay.querySelector(".circle-viewer")?.classList.toggle("is-playing", !video.paused);
   };
   playButton.addEventListener("click", () => { if (video.paused) video.play(); else video.pause(); });
   progress.addEventListener("input", () => { if (video.duration) video.currentTime = (Number(progress.value) / 100) * video.duration; setProgress(progress.value); });
@@ -3477,9 +4163,25 @@ function saveAccounts(accounts) {
   localStorage.setItem(SAVED_ACCOUNTS_KEY, saved);
   localStorage.setItem("chatpro_saved_accounts_v1", saved);
 }
-function fileToDataUrl(file, maxBytes) {
+function fileMimeType(file) {
+  const supplied = String(file?.type || "").toLowerCase();
+  if (supplied === "image/jpg") return "image/jpeg";
+  if (supplied) return supplied;
+  const extension = String(file?.name || "").split(".").pop().toLowerCase();
+  return { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", m4a: "audio/mp4", pdf: "application/pdf" }[extension] || "application/octet-stream";
+}
+
+async function fileToDataUrl(file, maxBytes) {
   if (!file || !file.size) return Promise.reject(new Error("Выберите файл."));
   if (file.size > maxBytes) return Promise.reject(new Error("Файл слишком большой."));
+  if (typeof file.arrayBuffer === "function") {
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += 0x4000) binary += String.fromCharCode.apply(null, bytes.subarray(index, index + 0x4000));
+      return `data:${fileMimeType(file)};base64,${btoa(binary)}`;
+    } catch (_) { /* Older browsers continue through the FileReader fallback. */ }
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -3515,11 +4217,41 @@ function channelAppearanceStyle(appearance) {
   }
   return styles.join(";");
 }
-function chatBackgroundClass(user) { return `chat-background-${user?.chatBackground || "default"}`; }
+function chatBackgroundClass(user) { return `chat-background-${["whatsapp", "live"].includes(user?.chatBackground) ? "default" : user?.chatBackground || "default"}`; }
 function chatBackgroundStyle(user) { return user?.chatBackground === "custom" && user.chatBackgroundData ? ` style="background-image: linear-gradient(rgba(255,255,255,.15), rgba(255,255,255,.15)), url('${esc(user.chatBackgroundData)}')"` : ""; }
 function initials(name) { return String(name || "U").trim().split(/\s+/).slice(0,2).map((x) => x[0]?.toUpperCase() || "").join("") || "U"; }
 function timeFmt(ts) { return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" }).format(ts * 1000); }
 function dateFmt(ts) { return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric" }).format(ts * 1000); }
 function starDateFmt(ts) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(ts * 1000); }
 function esc(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
-function toast(message, error = false) { document.querySelector(".toast")?.remove(); const el = document.createElement("div"); el.className = `toast${error ? " error" : ""}`; el.textContent = message; document.body.append(el); setTimeout(() => el.remove(), 3200); }
+function toastAction(message) {
+  const text = String(message || "");
+  if (/недостаточно звёзд/i.test(text)) return { section: "stars", label: "Звёзды", message: "Недостаточно звёзд. Пополните баланс в разделе «Звёзды»." };
+  if (/на вашем уровне|лимит баланса|превышает лимит баланса|баланс этого аккаунта ограничен/i.test(text)) return { section: "account-level", label: "Уровень аккаунта", message: "Вы достигли лимита. Его можно повысить в разделе «Уровень аккаунта»." };
+  return null;
+}
+
+function toast(message, error = false) {
+  document.querySelector(".toast")?.remove();
+  const action = error && toastAction(message);
+  const el = document.createElement("div");
+  el.className = `toast${error ? " error" : ""}${action ? " toast--action" : ""}`;
+  const text = document.createElement("span");
+  text.className = "toast__text";
+  text.textContent = action?.message || message;
+  el.append(text);
+  if (action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "toast__action";
+    button.textContent = action.label;
+    button.addEventListener("click", () => {
+      document.querySelectorAll(".member-manager-overlay, .group-card-overlay, .message-menu-overlay, .chat-menu-overlay, .simple-actions-overlay").forEach((overlay) => overlay.remove());
+      el.remove();
+      openMenuSection(action.section);
+    });
+    el.append(button);
+  }
+  document.body.append(el);
+  setTimeout(() => el.remove(), action ? 6400 : 3200);
+}

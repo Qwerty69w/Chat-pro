@@ -12,6 +12,7 @@ application and do not affect real Telegram/VK/web pages.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import ipaddress
 import json
@@ -24,6 +25,7 @@ import sqlite3
 import smtplib
 import threading
 import time
+from decimal import Decimal, ROUND_HALF_UP
 from email.message import EmailMessage
 from html import unescape
 from http import HTTPStatus
@@ -37,6 +39,8 @@ from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "minigram.sqlite3"
+HOST = os.environ.get("CHAT_PRO_HOST", "127.0.0.1")
+PORT = int(os.environ.get("CHAT_PRO_PORT", "8000"))
 ADMIN_KEY = os.environ.get("MINIGRAM_ADMIN_KEY", "admin123")
 TELEGRAM_POLL_INTERVAL = 15
 TELEGRAM_MEDIA_MAX_BYTES = 2_500_000
@@ -44,24 +48,55 @@ RSS_POLL_INTERVAL = 300
 RSS_MAX_BYTES = 512_000
 RSS_MAX_ENTRIES = 100
 RSS_IMAGE_MAX_BYTES = 2_500_000
+VK_POLL_INTERVAL = 300
+VK_API_VERSION = "5.199"
 AUTH_CODE_TTL = 600
 AUTH_CODE_MAX_ATTEMPTS = 5
+CHAT_ACTIVITY_TTL = 6
+chat_activities: dict[tuple[str, str], tuple[str, float]] = {}
+chat_activities_lock = threading.Lock()
 SMTP_HOST = os.environ.get("SMTP_HOST", "")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USERNAME)
-TWILIO_ACCOUNT_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
-TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN", "")
-TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER", "")
+SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").strip().lower() in {"1", "true", "yes"}
+YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
+YOOKASSA_SECRET_KEY = os.environ.get("YOOKASSA_SECRET_KEY", "")
+YOOKASSA_RETURN_URL = os.environ.get("YOOKASSA_RETURN_URL", "").rstrip("/")
 CHANNEL_MANAGER_ROLES = {"owner", "admin", "author"}
 LEVEL_LIMIT_KEYS = {
-    "maxStars", "storiesPerDay", "storiesPerMonth", "postsPerDay",
-    "groupsJoined", "groupsCreated", "communitiesJoined", "communitiesCreated",
-    "channelsJoined", "channelsCreated", "savedAccounts",
+    "maxStars", "messagesPerDay", "storiesPerDay", "storiesPerMonth", "postsPerDay",
+    "communitiesJoined", "communitiesCreated",
+    "channelsJoined", "channelsCreated", "savedAccounts", "autopostSourcesTotal", "autopostSourcesPerChannel",
 }
-LEVEL_CRITERIA_KEYS = {"messages", "posts", "stories", "reviews", "groups", "communities", "channels"}
+ACTIVITY_METRIC_KEYS = {
+    "stars_balance", "direct_chats", "channels_joined", "communities_joined",
+    "channels_created", "communities_created", "channel_subscribers",
+    "community_subscribers", "messages", "posts", "stories", "reviews",
+    "donations_sent", "stars_donated", "donations_received", "login_streak", "completed_calls",
+    "call_partners", "chat_pro_review_video",
+}
+LEVEL_CRITERIA_KEYS = ACTIVITY_METRIC_KEYS | {"communities", "channels"}
 DEFAULT_UI_APPEARANCE = {"outlineColor": "#65ddf8", "glowColor": "#21d5f0", "glowIntensity": 35}
+DEFAULT_PUBLIC_BRANDING = {"loginLogoData": ""}
+LOGIN_LOGO_MAX_BYTES = 2_500_000
+DEFAULT_STAR_PACKAGES = [
+    {"id": "stars-100", "stars": 100, "price": "99.00"},
+    {"id": "stars-550", "stars": 550, "price": "449.00"},
+    {"id": "stars-1200", "stars": 1200, "price": "899.00"},
+]
+DEFAULT_PUBLIC_LEGAL = {
+    "sellerStatus": "самозанятый", "sellerName": "Ковнерев Андрей Александрович", "inn": "440601014935",
+    "vkUrl": "https://vk.ru/id_ne_naidi", "telegram": "Qwerty248i", "email": "andreikovnerev333@gmail.com",
+    "purchaseDescription": "Пользователь приобретает внутренние звёзды Chat-Pro для доступа к доступным функциям аккаунта: Premium, повышению уровня аккаунта, увеличению лимитов и функциям автопостинга в соцсети. Доступность, стоимость и лимиты конкретных функций устанавливаются в интерфейсе сервиса.",
+    "refundTerms": "Обращение по возврату принимается на andreikovnerev333@gmail.com. Возврат рассматривается, если деньги были списаны, но звёзды не начислены, либо оплаченная функция не предоставлена по вине сервиса. Если платёж не был успешно завершён и списание не произошло, возврат не требуется. При технической ошибке сервиса средства возвращаются или звёзды начисляются после проверки платежа.",
+    "userAgreementUrl": "/requisites#user-agreement", "purchaseTermsUrl": "/requisites#purchase-terms", "privacyPolicyUrl": "/requisites#privacy-policy",
+    "userAgreementText": "ПОЛЬЗОВАТЕЛЬСКОЕ СОГЛАШЕНИЕ CHAT-PRO\n\nДата публикации: 21 августа 2026 года\n\n1. ОБЩИЕ ПОЛОЖЕНИЯ\n1.1. Настоящее соглашение определяет условия использования сервиса Chat-Pro (далее — Сервис), доступного по адресу chat-pro-ru.space. Администратор Сервиса — самозанятый Ковнерев Андрей Александрович, ИНН 440601014935 (далее — Администратор).\n1.2. Регистрация, вход в аккаунт или фактическое использование Сервиса означает принятие настоящего соглашения. Если пользователь не согласен с его условиями, он обязан прекратить использование Сервиса.\n1.3. Сервис предоставляет функции обмена сообщениями, создания групп, сообществ и каналов, публикации материалов, работы со звёздами, уровнями аккаунта, Premium и иными доступными функциями. Состав функций может изменяться.\n\n2. ВОЗРАСТ И АККАУНТ\n2.1. Самостоятельно пользоваться Сервисом могут лица, достигшие 14 лет. Пользователь от 14 до 18 лет подтверждает, что при необходимости получил согласие законного представителя.\n2.2. Пользователь обязан указывать достоверные данные, обеспечивать сохранность пароля и не передавать доступ к аккаунту третьим лицам. Все действия, совершённые через аккаунт до сообщения о его компрометации, считаются действиями пользователя.\n2.3. Администратор вправе ограничить, приостановить или удалить аккаунт при нарушении настоящего соглашения, требований закона, прав третьих лиц или безопасности Сервиса.\n\n3. ПРАВИЛА ИСПОЛЬЗОВАНИЯ\n3.1. Пользователь самостоятельно отвечает за сообщения, файлы, публикации, ссылки и иные материалы, которые он размещает или направляет через Сервис.\n3.2. Запрещается размещать незаконные материалы, нарушать авторские и иные права третьих лиц, распространять вредоносное ПО, спам, персональные данные третьих лиц без основания, угрозы, оскорбления, материалы с призывами к противоправным действиям, а также обходить технические ограничения Сервиса.\n3.3. При использовании автопостинга пользователь подтверждает наличие прав и законных оснований на подключение источника и публикацию импортируемых материалов.\n3.4. Администратор не является автором пользовательских материалов и не несёт ответственности за их содержание, однако вправе удалить или ограничить доступ к материалу при получении обоснованной жалобы или выявлении нарушения.\n\n4. ДОСТУПНОСТЬ И БЕЗОПАСНОСТЬ\n4.1. Сервис предоставляется по принципу «как есть». Администратор принимает разумные меры для его работоспособности, но не гарантирует отсутствие технических перерывов, ошибок или совместимость со всеми устройствами и программами.\n4.2. Передача данных между браузером и Сервисом выполняется по защищённому соединению HTTPS. Сквозное шифрование сообщений не заявляется, если оно прямо не обозначено в интерфейсе отдельной функции.\n4.3. Пользователь обязан самостоятельно создавать резервные копии значимых материалов, если это допускает функциональность Сервиса.\n\n5. ЗВЁЗДЫ И ПЛАТНЫЕ ФУНКЦИИ\n5.1. Звёзды являются внутренними цифровыми единицами Сервиса, не являются денежными средствами, электронной валютой или банковским счётом. Порядок их покупки и использования установлен условиями покупки.\n5.2. Лимиты функций, стоимость звёзд, Premium и уровней аккаунта отображаются в интерфейсе Сервиса и могут меняться для будущих операций.\n\n6. ОБРАБОТКА ДАННЫХ И ОБРАЩЕНИЯ\n6.1. Порядок обработки данных изложен в Политике обработки персональных данных, являющейся частью настоящего соглашения.\n6.2. По вопросам Сервиса, платежей, возвратов и нарушений можно обратиться по адресу andreikovnerev333@gmail.com.\n\n7. ЗАКЛЮЧИТЕЛЬНЫЕ ПОЛОЖЕНИЯ\n7.1. Администратор может изменять настоящее соглашение. Новая редакция публикуется на этой странице и применяется с момента публикации, если не указан иной срок.\n7.2. К отношениям сторон применяется законодательство Российской Федерации с учётом обязательных норм страны пользователя, если они применимы.",
+    "purchaseTermsText": "УСЛОВИЯ ПОКУПКИ ЗВЁЗД CHAT-PRO\n\nДата публикации: 21 августа 2026 года\n\n1. ПРЕДМЕТ ПОКУПКИ\n1.1. Пользователь приобретает внутренние звёзды Chat-Pro в количестве и по цене, указанным на странице оплаты перед её подтверждением. Продавец — самозанятый Ковнерев Андрей Александрович, ИНН 440601014935.\n1.2. Звёзды могут использоваться только внутри Chat-Pro для доступных функций аккаунта, включая Premium, уровни аккаунта, увеличение лимитов и функции автопостинга, если такие функции доступны пользователю. Конкретные лимиты и стоимость определяются настройками Сервиса и показываются пользователю до совершения операции.\n1.3. Звёзды не являются деньгами, не обмениваются на наличные или безналичные денежные средства, не подлежат переводу за пределы Сервиса и не предоставляют имущественных прав вне Chat-Pro.\n\n2. ОПЛАТА И НАЧИСЛЕНИЕ\n2.1. Оплата проводится на защищённой странице платёжного партнёра. Сервис не получает и не хранит реквизиты банковской карты пользователя.\n2.2. Звёзды начисляются только после подтверждения успешной оплаты платёжным сервисом. Время начисления может зависеть от обработки платежа и технических обстоятельств.\n2.3. До подтверждения оплаты пользователь видит количество звёзд, цену в рублях и ссылку на условия покупки. Нажатие кнопки перехода к оплате после принятия условий означает согласие с этими условиями.\n\n3. ИСПОЛЬЗОВАНИЕ ЗВЁЗД\n3.1. После списания звёзд за цифровую функцию результат операции отображается в интерфейсе Сервиса.\n3.2. Если функция временно недоступна по технической причине, пользователь может обратиться в поддержку для проверки операции.\n3.3. Стоимость будущих пакетов и функций может меняться. Изменение не влияет на уже начисленные звёзды и уже оплаченные операции, кроме случаев исправления очевидной технической ошибки.\n\n4. ВОЗВРАТ И РАССМОТРЕНИЕ ОБРАЩЕНИЙ\n4.1. Обращение по вопросам оплаты и возврата направляется на andreikovnerev333@gmail.com с описанием проблемы, датой, суммой и, при наличии, идентификатором платежа. Не направляйте полные данные банковской карты.\n4.2. Возврат рассматривается, если денежные средства были списаны, но звёзды не начислены, либо оплаченная цифровая функция не была предоставлена по вине Сервиса. Перед решением Администратор вправе сверить статус платежа с платёжным сервисом.\n4.3. Если платёж не был завершён и списания денежных средств не произошло, возврат не требуется. Если банк временно зарезервировал сумму, сроки её разблокировки определяются банком или платёжным сервисом.\n4.4. Решение по обращению принимается в разумный срок после получения данных, необходимых для проверки. Права пользователя, предусмотренные применимым законодательством, не ограничиваются настоящими условиями.\n\n5. ЗАКЛЮЧИТЕЛЬНЫЕ ПОЛОЖЕНИЯ\n5.1. Эти условия являются частью пользовательского соглашения Chat-Pro.\n5.2. Актуальная редакция всегда размещается на этой странице. Для будущих покупок применяется редакция, опубликованная на момент перехода к оплате.",
+    "privacyPolicyText": "ПОЛИТИКА ОБРАБОТКИ ПЕРСОНАЛЬНЫХ ДАННЫХ CHAT-PRO\n\nДата публикации: 21 августа 2026 года\n\n1. ОПЕРАТОР И ОБЛАСТЬ ПРИМЕНЕНИЯ\n1.1. Оператором персональных данных является самозанятый Ковнерев Андрей Александрович, ИНН 440601014935, e-mail: andreikovnerev333@gmail.com (далее — Оператор).\n1.2. Политика применяется к данным пользователей сайта и Сервиса Chat-Pro.\n\n2. КАКИЕ ДАННЫЕ ОБРАБАТЫВАЮТСЯ\n2.1. Оператор может обрабатывать: имя, username, адрес e-mail или номер телефона, пароль в защищённом виде, сообщения, файлы и иные материалы, которые пользователь размещает в Сервисе, сведения о действиях в Сервисе, IP-адрес, сведения браузера и устройства, технические журналы, а также данные обращений в поддержку.\n2.2. Платёжные реквизиты банковских карт не обрабатываются и не хранятся Оператором; оплату обрабатывает платёжный партнёр на своей защищённой странице.\n\n3. ЦЕЛИ И ОСНОВАНИЯ ОБРАБОТКИ\n3.1. Данные используются для регистрации и работы аккаунта, подтверждения контакта, предоставления функций Сервиса, обеспечения безопасности, предотвращения нарушений, ответа на обращения, исполнения пользовательского соглашения, выполнения требований законодательства и урегулирования споров.\n3.2. Основанием обработки являются согласие пользователя, исполнение договора с пользователем, законный интерес Оператора по защите Сервиса, а также обязанности, установленные применимым законодательством.\n\n4. ХРАНЕНИЕ И ЗАЩИТА\n4.1. Данные хранятся в течение срока, необходимого для работы Сервиса, исполнения соглашения, рассмотрения обращений и выполнения обязанностей, предусмотренных законом. Сообщения, файлы и технические журналы могут храниться в том числе для обеспечения безопасности и исполнения требований законодательства; при наличии соответствующей обязанности срок хранения может составлять до 6 месяцев или иной срок, установленный законом.\n4.2. Оператор применяет организационные и технические меры защиты, включая разграничение доступа и защищённое HTTPS-соединение при передаче данных. Сквозное шифрование сообщений не заявляется, если это прямо не обозначено в интерфейсе отдельной функции.\n4.3. Пользователь понимает, что абсолютная безопасность в сети Интернет не может быть гарантирована.\n\n5. ПЕРЕДАЧА ДАННЫХ\n5.1. Данные могут быть переданы лицам, которые обеспечивают техническую работу Сервиса, хостинг, доставку e-mail, обработку платежей или поддержку, только в объёме, необходимом для соответствующей цели и при наличии правового основания.\n5.2. Данные также могут быть предоставлены государственным органам в случаях и порядке, предусмотренных законодательством.\n5.3. Сервис доступен пользователям за пределами России. При использовании Сервиса пользователь понимает, что обработка может затрагивать трансграничную передачу данных, если это необходимо для работы используемой инфраструктуры и допускается применимым законодательством.\n\n6. ПРАВА ПОЛЬЗОВАТЕЛЯ\n6.1. Пользователь вправе запросить сведения об обработке своих данных, уточнить их, отозвать согласие в случаях, когда обработка основана на согласии, а также обратиться с вопросом или жалобой по адресу andreikovnerev333@gmail.com.\n6.2. Удаление аккаунта или отдельных данных может быть ограничено, если их хранение необходимо для исполнения закона, предотвращения злоупотреблений, защиты прав Оператора или третьих лиц.\n\n7. ИЗМЕНЕНИЕ ПОЛИТИКИ\n7.1. Оператор может обновлять Политику. Новая редакция публикуется на этой странице и действует с момента публикации, если не указан иной срок.",
+    "starPackages": DEFAULT_STAR_PACKAGES,
+}
 
 
 def nonnegative_int(value, field_name: str, maximum: int = 1_000_000) -> int:
@@ -91,17 +126,128 @@ def normalize_ui_appearance(value) -> dict:
     }
 
 
+def normalize_image_data(value, maximum_bytes: int, field_name: str) -> str:
+    data = str(value or "").strip()
+    match = re.fullmatch(r"data:image/(png|jpe?g|webp);base64,([A-Za-z0-9+/]*={0,2})", data, re.IGNORECASE)
+    if not match:
+        raise ValueError(f"{field_name} должен быть в формате PNG, JPG или WebP.")
+    image_type = "jpeg" if match.group(1).lower() in ("jpg", "jpeg") else match.group(1).lower()
+    try:
+        image = base64.b64decode(match.group(2), validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError(f"Не удалось прочитать {field_name.lower()}.") from None
+    if len(image) > maximum_bytes:
+        raise ValueError(f"Размер файла не должен превышать {maximum_bytes / 1_000_000:g} МБ.")
+    signatures = {
+        "png": b"\x89PNG\r\n\x1a\n",
+        "jpeg": b"\xff\xd8\xff",
+        "webp": b"RIFF",
+    }
+    valid = image.startswith(signatures[image_type])
+    if image_type == "webp":
+        valid = valid and image[8:12] == b"WEBP"
+    if not valid:
+        raise ValueError(f"Файл не является корректным изображением {image_type.upper()}.")
+    return f"data:image/{image_type};base64,{match.group(2)}"
+
+
+def normalize_public_branding(value) -> dict:
+    if value in (None, ""):
+        value = {}
+    if not isinstance(value, dict) or set(value) - set(DEFAULT_PUBLIC_BRANDING):
+        raise ValueError("Настройки логотипа содержат неподдерживаемые поля.")
+    logo_data = str(value.get("loginLogoData", "")).strip()
+    if not logo_data:
+        return DEFAULT_PUBLIC_BRANDING.copy()
+    return {"loginLogoData": normalize_image_data(logo_data, LOGIN_LOGO_MAX_BYTES, "Логотип")}
+
+
+def normalize_star_packages(value) -> list[dict]:
+    if not isinstance(value, list) or not value or len(value) > 20:
+        raise ValueError("Укажите от одного до 20 пакетов звёзд.")
+    normalized, package_ids = [], set()
+    for package in value:
+        if not isinstance(package, dict):
+            raise ValueError("Каждый пакет звёзд должен быть объектом.")
+        package_id = str(package.get("id", "")).strip().lower()
+        stars = nonnegative_int(package.get("stars"), "stars", 1_000_000)
+        price = str(package.get("price", "")).strip()
+        if not re.fullmatch(r"[1-9]\d{0,6}\.\d{2}", price):
+            raise ValueError("Цена пакета должна быть в формате 99.00.")
+        if not re.fullmatch(r"[a-z0-9_-]{3,40}", package_id) or package_id in package_ids or not stars:
+            raise ValueError("Некорректный ID или количество звёзд в пакете.")
+        package_ids.add(package_id)
+        normalized.append({"id": package_id, "stars": stars, "price": price})
+    return normalized
+
+
+def normalize_public_url(value, field_name: str) -> str:
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    if value.startswith("/") or urlparse(value).scheme in {"http", "https"}:
+        return value[:500]
+    raise ValueError(f"Поле «{field_name}» должно содержать ссылку http(s) или путь сайта.")
+
+
+def normalize_public_legal(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Публичная информация должна быть объектом.")
+    unknown = set(value) - set(DEFAULT_PUBLIC_LEGAL)
+    if unknown:
+        raise ValueError("В публичной информации есть неподдерживаемые поля.")
+    legal = {**DEFAULT_PUBLIC_LEGAL, **value}
+    normalized = {
+        "sellerStatus": str(legal["sellerStatus"]).strip()[:120], "sellerName": str(legal["sellerName"]).strip()[:160],
+        "inn": str(legal["inn"]).strip()[:20], "vkUrl": normalize_public_url(legal["vkUrl"], "vkUrl"),
+        "telegram": str(legal["telegram"]).strip().lstrip("@")[:64], "email": str(legal["email"]).strip()[:254],
+        "purchaseDescription": str(legal["purchaseDescription"]).strip()[:1000], "refundTerms": str(legal["refundTerms"]).strip()[:5000],
+        "userAgreementUrl": normalize_public_url(legal["userAgreementUrl"], "userAgreementUrl"),
+        "purchaseTermsUrl": normalize_public_url(legal["purchaseTermsUrl"], "purchaseTermsUrl"), "privacyPolicyUrl": normalize_public_url(legal["privacyPolicyUrl"], "privacyPolicyUrl"),
+        "userAgreementText": str(legal["userAgreementText"]).strip()[:10000], "purchaseTermsText": str(legal["purchaseTermsText"]).strip()[:10000],
+        "privacyPolicyText": str(legal["privacyPolicyText"]).strip()[:10000],
+        "starPackages": normalize_star_packages(legal["starPackages"]),
+    }
+    if normalized["email"] and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized["email"]):
+        raise ValueError("Укажите корректный e-mail для публичной страницы.")
+    if normalized["inn"] and not re.fullmatch(r"\d{10}|\d{12}", normalized["inn"]):
+        raise ValueError("ИНН должен состоять из 10 или 12 цифр.")
+    return normalized
+
+
 def normalize_level_reward(value, field_name: str) -> dict:
     if value in (None, ""):
         value = {}
     if not isinstance(value, dict):
         raise ValueError(f"Поле «{field_name}» должно быть объектом.")
-    unknown = set(value) - {"stars", "premiumDays"}
+    unknown = set(value) - {"stars", "premiumDays", "limits", "recurringStars", "recurringIntervalDays", "recurringDurationDays", "accountLevelId", "recommendOwnChannel", "starPackageDiscountPercent"}
     if unknown:
-        raise ValueError("В награде допустимы только stars и premiumDays.")
+        raise ValueError("В награде указаны неподдерживаемые поля.")
+    limits = value.get("limits", {})
+    if not isinstance(limits, dict) or set(limits) - LEVEL_LIMIT_KEYS:
+        raise ValueError("В награде указаны неподдерживаемые лимиты.")
+    recurring_stars = nonnegative_int(value.get("recurringStars", 0), "recurringStars")
+    recurring_interval_days = nonnegative_int(value.get("recurringIntervalDays", 0), "recurringIntervalDays", 365)
+    recurring_duration_days = nonnegative_int(value.get("recurringDurationDays", 0), "recurringDurationDays", 3650)
+    if recurring_stars and (not recurring_interval_days or not recurring_duration_days):
+        raise ValueError("Для периодических звёзд укажите интервал и срок действия.")
+    if (recurring_interval_days or recurring_duration_days) and not recurring_stars:
+        raise ValueError("Укажите количество периодических звёзд.")
+    account_level_id = str(value.get("accountLevelId", "") or "").strip().lower()
+    if account_level_id and not re.fullmatch(r"[a-z0-9_-]{2,40}", account_level_id):
+        raise ValueError("ID уровня в награде указан некорректно.")
+    recommend_own_channel = value.get("recommendOwnChannel", False)
+    if not isinstance(recommend_own_channel, bool):
+        raise ValueError("Параметр рекомендации канала должен быть логическим значением.")
     return {
         "stars": nonnegative_int(value.get("stars", 0), "stars"),
-        "premiumDays": nonnegative_int(value.get("premiumDays", 0), "premiumDays", 3650),
+        "limits": {key: nonnegative_int(limits[key], key) for key in limits},
+        "recurringStars": recurring_stars,
+        "recurringIntervalDays": recurring_interval_days,
+        "recurringDurationDays": recurring_duration_days,
+        "accountLevelId": account_level_id,
+        "recommendOwnChannel": recommend_own_channel,
+        "starPackageDiscountPercent": nonnegative_int(value.get("starPackageDiscountPercent", 0), "starPackageDiscountPercent", 99),
     }
 
 
@@ -131,15 +277,15 @@ def normalize_account_levels(value) -> list[dict]:
         limits = raw_level.get("limits", {})
         if not isinstance(criteria, dict) or not isinstance(limits, dict):
             raise ValueError("Критерии и лимиты уровня должны быть объектами.")
-        unknown_criteria = set(criteria) - LEVEL_CRITERIA_KEYS
-        unknown_limits = set(limits) - LEVEL_LIMIT_KEYS
+        unknown_criteria = set(criteria) - LEVEL_CRITERIA_KEYS - {"groups", "groups_created", "groups_joined", "group_subscribers"}
+        unknown_limits = set(limits) - LEVEL_LIMIT_KEYS - {"groupsJoined", "groupsCreated"}
         if unknown_criteria or unknown_limits:
             raise ValueError("В уровне есть неподдерживаемые критерии или лимиты.")
         normalized_criteria = {
             key: nonnegative_int(criteria[key], key)
-            for key in criteria if nonnegative_int(criteria[key], key)
+            for key in criteria if key in LEVEL_CRITERIA_KEYS and nonnegative_int(criteria[key], key)
         }
-        normalized_limits = {key: nonnegative_int(limits[key], key) for key in limits}
+        normalized_limits = {key: nonnegative_int(limits[key], key) for key in limits if key in LEVEL_LIMIT_KEYS}
         levels.append({
             "id": level_id,
             "title": title,
@@ -177,6 +323,44 @@ def loads(value, default=None):
         return default
 
 
+def yookassa_star_packages(con: sqlite3.Connection | None = None) -> list[dict]:
+    if con:
+        row = con.execute("SELECT value FROM settings WHERE key = 'public_legal'").fetchone()
+        legal = loads(row["value"], {}) if row else {}
+        if isinstance(legal, dict) and legal.get("starPackages"):
+            return normalize_star_packages(legal["starPackages"])
+    raw_packages = os.environ.get("YOOKASSA_STAR_PACKAGES", "")
+    return normalize_star_packages(loads(raw_packages, None) if raw_packages else DEFAULT_STAR_PACKAGES)
+
+
+def discounted_price(price: str, discount_percent: int) -> str:
+    amount = Decimal(price)
+    multiplier = Decimal(100 - discount_percent) / Decimal(100)
+    return str((amount * multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def yookassa_configured() -> bool:
+    return bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY and YOOKASSA_RETURN_URL)
+
+
+def yookassa_request(path: str, method: str = "GET", payload: dict | None = None, idempotence_key: str | None = None) -> dict:
+    if not yookassa_configured():
+        raise ValueError("Оплата ЮKassa пока не настроена на сервере.")
+    credentials = base64.b64encode(f"{YOOKASSA_SHOP_ID}:{YOOKASSA_SECRET_KEY}".encode("utf-8")).decode("ascii")
+    data = dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {"Authorization": f"Basic {credentials}", "Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    if idempotence_key:
+        headers["Idempotence-Key"] = idempotence_key
+    request = urlrequest.Request(f"https://api.yookassa.ru/v3{path}", data=data, headers=headers, method=method)
+    try:
+        with urlrequest.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError) as error:
+        raise ValueError("Не удалось подтвердить операцию в ЮKassa. Попробуйте позже.") from error
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 210_000)
@@ -202,14 +386,6 @@ def normalize_email(value) -> str:
     return email
 
 
-def normalize_phone(value) -> str:
-    raw = str(value or "").strip()
-    digits = re.sub(r"\D", "", raw)
-    if not raw.startswith("+") or not 8 <= len(digits) <= 15:
-        raise ValueError("Введите номер в международном формате, например +79991234567.")
-    return f"+{digits}"
-
-
 def generate_auth_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
@@ -222,31 +398,16 @@ def deliver_email_code(email: str, code: str, purpose: str) -> None:
     message["To"] = email
     message.set_content(f"{purpose}\n\nВаш код: {code}\nОн действует 10 минут. Никому не сообщайте этот код.")
     if not all((SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM)):
-        print(f"[DEV] Код e-mail для {email}: {code}")
-        return
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as client:
-        client.starttls()
-        client.login(SMTP_USERNAME, SMTP_PASSWORD)
-        client.send_message(message)
-
-
-def deliver_sms_code(phone: str, code: str, purpose: str) -> None:
-    if not all((TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER)):
-        print(f"[DEV] Код SMS для {phone}: {code}")
-        return
-    encoded = urlencode({"To": phone, "From": TWILIO_FROM_NUMBER, "Body": f"Chat-Pro: {purpose}. Код: {code}. Действует 10 минут."}).encode("utf-8")
-    credentials = base64.b64encode(f"{TWILIO_ACCOUNT_SID}:{TWILIO_AUTH_TOKEN}".encode("utf-8")).decode("ascii")
-    request = urlrequest.Request(
-        f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
-        data=encoded,
-        headers={"Authorization": f"Basic {credentials}", "Content-Type": "application/x-www-form-urlencoded"},
-    )
+        raise ValueError("Отправка e-mail пока не настроена. Обратитесь к администрации сайта.")
     try:
-        with urlrequest.urlopen(request, timeout=15) as response:
-            if response.status not in {200, 201}:
-                raise ValueError("SMS-провайдер не принял сообщение.")
-    except urlerror.URLError as error:
-        raise ValueError("Не удалось отправить SMS-код. Попробуйте позже.") from error
+        client_class = smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
+        with client_class(SMTP_HOST, SMTP_PORT, timeout=15) as client:
+            if not SMTP_USE_SSL:
+                client.starttls()
+            client.login(SMTP_USERNAME, SMTP_PASSWORD)
+            client.send_message(message)
+    except (OSError, smtplib.SMTPException) as error:
+        raise ValueError("Не удалось отправить код на e-mail. Попробуйте позже.") from error
 
 
 def public_user(row: sqlite3.Row | dict | None) -> dict | None:
@@ -257,7 +418,6 @@ def public_user(row: sqlite3.Row | dict | None) -> dict | None:
         "name": row["name"],
         "username": row["username"],
         "stars": row["stars"],
-        "premiumUntil": row["premium_until"],
         "theme": row["theme"],
         "siteColor": row["site_color"],
         "siteBackground": row["site_background"],
@@ -268,6 +428,7 @@ def public_user(row: sqlite3.Row | dict | None) -> dict | None:
         "dialogPanelStyle": row["dialog_panel_style"],
         "dialogBubbleStyle": row["dialog_bubble_style"],
         "dialogFont": row["dialog_font"],
+        "textScale": row["text_scale"] if "text_scale" in row.keys() else "system",
         "chatBackground": row["chat_background"],
         "chatBackgroundData": row["chat_background_data"],
         "sidebarBackgroundData": row["sidebar_background_data"],
@@ -319,6 +480,7 @@ def message_to_dict(row: sqlite3.Row) -> dict:
         "pinned": bool(row["pinned"]),
         "pinHidden": bool(row["pin_hidden"]) if "pin_hidden" in row.keys() else False,
         "forwardedFrom": row["forwarded_from"] if "forwarded_from" in row.keys() else None,
+        "forwardedFromUserId": row["forwarded_from_user_id"] if "forwarded_from_user_id" in row.keys() else None,
         "sourceType": row["source_type"] if "source_type" in row.keys() else None,
         "sourceId": row["source_id"] if "source_id" in row.keys() else None,
         "replyToId": row["reply_to_id"] if "reply_to_id" in row.keys() else None,
@@ -348,12 +510,13 @@ def init_db() -> None:
               site_color TEXT NOT NULL DEFAULT '#2aabee',
               site_background TEXT NOT NULL DEFAULT 'default',
               site_background_data TEXT,
-              dialog_color TEXT NOT NULL DEFAULT '#ffffff',
+              dialog_color TEXT NOT NULL DEFAULT '#dff9f9',
               other_dialog_color TEXT NOT NULL DEFAULT '#ffffff',
               dialog_panel_color TEXT NOT NULL DEFAULT '#f4f8fc',
               dialog_panel_style TEXT NOT NULL DEFAULT 'interactive-light',
               dialog_bubble_style TEXT NOT NULL DEFAULT 'custom',
               dialog_font TEXT NOT NULL DEFAULT 'business',
+              text_scale TEXT NOT NULL DEFAULT 'system',
               chat_background TEXT NOT NULL DEFAULT 'cyan',
               chat_background_data TEXT,
               sidebar_background_data TEXT,
@@ -366,6 +529,7 @@ def init_db() -> None:
               avatar_data TEXT,
               last_login_day TEXT,
               login_streak INTEGER NOT NULL DEFAULT 0,
+              agreement_accepted_at INTEGER,
               created_at INTEGER NOT NULL
             );
 
@@ -462,6 +626,7 @@ def init_db() -> None:
               reactions_json TEXT NOT NULL DEFAULT '{}',
               pinned INTEGER NOT NULL DEFAULT 0,
               forwarded_from TEXT,
+              forwarded_from_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
               reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
               edited_at INTEGER,
               created_at INTEGER NOT NULL
@@ -724,6 +889,14 @@ def init_db() -> None:
               PRIMARY KEY (user_id, level_id)
             );
 
+            CREATE TABLE IF NOT EXISTS account_level_reward_grants (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              level_id TEXT NOT NULL,
+              reward_id TEXT NOT NULL REFERENCES activity_rewards(id) ON DELETE CASCADE,
+              granted_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, reward_id)
+            );
+
             CREATE TABLE IF NOT EXISTS telegram_channel_links (
               channel_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
               source_chat_ref TEXT NOT NULL,
@@ -782,6 +955,30 @@ def init_db() -> None:
               PRIMARY KEY (source_id, entry_id)
             );
 
+            CREATE TABLE IF NOT EXISTS vk_channel_sources (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              source_url TEXT NOT NULL,
+              source_ref TEXT NOT NULL,
+              source_title TEXT NOT NULL DEFAULT '',
+              owner_id INTEGER NOT NULL,
+              access_token TEXT NOT NULL,
+              keywords_json TEXT NOT NULL DEFAULT '[]',
+              next_poll_at INTEGER NOT NULL DEFAULT 0,
+              last_sync_at INTEGER,
+              last_error TEXT,
+              created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              UNIQUE(channel_id, source_url)
+            );
+
+            CREATE TABLE IF NOT EXISTS vk_source_imported_posts (
+              source_id TEXT NOT NULL REFERENCES vk_channel_sources(id) ON DELETE CASCADE,
+              post_id INTEGER NOT NULL,
+              imported_at INTEGER NOT NULL,
+              PRIMARY KEY (source_id, post_id)
+            );
+
             CREATE TABLE IF NOT EXISTS star_transactions (
               id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -791,6 +988,38 @@ def init_db() -> None:
               created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS yookassa_payments (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              package_id TEXT NOT NULL,
+              stars INTEGER NOT NULL,
+              amount_value TEXT NOT NULL,
+              channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+              channel_bonus_type TEXT,
+              channel_bonus_amount TEXT,
+              yookassa_payment_id TEXT UNIQUE,
+              status TEXT NOT NULL DEFAULT 'created',
+              terms_accepted_at INTEGER,
+              credited_at INTEGER,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS yookassa_payments_user_idx ON yookassa_payments(user_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS channel_star_purchases (
+              id TEXT PRIMARY KEY,
+              payment_id TEXT NOT NULL UNIQUE REFERENCES yookassa_payments(id) ON DELETE CASCADE,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              buyer_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              stars INTEGER NOT NULL,
+              bonus_type TEXT NOT NULL,
+              bonus_amount TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS channel_star_purchases_channel_idx ON channel_star_purchases(channel_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS activity_rewards (
               id TEXT PRIMARY KEY,
               title TEXT NOT NULL,
@@ -798,6 +1027,7 @@ def init_db() -> None:
               criteria_json TEXT NOT NULL DEFAULT '{}',
               reward_stars INTEGER NOT NULL DEFAULT 0,
               premium_days INTEGER NOT NULL DEFAULT 0,
+              reward_json TEXT NOT NULL DEFAULT '{}',
               active INTEGER NOT NULL DEFAULT 1,
               created_at INTEGER NOT NULL
             );
@@ -807,6 +1037,37 @@ def init_db() -> None:
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
               claimed_at INTEGER NOT NULL,
               PRIMARY KEY (reward_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS personal_limit_rewards (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              source_type TEXT NOT NULL,
+              source_id TEXT NOT NULL,
+              limits_json TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, source_type, source_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS personal_star_package_discounts (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              source_type TEXT NOT NULL,
+              source_id TEXT NOT NULL,
+              discount_percent INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, source_type, source_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recurring_star_rewards (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              source_type TEXT NOT NULL,
+              source_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              stars INTEGER NOT NULL,
+              interval_seconds INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              next_credit_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, source_type, source_id)
             );
             """
         )
@@ -901,6 +1162,8 @@ def init_db() -> None:
             con.execute("ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
         if "forwarded_from" not in message_columns:
             con.execute("ALTER TABLE messages ADD COLUMN forwarded_from TEXT")
+        if "forwarded_from_user_id" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN forwarded_from_user_id TEXT REFERENCES users(id) ON DELETE SET NULL")
         if "reply_to_id" not in message_columns:
             con.execute("ALTER TABLE messages ADD COLUMN reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL")
         if "edited_at" not in message_columns:
@@ -940,6 +1203,23 @@ def init_db() -> None:
             con.execute("ALTER TABLE reviews ADD COLUMN source_type TEXT NOT NULL DEFAULT 'website'")
         if "city" not in review_columns:
             con.execute("ALTER TABLE reviews ADD COLUMN city TEXT NOT NULL DEFAULT ''")
+        user_columns = {row["name"] for row in con.execute("PRAGMA table_info(users)").fetchall()}
+        if "agreement_accepted_at" not in user_columns:
+            con.execute("ALTER TABLE users ADD COLUMN agreement_accepted_at INTEGER")
+        if "text_scale" not in user_columns:
+            con.execute("ALTER TABLE users ADD COLUMN text_scale TEXT NOT NULL DEFAULT 'system'")
+        yookassa_payment_columns = {row["name"] for row in con.execute("PRAGMA table_info(yookassa_payments)").fetchall()}
+        if "terms_accepted_at" not in yookassa_payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN terms_accepted_at INTEGER")
+        if "channel_id" not in yookassa_payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL")
+        if "channel_bonus_type" not in yookassa_payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN channel_bonus_type TEXT")
+        if "channel_bonus_amount" not in yookassa_payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN channel_bonus_amount TEXT")
+        activity_reward_columns = {row["name"] for row in con.execute("PRAGMA table_info(activity_rewards)").fetchall()}
+        if "reward_json" not in activity_reward_columns:
+            con.execute("ALTER TABLE activity_rewards ADD COLUMN reward_json TEXT NOT NULL DEFAULT '{}'")
         story_columns = {row["name"] for row in con.execute("PRAGMA table_info(stories)").fetchall()}
         if "permanent" not in story_columns:
             con.execute("ALTER TABLE stories ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0")
@@ -964,62 +1244,20 @@ def init_db() -> None:
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique ON users(phone) WHERE phone IS NOT NULL")
 
         defaults = {
-            "limits": {
-                "regular": {
-                    "maxStars": 1000,
-                    "storiesPerDay": 3,
-                    "storiesPerMonth": 30,
-                    "postsPerDay": 10,
-                    "groupsJoined": 25,
-                    "groupsCreated": 3,
-                    "communitiesJoined": 25,
-                    "communitiesCreated": 3,
-                    "channelsJoined": 25,
-                    "channelsCreated": 3,
-                    "savedAccounts": 3,
-                },
-                "premium": {
-                    "maxStars": 100000,
-                    "storiesPerDay": 20,
-                    "storiesPerMonth": 300,
-                    "postsPerDay": 100,
-                    "groupsJoined": 500,
-                    "groupsCreated": 50,
-                    "communitiesJoined": 500,
-                    "communitiesCreated": 50,
-                    "channelsJoined": 500,
-                    "channelsCreated": 50,
-                    "savedAccounts": 20,
-                },
-            },
-            "premium": {"starsPrice": 250, "days": 30, "moneyPriceLabel": "299 ₽"},
             "account_levels": [
-                {"id": "starter", "title": "Начальный", "description": "Первый уровень после регистрации.", "criteria": {"messages": 0}, "limits": {"postsPerDay": 3, "storiesPerDay": 2, "groupsCreated": 1, "communitiesCreated": 1, "channelsCreated": 1, "groupsJoined": 10, "communitiesJoined": 10, "channelsJoined": 10}, "reward": {"stars": 0, "premiumDays": 0}, "starsPrice": 0, "purchaseReward": {"stars": 0, "premiumDays": 0}},
-                {"id": "active", "title": "Активный", "description": "Общайтесь и наполняйте свой профиль.", "criteria": {"messages": 20, "posts": 2, "stories": 1}, "limits": {"postsPerDay": 10, "storiesPerDay": 8, "groupsCreated": 3, "communitiesCreated": 3, "channelsCreated": 3, "groupsJoined": 50, "communitiesJoined": 50, "channelsJoined": 50}, "reward": {"stars": 50, "premiumDays": 0}, "starsPrice": 120, "purchaseReward": {"stars": 0, "premiumDays": 0}},
-                {"id": "pro", "title": "Профи", "description": "Для постоянных участников сообщества.", "criteria": {"messages": 100, "posts": 10, "reviews": 2}, "limits": {"postsPerDay": 30, "storiesPerDay": 20, "groupsCreated": 10, "communitiesCreated": 10, "channelsCreated": 10, "groupsJoined": 200, "communitiesJoined": 200, "channelsJoined": 200}, "reward": {"stars": 200, "premiumDays": 7}, "starsPrice": 300, "purchaseReward": {"stars": 0, "premiumDays": 0}},
+                {"id": "starter", "title": "Начальный", "description": "Первый уровень после регистрации.", "criteria": {"messages": 0}, "limits": {"postsPerDay": 3, "storiesPerDay": 2, "communitiesCreated": 1, "channelsCreated": 1, "communitiesJoined": 10, "channelsJoined": 10}, "reward": {"stars": 0}, "starsPrice": 0, "purchaseReward": {"stars": 0}},
+                {"id": "active", "title": "Активный", "description": "Общайтесь и наполняйте свой профиль.", "criteria": {"messages": 20, "posts": 2, "stories": 1}, "limits": {"postsPerDay": 10, "storiesPerDay": 8, "communitiesCreated": 3, "channelsCreated": 3, "communitiesJoined": 50, "channelsJoined": 50}, "reward": {"stars": 50}, "starsPrice": 120, "purchaseReward": {"stars": 0}},
+                {"id": "pro", "title": "Профи", "description": "Для постоянных участников сообщества.", "criteria": {"messages": 100, "posts": 10, "reviews": 2}, "limits": {"postsPerDay": 30, "storiesPerDay": 20, "communitiesCreated": 10, "channelsCreated": 10, "communitiesJoined": 200, "channelsJoined": 200}, "reward": {"stars": 200}, "starsPrice": 300, "purchaseReward": {"stars": 0}},
             ],
             "features": {
-                "regular": {"groups": True, "communities": True, "reviews": True, "donations": True},
-                "premium": {"groups": True, "communities": True, "reviews": True, "donations": True},
+                "communities": True, "reviews": True, "donations": True,
             },
             "ui_appearance": DEFAULT_UI_APPEARANCE,
+            "public_branding": DEFAULT_PUBLIC_BRANDING,
+            "public_legal": DEFAULT_PUBLIC_LEGAL,
         }
         for key, value in defaults.items():
             con.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, dumps(value)))
-        existing_limits_row = con.execute("SELECT value FROM settings WHERE key = 'limits'").fetchone()
-        existing_limits = loads(existing_limits_row["value"], {}) if existing_limits_row else {}
-        if isinstance(existing_limits, dict):
-            limits_changed = False
-            for tier, tier_defaults in defaults["limits"].items():
-                current_tier = existing_limits.setdefault(tier, {})
-                if not isinstance(current_tier, dict):
-                    current_tier = existing_limits[tier] = {}
-                for limit_key, limit_value in tier_defaults.items():
-                    if limit_key not in current_tier:
-                        current_tier[limit_key] = limit_value
-                        limits_changed = True
-            if limits_changed:
-                con.execute("UPDATE settings SET value = ? WHERE key = 'limits'", (dumps(existing_limits),))
         levels_row = con.execute("SELECT value FROM settings WHERE key = 'account_levels'").fetchone()
         try:
             normalized_levels = normalize_account_levels(loads(levels_row["value"], []) if levels_row else defaults["account_levels"])
@@ -1034,6 +1272,20 @@ def init_db() -> None:
             normalized_appearance = DEFAULT_UI_APPEARANCE
         if not appearance_row or loads(appearance_row["value"], {}) != normalized_appearance:
             con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('ui_appearance', ?)", (dumps(normalized_appearance),))
+        branding_row = con.execute("SELECT value FROM settings WHERE key = 'public_branding'").fetchone()
+        try:
+            normalized_branding = normalize_public_branding(loads(branding_row["value"], {}) if branding_row else DEFAULT_PUBLIC_BRANDING)
+        except ValueError:
+            normalized_branding = DEFAULT_PUBLIC_BRANDING
+        if not branding_row or loads(branding_row["value"], {}) != normalized_branding:
+            con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('public_branding', ?)", (dumps(normalized_branding),))
+        legal_row = con.execute("SELECT value FROM settings WHERE key = 'public_legal'").fetchone()
+        try:
+            normalized_legal = normalize_public_legal(loads(legal_row["value"], {}) if legal_row else DEFAULT_PUBLIC_LEGAL)
+        except ValueError:
+            normalized_legal = DEFAULT_PUBLIC_LEGAL
+        if not legal_row or loads(legal_row["value"], {}) != normalized_legal:
+            con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('public_legal', ?)", (dumps(normalized_legal),))
 
         if not con.execute("SELECT 1 FROM promotions LIMIT 1").fetchone():
             add_promotion(con, "Пригласить друга", "Откройте сайт по реферальной ссылке и получите звёзды.", "referral_open", 1, 25, 1)
@@ -1045,9 +1297,18 @@ def init_db() -> None:
                 "Активный участник",
                 "Откройте новые возможности Chat-Pro и получите звёзды.",
                 {"direct_chats": 5, "channels_joined": 5, "communities_joined": 5},
-                100,
-                0,
+                {"stars": 100, "premiumDays": 0},
             )
+        review_reward_key = "activity_reward_chat_pro_review_v1"
+        if not con.execute("SELECT 1 FROM settings WHERE key = ?", (review_reward_key,)).fetchone():
+            add_activity_reward(
+                con,
+                "Видеообзор Chat‑Pro",
+                "Опубликуйте видео в своём канале и добавьте в подпись «Chat-Pro обзор» или «Чат-Про обзор».",
+                {"chat_pro_review_video": 1},
+                {"stars": 100, "premiumDays": 0},
+            )
+            con.execute("INSERT INTO settings(key, value) VALUES (?, ?)", (review_reward_key, dumps({"createdAt": now()})))
 
 
 def uid(prefix: str) -> str:
@@ -1066,11 +1327,20 @@ def add_promotion(con, title, description, action_type, target_count, reward_amo
     )
 
 
-def add_activity_reward(con, title, description, criteria, reward_stars, premium_days):
+def add_activity_reward(con, title, description, criteria, reward):
     con.execute(
-        """INSERT INTO activity_rewards(id,title,description,criteria_json,reward_stars,premium_days,active,created_at)
-           VALUES (?,?,?,?,?,?,1,?)""",
-        (uid("activity_reward"), title, description, dumps(criteria), reward_stars, premium_days, now()),
+        """INSERT INTO activity_rewards(id,title,description,criteria_json,reward_stars,premium_days,reward_json,active,created_at)
+           VALUES (?,?,?,?,?,?,?,1,?)""",
+        (
+            uid("activity_reward"),
+            title,
+            description,
+            dumps(criteria),
+            reward["stars"],
+            reward["premiumDays"],
+            dumps(reward),
+            now(),
+        ),
     )
 
 
@@ -1288,6 +1558,64 @@ def fetch_rss_image(image_url: str) -> str | None:
         return None
 
 
+def validate_vk_group_url(value) -> tuple[str, str]:
+    source_url = str(value or "").strip()
+    parsed = urlparse(source_url)
+    if parsed.scheme != "https" or parsed.hostname not in {"vk.com", "www.vk.com", "m.vk.com"}:
+        raise ValueError("Укажите ссылку на публичную группу VK вида https://vk.com/имя_группы.")
+    source_ref = parsed.path.strip("/").split("/", 1)[0]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{2,80}", source_ref):
+        raise ValueError("В ссылке VK не найдено корректное имя публичной группы.")
+    return f"https://vk.com/{source_ref}", source_ref
+
+
+def normalize_vk_keywords(value) -> list[str]:
+    values = value.splitlines() if isinstance(value, str) else value if isinstance(value, list) else None
+    if values is None:
+        raise ValueError("Ключевые слова должны быть строкой или списком.")
+    keywords = []
+    for item in values:
+        keyword = " ".join(str(item).split()).casefold()
+        if keyword and keyword not in keywords:
+            keywords.append(keyword[:120])
+    if len(keywords) > 30:
+        raise ValueError("Можно указать до 30 ключевых слов.")
+    return keywords
+
+
+def vk_api(access_token: str, method: str, params: dict | None = None):
+    query = urlencode({**(params or {}), "access_token": access_token, "v": VK_API_VERSION})
+    request = urlrequest.Request(f"https://api.vk.com/method/{method}?{query}", headers={"User-Agent": "Chat-Pro VK importer/1.0", "Accept": "application/json"})
+    try:
+        with urlrequest.urlopen(request, timeout=15) as response:
+            payload = loads(response.read(RSS_MAX_BYTES + 1).decode("utf-8"), {})
+    except (urlerror.URLError, socket.timeout, TimeoutError, OSError, json.JSONDecodeError) as error:
+        raise ValueError("Не удалось связаться с VK. Проверьте подключение и токен.") from error
+    if not isinstance(payload, dict) or "error" in payload:
+        message = str(payload.get("error", {}).get("error_msg", "") if isinstance(payload, dict) else "")
+        raise ValueError(f"VK отклонил запрос{f': {message}' if message else ''}. Проверьте токен и доступ к группе.")
+    return payload.get("response")
+
+
+def vk_group_data(access_token: str, source_ref: str) -> tuple[int, str]:
+    groups = vk_api(access_token, "groups.getById", {"group_id": source_ref})
+    group = groups[0] if isinstance(groups, list) and groups else None
+    group_id = int(group.get("id", 0) or 0) if isinstance(group, dict) else 0
+    if not group_id:
+        raise ValueError("VK не нашёл доступную публичную группу по этой ссылке.")
+    return -group_id, str(group.get("name", source_ref))[:120]
+
+
+def vk_post_image_url(post: dict) -> str:
+    for attachment in post.get("attachments", []) if isinstance(post.get("attachments"), list) else []:
+        photo = attachment.get("photo") if isinstance(attachment, dict) else None
+        sizes = photo.get("sizes") if isinstance(photo, dict) else None
+        images = [item for item in sizes if isinstance(item, dict) and item.get("url")] if isinstance(sizes, list) else []
+        if images:
+            return str(max(images, key=lambda item: int(item.get("width", 0) or 0) * int(item.get("height", 0) or 0))["url"])
+    return ""
+
+
 def fetch_rss_feed(feed_url: str) -> tuple[str, list[dict]]:
     request = urlrequest.Request(feed_url, headers={"User-Agent": "Chat-Pro RSS importer/1.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml", "Accept-Encoding": "identity", "Connection": "close"})
     try:
@@ -1370,6 +1698,59 @@ def poll_rss_channels(con: sqlite3.Connection) -> None:
             con.execute("UPDATE rss_channel_sources SET last_sync_at = ?, last_error = ? WHERE id = ?", (current, str(error)[:300], source["id"]))
 
 
+def poll_vk_channels(con: sqlite3.Connection) -> None:
+    current = now()
+    due_sources = con.execute("SELECT * FROM vk_channel_sources WHERE next_poll_at <= ? ORDER BY next_poll_at LIMIT 20", (current,)).fetchall()
+    for source in due_sources:
+        claimed = con.execute(
+            "UPDATE vk_channel_sources SET next_poll_at = ? WHERE id = ? AND next_poll_at <= ?",
+            (current + VK_POLL_INTERVAL, source["id"], current),
+        ).rowcount
+        if not claimed:
+            continue
+        con.commit()
+        try:
+            wall = vk_api(source["access_token"], "wall.get", {"owner_id": source["owner_id"], "count": 30, "filter": "owner"})
+            posts = wall.get("items", []) if isinstance(wall, dict) else []
+            sender = con.execute("SELECT id FROM users WHERE id = ?", (source["created_by"],)).fetchone()
+            if not sender:
+                sender = con.execute("SELECT owner_id AS id FROM chats WHERE id = ?", (source["channel_id"],)).fetchone()
+            keywords = loads(source["keywords_json"], [])
+            if sender and sender["id"]:
+                for post in reversed(posts if isinstance(posts, list) else []):
+                    if not isinstance(post, dict) or str(post.get("post_type", "post")) != "post":
+                        continue
+                    post_id = int(post.get("id", 0) or 0)
+                    if not post_id or not con.execute("SELECT 1 FROM vk_channel_sources WHERE id = ? AND channel_id = ?", (source["id"], source["channel_id"])).fetchone():
+                        continue
+                    text = str(post.get("text", "")).strip()[:10_000]
+                    if keywords and not any(keyword in text.casefold() for keyword in keywords):
+                        continue
+                    image_url = vk_post_image_url(post)
+                    if not text and not image_url:
+                        continue
+                    imported = con.execute(
+                        "INSERT OR IGNORE INTO vk_source_imported_posts(source_id,post_id,imported_at) VALUES (?,?,?)",
+                        (source["id"], post_id, current),
+                    ).rowcount
+                    if not imported:
+                        continue
+                    owner_id = int(post.get("owner_id", source["owner_id"]) or source["owner_id"])
+                    original_url = f"https://vk.com/wall{owner_id}_{post_id}"
+                    media_data = fetch_rss_image(image_url)
+                    message_id = uid("msg")
+                    con.execute(
+                        """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (message_id, source["channel_id"], sender["id"], text, "photo" if media_data else None, media_data, 1,
+                         f"VK · {source['source_title']}", "vk", original_url, int(post.get("date", current) or current)),
+                    )
+                    con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (current, source["channel_id"]))
+            con.execute("UPDATE vk_channel_sources SET last_sync_at = ?, last_error = NULL WHERE id = ?", (current, source["id"]))
+        except ValueError as error:
+            con.execute("UPDATE vk_channel_sources SET last_sync_at = ?, last_error = ? WHERE id = ?", (current, str(error)[:300], source["id"]))
+
+
 def schedule_automated_comments(con: sqlite3.Connection, message_id: str, channel_id: str, current: int | None = None) -> None:
     current = current or now()
     rules = con.execute(
@@ -1443,6 +1824,8 @@ def poll_telegram_channels(con: sqlite3.Connection) -> None:
         ).rowcount
         if not claimed:
             continue
+        # Do not keep a SQLite write lock while Telegram responds.
+        con.commit()
         try:
             updates = telegram_api(link["bot_token"], "getUpdates", {
                 "offset": int(link["last_update_id"]) + 1,
@@ -1518,11 +1901,6 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path.startswith("/api/"):
                 with connect() as con:
-                    tick_boosts(con)
-                    publish_scheduled_posts(con)
-                    poll_telegram_channels(con)
-                    poll_rss_channels(con)
-                    publish_automated_comments(con)
                     return self.handle_api(con, method, path, parse_qs(parsed.query))
             if method in {"GET", "HEAD"} and path.startswith("/media/messages/"):
                 with connect() as con:
@@ -1538,7 +1916,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_message_media(con, media_user, message_id)
             if path == "/admin":
                 return self.send_file(ROOT / "admin.html")
-            if path == "/" or path.startswith("/invite/"):
+            if path == "/requisites":
+                return self.send_file(ROOT / "requisites.html")
+            if path == "/" or path == "/payment-return" or path.startswith("/invite/"):
                 return self.send_file(ROOT / "index.html")
             return self.send_file(ROOT / path.lstrip("/"))
         except ConnectionError:
@@ -1554,6 +1934,8 @@ class Handler(BaseHTTPRequestHandler):
         body = self.read_json() if method == "POST" else {}
         user = get_user_by_token(con, self.headers)
 
+        if path == "/api/yookassa/webhook" and method == "POST":
+            return self.handle_yookassa_webhook(con, body)
         if path == "/api/register" and method == "POST":
             return self.register(con, body)
         if path == "/api/register/verify" and method == "POST":
@@ -1566,6 +1948,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.request_password_reset(con, body)
         if path == "/api/password-reset/confirm" and method == "POST":
             return self.confirm_password_reset(con, body)
+        if path == "/api/public/legal" and method == "GET":
+            legal_row = con.execute("SELECT value FROM settings WHERE key = 'public_legal'").fetchone()
+            branding_row = con.execute("SELECT value FROM settings WHERE key = 'public_branding'").fetchone()
+            return self.json({
+                "ok": True,
+                "legal": normalize_public_legal(loads(legal_row["value"], {})) if legal_row else DEFAULT_PUBLIC_LEGAL,
+                "branding": normalize_public_branding(loads(branding_row["value"], {})) if branding_row else DEFAULT_PUBLIC_BRANDING,
+            })
         if path == "/api/bootstrap" and method == "GET":
             self.require_user(user)
             return self.bootstrap(con, user)
@@ -1609,7 +1999,7 @@ class Handler(BaseHTTPRequestHandler):
             dialog_bubble_style = str(body.get("dialogBubbleStyle", "custom"))
             if dialog_bubble_style != "custom":
                 raise ValueError("Неизвестный стиль сообщений.")
-            dialog_color = str(body.get("dialogColor", "#ffffff"))
+            dialog_color = str(body.get("dialogColor", "#dff9f9"))
             other_dialog_color = str(body.get("otherDialogColor", "#ffffff"))
             dialog_panel_color = str(body.get("dialogPanelColor", "#f4f8fc"))
             if not all(re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in (dialog_color, other_dialog_color, dialog_panel_color)):
@@ -1620,6 +2010,9 @@ class Handler(BaseHTTPRequestHandler):
             dialog_font = str(body.get("dialogFont", "system"))
             if dialog_font not in {"system", "business", "classic", "script", "rounded", "serif", "mono", "humanist", "condensed", "typewriter", "elegant"}:
                 raise ValueError("Неизвестный шрифт сообщений.")
+            text_scale = str(body.get("textScale", "system"))
+            if text_scale not in {"system", "110", "120", "130"}:
+                raise ValueError("Неизвестный размер текста.")
             night_appearance_custom = body.get("nightAppearanceCustom", False)
             if not isinstance(night_appearance_custom, bool):
                 raise ValueError("Неверная настройка личной подсветки.")
@@ -1641,8 +2034,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 site_background_data = None
             con.execute(
-                "UPDATE users SET theme = ?, site_color = ?, site_background = ?, site_background_data = ?, dialog_color = ?, other_dialog_color = ?, dialog_panel_color = ?, dialog_panel_style = ?, dialog_bubble_style = ?, dialog_font = ?, chat_background = ?, chat_background_data = ?, sidebar_background_data = ?, hidden_status_ids = ?, group_invite_privacy = ?, night_appearance_custom = ?, night_outline_color = ?, night_glow_color = ?, night_glow_intensity = ? WHERE id = ?",
-                (theme, site_color, site_background, site_background_data, dialog_color, other_dialog_color, dialog_panel_color, dialog_panel_style, dialog_bubble_style, dialog_font, background, background_data, sidebar_background_data, dumps(body.get("hiddenStatusIds", [])), group_invite_privacy, int(night_appearance_custom), night_appearance["outlineColor"] if night_appearance else None, night_appearance["glowColor"] if night_appearance else None, night_appearance["glowIntensity"] if night_appearance else None, user["id"]),
+                "UPDATE users SET theme = ?, site_color = ?, site_background = ?, site_background_data = ?, dialog_color = ?, other_dialog_color = ?, dialog_panel_color = ?, dialog_panel_style = ?, dialog_bubble_style = ?, dialog_font = ?, text_scale = ?, chat_background = ?, chat_background_data = ?, sidebar_background_data = ?, hidden_status_ids = ?, group_invite_privacy = ?, night_appearance_custom = ?, night_outline_color = ?, night_glow_color = ?, night_glow_intensity = ? WHERE id = ?",
+                (theme, site_color, site_background, site_background_data, dialog_color, other_dialog_color, dialog_panel_color, dialog_panel_style, dialog_bubble_style, dialog_font, text_scale, background, background_data, sidebar_background_data, dumps(body.get("hiddenStatusIds", [])), group_invite_privacy, int(night_appearance_custom), night_appearance["outlineColor"] if night_appearance else None, night_appearance["glowColor"] if night_appearance else None, night_appearance["glowIntensity"] if night_appearance else None, user["id"]),
             )
             return self.json({"ok": True})
         if path == "/api/profile/avatar" and method == "POST":
@@ -1708,6 +2101,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/channels/rss" and method == "POST":
             self.require_user(user)
             return self.update_rss_channel_link(con, user, body)
+        if path == "/api/channels/vk" and method == "POST":
+            self.require_user(user)
+            return self.update_vk_channel_link(con, user, body)
         if path == "/api/channels/appearance" and method == "POST":
             self.require_user(user)
             return self.update_channel_appearance(con, user, body)
@@ -1735,6 +2131,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/messages" and method == "POST":
             self.require_user(user)
             return self.add_message(con, user, body)
+        if path == "/api/chats/activity" and method == "POST":
+            self.require_user(user)
+            return self.update_chat_activity(con, user, body)
         if path == "/api/group-content/share" and method == "POST":
             self.require_user(user)
             return self.share_content_to_group(con, user, body)
@@ -1765,9 +2164,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/donate" and method == "POST":
             self.require_user(user)
             return self.donate(con, user, body)
-        if path == "/api/buy-premium" and method == "POST":
+        if path == "/api/yookassa/payments" and method == "POST":
             self.require_user(user)
-            return self.buy_premium(con, user, body)
+            return self.create_yookassa_payment(con, user, body)
+        if path == "/api/yookassa/payments/status" and method == "POST":
+            self.require_user(user)
+            return self.check_yookassa_payment(con, user, body)
         if path == "/api/reviews" and method == "POST":
             self.require_user(user)
             return self.add_review(con, user, body)
@@ -1779,7 +2181,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.claim_promotion(con, user, body.get("promotionId"))
         if path == "/api/activity-rewards/claim" and method == "POST":
             self.require_user(user)
-            return self.claim_activity_reward(con, user, body.get("rewardId"))
+            return self.claim_activity_reward(con, user, body.get("rewardId"), body.get("channelId"))
         if path == "/api/account-level/claim" and method == "POST":
             self.require_user(user)
             return self.claim_account_level_reward(con, user, body.get("levelId"))
@@ -1812,30 +2214,16 @@ class Handler(BaseHTTPRequestHandler):
             key = str(body.get("key", ""))
             if key == "account_levels":
                 value = normalize_account_levels(body.get("value"))
-            elif key == "limits":
-                requested = body.get("value")
-                if not isinstance(requested, dict):
-                    raise ValueError("Лимиты должны быть объектом.")
-                current_row = con.execute("SELECT value FROM settings WHERE key = 'limits'").fetchone()
-                current = loads(current_row["value"], {}) if current_row else {}
-                if not isinstance(current, dict):
-                    current = {}
-                merged = {}
-                for tier in ("regular", "premium"):
-                    requested_tier = requested.get(tier, {})
-                    if not isinstance(requested_tier, dict):
-                        raise ValueError(f"Лимиты {tier} должны быть объектом.")
-                    current_tier = current.get(tier, {})
-                    merged[tier] = {**(current_tier if isinstance(current_tier, dict) else {}), **requested_tier}
-                value = self.normalize_tier_limits(merged)
-            elif key == "premium":
-                value = self.normalize_premium_settings(body.get("value"))
             elif key == "features":
                 value = body.get("value")
                 if not isinstance(value, dict):
                     raise ValueError("Настройки функций должны быть объектом.")
             elif key == "ui_appearance":
                 value = normalize_ui_appearance(body.get("value"))
+            elif key == "public_branding":
+                value = normalize_public_branding(body.get("value"))
+            elif key == "public_legal":
+                value = normalize_public_legal(body.get("value"))
             else:
                 raise ValueError("Этот раздел настроек нельзя изменять через админку.")
             con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)", (key, dumps(value)))
@@ -1854,10 +2242,6 @@ class Handler(BaseHTTPRequestHandler):
                 amount = int(after["stars"]) - int(before["stars"])
             if amount:
                 self.record_star_transaction(con, user_id, amount, "admin", "Корректировка баланса администрацией")
-            return self.json({"ok": True})
-        if path == "/api/admin/users/premium" and method == "POST":
-            until = now() + int(body.get("days", 30)) * 86400
-            con.execute("UPDATE users SET premium_until = ? WHERE id = ?", (until, body.get("userId")))
             return self.json({"ok": True})
         if path == "/api/admin/recommended" and method == "POST":
             chat_id = str(body.get("chatId", ""))
@@ -1883,11 +2267,14 @@ class Handler(BaseHTTPRequestHandler):
             title = str(body.get("title", "")).strip()
             if not title:
                 raise ValueError("Введите название награды.")
-            reward_stars = max(0, int(body.get("rewardStars", 0) or 0))
-            premium_days = max(0, int(body.get("premiumDays", 0) or 0))
-            if not reward_stars and not premium_days:
-                raise ValueError("Укажите количество звёзд или дней премиума.")
-            add_activity_reward(con, title[:120], str(body.get("description", "")).strip()[:1000], criteria, reward_stars, premium_days)
+            reward = normalize_level_reward(body.get("reward", {"stars": body.get("rewardStars", 0)}), "reward")
+            levels_row = con.execute("SELECT value FROM settings WHERE key = 'account_levels'").fetchone()
+            configured_levels = normalize_account_levels(loads(levels_row["value"], []) if levels_row else []) if levels_row else []
+            if reward["accountLevelId"] and reward["accountLevelId"] not in {level["id"] for level in configured_levels}:
+                raise ValueError("Выберите существующий уровень аккаунта для награды.")
+            if not any((reward["stars"], reward["limits"], reward["recurringStars"], reward["starPackageDiscountPercent"], reward["accountLevelId"], reward["recommendOwnChannel"])):
+                raise ValueError("Укажите хотя бы один вид награды.")
+            add_activity_reward(con, title[:120], str(body.get("description", "")).strip()[:1000], criteria, reward)
             return self.json({"ok": True})
         if path == "/api/admin/activity-rewards/deactivate" and method == "POST":
             con.execute("UPDATE activity_rewards SET active = 0 WHERE id = ?", (str(body.get("rewardId", "")),))
@@ -1948,20 +2335,18 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Этот username уже занят. Выберите другой.")
         name = str(body.get("name", "")).strip()
         password = str(body.get("password", ""))
-        contact_type = str(body.get("contactType", ""))
-        if contact_type not in {"email", "phone"}:
-            raise ValueError("Выберите e-mail или номер телефона.")
-        email = normalize_email(body.get("email")) if contact_type == "email" else None
-        phone = normalize_phone(body.get("phone")) if contact_type == "phone" else None
+        email = normalize_email(body.get("email"))
+        if body.get("agreementAccepted") is not True and str(body.get("agreementAccepted", "")).lower() != "true":
+            raise ValueError("Для регистрации необходимо принять пользовательское соглашение.")
         if not name:
             raise ValueError("Введите имя.")
         if len(password) < 8:
             raise ValueError("Пароль должен быть не короче 8 символов.")
-        if con.execute("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE OR phone = ?", (email, phone)).fetchone():
-            raise ValueError("Этот e-mail или номер уже используется.")
+        if con.execute("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE", (email,)).fetchone():
+            raise ValueError("Этот e-mail уже используется.")
         challenge_id = self.create_auth_challenge(
-            con, "register", email, phone, None,
-            {"name": name[:80], "username": username, "password": hash_password(password), "contactType": contact_type},
+            con, "register", email, None, None,
+            {"name": name[:80], "username": username, "password": hash_password(password), "agreementAcceptedAt": now()},
             "Подтверждение регистрации",
         )
         return self.json({"ok": True, "challengeId": challenge_id, "message": "Код подтверждения отправлен."})
@@ -1972,23 +2357,28 @@ class Handler(BaseHTTPRequestHandler):
         username = str(payload.get("username", ""))
         if not username or username_taken(con, username):
             raise ValueError("Username уже занят. Начните регистрацию заново.")
-        if con.execute("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE OR phone = ?", (challenge["email"], challenge["phone"])).fetchone():
-            raise ValueError("Этот e-mail или номер уже используется.")
+        if con.execute("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE", (challenge["email"],)).fetchone():
+            raise ValueError("Этот e-mail уже используется.")
         user_id = uid("user")
         con.execute(
-            """INSERT INTO users(id,name,username,password,email,phone,email_verified,phone_verified,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (user_id, payload["name"], username, payload["password"], challenge["email"], challenge["phone"], int(payload["contactType"] == "email"), int(payload["contactType"] == "phone"), 50, "#ffffff", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", now()),
+            """INSERT INTO users(id,name,username,password,email,email_verified,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,agreement_accepted_at,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, payload["name"], username, payload["password"], challenge["email"], 1, 50, "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", payload.get("agreementAcceptedAt") or now(), now()),
         )
         con.execute("DELETE FROM auth_challenges WHERE id = ?", (challenge["id"],))
         self.ensure_saved(con, user_id)
         return self.issue_token(con, user_id)
 
     def login(self, con, body):
-        username = normalize_username(body.get("username"))
-        user = con.execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
+        login = str(body.get("login", body.get("username", ""))).strip()
+        if "@" in login:
+            email = normalize_email(login)
+            user = con.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
+        else:
+            username = normalize_username(login)
+            user = con.execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
         if not user or not password_matches(user["password"], str(body.get("password", ""))):
-            raise ValueError("Неверный username или пароль.")
+            raise ValueError("Неверный username, e-mail или пароль.")
         if not user["password"].startswith("pbkdf2_sha256$"):
             con.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(str(body.get("password", ""))), user["id"]))
         self.update_login_streak(con, user["id"])
@@ -1998,19 +2388,14 @@ class Handler(BaseHTTPRequestHandler):
     def create_auth_challenge(self, con, purpose, email, phone, user_id, payload, message) -> str:
         current = now()
         con.execute("DELETE FROM auth_challenges WHERE expires_at < ? OR (purpose = ? AND email = ? AND phone = ?)", (current, purpose, email, phone))
-        contact_type = payload.get("contactType") if purpose == "register" else payload.get("recoveryContact")
-        email_code = generate_auth_code() if contact_type == "email" else None
-        phone_code = generate_auth_code() if contact_type == "phone" else None
+        email_code = generate_auth_code()
         challenge_id = uid("auth")
         con.execute(
             """INSERT INTO auth_challenges(id,purpose,email,phone,user_id,payload_json,email_code_hash,phone_code_hash,expires_at,created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (challenge_id, purpose, email, phone, user_id, dumps(payload), hash_password(email_code) if email_code else None, hash_password(phone_code) if phone_code else None, current + AUTH_CODE_TTL, current),
+            (challenge_id, purpose, email, None, user_id, dumps(payload), hash_password(email_code), None, current + AUTH_CODE_TTL, current),
         )
-        if email_code:
-            deliver_email_code(email, email_code, message)
-        if phone_code:
-            deliver_sms_code(phone, phone_code, message)
+        deliver_email_code(email, email_code, message)
         return challenge_id
 
     def verify_auth_challenge(self, con, body, purpose):
@@ -2021,8 +2406,7 @@ class Handler(BaseHTTPRequestHandler):
         if challenge["attempts"] >= AUTH_CODE_MAX_ATTEMPTS:
             raise ValueError("Слишком много неверных попыток. Запросите новые коды.")
         code = str(body.get("code", ""))
-        contact_type = loads(challenge["payload_json"], {}).get("contactType" if purpose == "register" else "recoveryContact")
-        code_hash = challenge["email_code_hash"] if contact_type == "email" else challenge["phone_code_hash"]
+        code_hash = challenge["email_code_hash"]
         valid = bool(code_hash) and password_matches(code_hash, code)
         if not valid:
             con.execute("UPDATE auth_challenges SET attempts = attempts + 1 WHERE id = ?", (challenge_id,))
@@ -2040,34 +2424,24 @@ class Handler(BaseHTTPRequestHandler):
         retry_after = 60 - (now() - challenge["created_at"])
         if retry_after > 0:
             raise ValueError(f"Повторный код можно запросить через {retry_after} с.")
-        payload = loads(challenge["payload_json"], {})
-        contact_type = payload.get("contactType" if purpose == "register" else "recoveryContact")
-        if contact_type not in {"email", "phone"}:
-            raise ValueError("Контакт для подтверждения не найден.")
         code = generate_auth_code()
-        column = "email_code_hash" if contact_type == "email" else "phone_code_hash"
         message = "Подтверждение регистрации" if purpose == "register" else "Восстановление пароля"
         con.execute(
-            f"UPDATE auth_challenges SET {column} = ?, attempts = 0, expires_at = ?, created_at = ? WHERE id = ?",
+            "UPDATE auth_challenges SET email_code_hash = ?, attempts = 0, expires_at = ?, created_at = ? WHERE id = ?",
             (hash_password(code), now() + AUTH_CODE_TTL, now(), challenge_id),
         )
-        if contact_type == "email":
-            deliver_email_code(challenge["email"], code, message)
-        else:
-            deliver_sms_code(challenge["phone"], code, message)
+        deliver_email_code(challenge["email"], code, message)
         return self.json({"ok": True, "message": "Новый код отправлен на тот же контакт."})
 
     def request_password_reset(self, con, body):
         contact = str(body.get("contact", "")).strip()
-        is_email = "@" in contact
         try:
-            normalized_contact = normalize_email(contact) if is_email else normalize_phone(contact)
+            normalized_contact = normalize_email(contact)
         except ValueError:
             return self.json({"ok": True, "message": "Если контакт найден, инструкции по восстановлению отправлены."})
-        user = con.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE OR phone = ?", (normalized_contact, normalized_contact)).fetchone()
+        user = con.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (normalized_contact,)).fetchone()
         if user:
-            contact_type = "email" if is_email else "phone"
-            challenge_id = self.create_auth_challenge(con, "password_reset", user["email"], user["phone"], user["id"], {"recoveryContact": contact_type}, "Восстановление пароля")
+            challenge_id = self.create_auth_challenge(con, "password_reset", user["email"], None, user["id"], {}, "Восстановление пароля")
             return self.json({"ok": True, "challengeId": challenge_id, "message": "Если контакт найден, код отправлен."})
         return self.json({"ok": True, "message": "Если контакт найден, инструкции по восстановлению отправлены."})
 
@@ -2089,10 +2463,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def update_login_streak(self, con, user_id):
         today = time.strftime("%Y-%m-%d")
+        yesterday = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
         user = con.execute("SELECT last_login_day, login_streak FROM users WHERE id = ?", (user_id,)).fetchone()
         if not user or user["last_login_day"] == today:
             return
-        con.execute("UPDATE users SET last_login_day = ?, login_streak = login_streak + 1 WHERE id = ?", (today, user_id))
+        streak = int(user["login_streak"] or 0) + 1 if user["last_login_day"] == yesterday else 1
+        con.execute("UPDATE users SET last_login_day = ?, login_streak = ? WHERE id = ?", (today, streak, user_id))
 
     def bootstrap(self, con, user):
         self.ensure_saved(con, user["id"])
@@ -2157,12 +2533,30 @@ class Handler(BaseHTTPRequestHandler):
                WHERE c.owner_id = ?""",
             (user["id"],),
         ).fetchall()]
+        vk_channel_links = [dict(r) for r in con.execute(
+            """SELECT vs.id, vs.channel_id, vs.source_url, vs.source_title, vs.keywords_json, vs.last_sync_at, vs.last_error, vs.created_at
+               FROM vk_channel_sources vs JOIN chats c ON c.id = vs.channel_id
+               WHERE c.owner_id = ?""",
+            (user["id"],),
+        ).fetchall()]
+        for link in vk_channel_links:
+            link["keywords"] = loads(link.pop("keywords_json"), [])
         channel_comments = [dict(r) for r in con.execute(
             "SELECT cc.* FROM channel_comments cc JOIN messages m ON m.id = cc.message_id JOIN chats c ON c.id = m.chat_id WHERE c.type = 'channel' ORDER BY cc.created_at"
         ).fetchall()]
+        channel_star_purchases = [dict(r) for r in con.execute(
+            """SELECT csp.*, u.name AS buyer_name, u.username AS buyer_username
+               FROM channel_star_purchases csp
+               JOIN chats c ON c.id = csp.channel_id
+               JOIN users u ON u.id = csp.buyer_user_id
+               WHERE c.owner_id = ?
+               ORDER BY csp.created_at DESC
+               LIMIT 100""",
+            (user["id"],),
+        ).fetchall()]
         notifications = [dict(r) for r in con.execute("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", (user["id"],)).fetchall()]
         messages = [message_to_dict(r) for r in con.execute(
-            """SELECT m.id, m.chat_id, m.sender_id, m.profile_user_id, m.text, m.media_type, m.voice_waveform_json, m.views, m.views_boost, m.reactions_json, m.pinned, m.forwarded_from, m.source_type, m.source_id, m.reply_to_id, m.edited_at, m.created_at,
+            """SELECT m.id, m.chat_id, m.sender_id, m.profile_user_id, m.text, m.media_type, m.voice_waveform_json, m.views, m.views_boost, m.reactions_json, m.pinned, m.forwarded_from, m.forwarded_from_user_id, m.source_type, m.source_id, m.reply_to_id, m.edited_at, m.created_at,
                       EXISTS(SELECT 1 FROM hidden_pinned_messages hpm WHERE hpm.message_id = m.id AND hpm.user_id = ?) AS pin_hidden,
                       (m.sender_id != ? AND m.rowid > COALESCE((SELECT crs.read_rowid FROM chat_read_states crs WHERE crs.chat_id = m.chat_id AND crs.user_id = ?), 0)) AS is_unread,
                       EXISTS(
@@ -2207,6 +2601,7 @@ class Handler(BaseHTTPRequestHandler):
             review["city"] = review.get("city", "")
         settings = {r["key"]: loads(r["value"], {}) for r in con.execute("SELECT * FROM settings").fetchall()}
         account_level = self.account_level_data(con, user["id"], settings.get("account_levels", []))
+        star_package_discount = self.star_package_discount_percent(con, user["id"])
         promotions = [dict(r) for r in con.execute("SELECT * FROM promotions WHERE active = 1 ORDER BY created_at DESC").fetchall()]
         activity_rewards = self.activity_rewards_data(con, user["id"])
         statuses = [dict(r) for r in con.execute("SELECT * FROM statuses WHERE active = 1 ORDER BY created_at DESC").fetchall()]
@@ -2219,7 +2614,9 @@ class Handler(BaseHTTPRequestHandler):
         me = public_user(con.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone())
         me["hiddenStoryAuthorIds"] = [r["author_id"] for r in con.execute("SELECT author_id FROM hidden_story_authors WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
         me["storyHiddenFromIds"] = [r["blocked_user_id"] for r in con.execute("SELECT blocked_user_id FROM story_privacy_blocks WHERE owner_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
-        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "channelComments": channel_comments, "notifications": notifications, "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions})
+        activities = self.visible_chat_activities(con, chats, user["id"])
+        packages = [{**item, "originalPrice": item["price"], "price": discounted_price(item["price"], star_package_discount)} for item in yookassa_star_packages(con)]
+        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "activities": activities, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "vkChannelLinks": vk_channel_links, "channelComments": channel_comments, "channelStarPurchases": channel_star_purchases, "notifications": notifications, "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions, "yookassa": {"available": yookassa_configured(), "discountPercent": star_package_discount, "packages": packages}})
 
     def has_chat_access(self, con, user_id, chat_id):
         return bool(con.execute(
@@ -2232,6 +2629,22 @@ class Handler(BaseHTTPRequestHandler):
                  ))""",
             (chat_id, user_id, user_id),
         ).fetchone())
+
+    def visible_chat_activities(self, con, chats, user_id):
+        direct_chat_ids = {
+            chat["id"] for chat in chats
+            if chat["type"] == "direct" and self.has_chat_access(con, user_id, chat["id"])
+        }
+        now_monotonic = time.monotonic()
+        activities = {}
+        with chat_activities_lock:
+            expired = [key for key, (_, expires_at) in chat_activities.items() if expires_at <= now_monotonic]
+            for key in expired:
+                chat_activities.pop(key, None)
+            for (chat_id, sender_id), (activity, _) in chat_activities.items():
+                if chat_id in direct_chat_ids and sender_id != user_id:
+                    activities[chat_id] = activity
+        return activities
 
     def chat_member_role(self, con, chat_id, user_id):
         row = con.execute(
@@ -2249,36 +2662,88 @@ class Handler(BaseHTTPRequestHandler):
             return role in CHANNEL_MANAGER_ROLES
         return chat["type"] in {"group", "community"} and role in {"owner", "admin"}
 
-    def normalize_tier_limits(self, value):
-        if not isinstance(value, dict):
-            raise ValueError("Лимиты должны быть объектом.")
-        normalized = {}
-        for tier in ("regular", "premium"):
-            raw_tier = value.get(tier, {})
-            if not isinstance(raw_tier, dict):
-                raise ValueError(f"Лимиты {tier} должны быть объектом.")
-            unknown = set(raw_tier) - LEVEL_LIMIT_KEYS
-            if unknown:
-                raise ValueError("В лимитах есть неподдерживаемые поля.")
-            normalized[tier] = {key: nonnegative_int(raw_tier.get(key, 0), key) for key in LEVEL_LIMIT_KEYS}
-        return normalized
-
-    def normalize_premium_settings(self, value):
-        if not isinstance(value, dict):
-            raise ValueError("Настройки премиума должны быть объектом.")
-        return {
-            "starsPrice": nonnegative_int(value.get("starsPrice", 250), "starsPrice"),
-            "days": nonnegative_int(value.get("days", 30), "days", 3650),
-            "moneyPriceLabel": str(value.get("moneyPriceLabel", "")).strip()[:80],
-        }
-
     def effective_limits(self, con, user_id, level: dict) -> dict:
-        limits_row = con.execute("SELECT value FROM settings WHERE key = 'limits'").fetchone()
-        tier_limits = loads(limits_row["value"], {}) if limits_row else {}
-        user = con.execute("SELECT premium_until FROM users WHERE id = ?", (user_id,)).fetchone()
-        tier = "premium" if user and int(user["premium_until"] or 0) > now() else "regular"
-        base_limits = tier_limits.get(tier, {}) if isinstance(tier_limits, dict) else {}
-        return {**{key: int(base_limits.get(key, 0) or 0) for key in LEVEL_LIMIT_KEYS}, **level.get("limits", {})}
+        limits = {**{key: 0 for key in LEVEL_LIMIT_KEYS}, **level.get("limits", {})}
+        for row in con.execute("SELECT limits_json FROM personal_limit_rewards WHERE user_id = ?", (user_id,)).fetchall():
+            reward_limits = loads(row["limits_json"], {})
+            if not isinstance(reward_limits, dict):
+                continue
+            for key, value in reward_limits.items():
+                if key not in LEVEL_LIMIT_KEYS:
+                    continue
+                personal_limit = int(value or 0)
+                current_limit = int(limits.get(key, 0) or 0)
+                if personal_limit and (not current_limit or personal_limit > current_limit):
+                    limits[key] = personal_limit
+        return limits
+
+    def star_package_discount_percent(self, con, user_id) -> int:
+        row = con.execute(
+            "SELECT MAX(discount_percent) AS discount_percent FROM personal_star_package_discounts WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row["discount_percent"] or 0) if row else 0
+
+    def apply_reward_benefits(self, con, user_id, source_type, source_id, title, reward):
+        limits = reward.get("limits", {}) if isinstance(reward, dict) else {}
+        if limits:
+            con.execute(
+                "INSERT OR REPLACE INTO personal_limit_rewards(user_id,source_type,source_id,limits_json,created_at) VALUES (?,?,?,?,?)",
+                (user_id, source_type, source_id, dumps(limits), now()),
+            )
+        discount_percent = int(reward.get("starPackageDiscountPercent", 0) or 0)
+        if discount_percent:
+            con.execute(
+                "INSERT OR REPLACE INTO personal_star_package_discounts(user_id,source_type,source_id,discount_percent,created_at) VALUES (?,?,?,?,?)",
+                (user_id, source_type, source_id, discount_percent, now()),
+            )
+        recurring_stars = int(reward.get("recurringStars", 0) or 0)
+        if recurring_stars:
+            interval_seconds = int(reward["recurringIntervalDays"]) * 86400
+            ends_at = now() + int(reward["recurringDurationDays"]) * 86400
+            con.execute(
+                """INSERT OR REPLACE INTO recurring_star_rewards(user_id,source_type,source_id,title,stars,interval_seconds,ends_at,next_credit_at,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (user_id, source_type, source_id, title, recurring_stars, interval_seconds, ends_at, now() + interval_seconds, now()),
+            )
+
+    def process_recurring_star_rewards(self, con):
+        current = now()
+        rewards = con.execute("SELECT * FROM recurring_star_rewards WHERE next_credit_at <= ? ORDER BY next_credit_at LIMIT 100", (current,)).fetchall()
+        for reward in rewards:
+            if reward["next_credit_at"] > reward["ends_at"]:
+                con.execute("DELETE FROM recurring_star_rewards WHERE user_id = ? AND source_type = ? AND source_id = ?", (reward["user_id"], reward["source_type"], reward["source_id"]))
+                continue
+            try:
+                self.credit_stars(con, reward["user_id"], reward["stars"])
+            except ValueError:
+                pass
+            else:
+                self.record_star_transaction(con, reward["user_id"], reward["stars"], "recurring_reward", f"Периодическая награда «{reward['title']}»")
+            next_credit_at = int(reward["next_credit_at"]) + int(reward["interval_seconds"])
+            if next_credit_at > reward["ends_at"]:
+                con.execute("DELETE FROM recurring_star_rewards WHERE user_id = ? AND source_type = ? AND source_id = ?", (reward["user_id"], reward["source_type"], reward["source_id"]))
+            else:
+                con.execute("UPDATE recurring_star_rewards SET next_credit_at = ? WHERE user_id = ? AND source_type = ? AND source_id = ?", (next_credit_at, reward["user_id"], reward["source_type"], reward["source_id"]))
+
+    def enforce_autopost_source_limit(self, con, user_id, channel_id):
+        limits = self.account_level_data(con, user_id).get("limits", {})
+        total_limit = int(limits.get("autopostSourcesTotal", 0) or 0)
+        channel_limit = int(limits.get("autopostSourcesPerChannel", 0) or 0)
+        counts = con.execute(
+            """SELECT
+                   (SELECT count(*) FROM telegram_channel_links t JOIN chats c ON c.id = t.channel_id WHERE c.owner_id = ?) +
+                   (SELECT count(*) FROM rss_channel_sources r JOIN chats c ON c.id = r.channel_id WHERE c.owner_id = ?) +
+                   (SELECT count(*) FROM vk_channel_sources v JOIN chats c ON c.id = v.channel_id WHERE c.owner_id = ?) AS total,
+                   (SELECT count(*) FROM telegram_channel_links WHERE channel_id = ?) +
+                   (SELECT count(*) FROM rss_channel_sources WHERE channel_id = ?) +
+                   (SELECT count(*) FROM vk_channel_sources WHERE channel_id = ?) AS channel_total""",
+            (user_id, user_id, user_id, channel_id, channel_id, channel_id),
+        ).fetchone()
+        if total_limit and counts["total"] >= total_limit:
+            raise ValueError(f"На вашем уровне доступно не более {total_limit} источников автопостинга.")
+        if channel_limit and counts["channel_total"] >= channel_limit:
+            raise ValueError(f"К одному каналу на вашем уровне можно подключить не более {channel_limit} источников автопостинга.")
 
     def credit_stars(self, con, user_id, amount):
         amount = nonnegative_int(amount, "amount")
@@ -2307,10 +2772,33 @@ class Handler(BaseHTTPRequestHandler):
             label = {"group": "групп", "community": "бесед", "channel": "каналов"}[chat_type]
             raise ValueError(f"На вашем уровне можно вступить не более чем в {maximum} {label}.")
 
+    def enforce_message_limit(self, con, user_id):
+        maximum = int(self.account_level_data(con, user_id).get("limits", {}).get("messagesPerDay", 0) or 0)
+        if not maximum:
+            return
+        sent_today = con.execute(
+            "SELECT count(*) AS count FROM messages WHERE sender_id = ? AND created_at >= ? AND forwarded_from IS NULL",
+            (user_id, now() - 86400),
+        ).fetchone()["count"]
+        if sent_today >= maximum:
+            raise ValueError(f"На вашем уровне можно отправлять до {maximum} сообщений в сутки.")
+
+    def enforce_post_limit(self, con, user_id):
+        maximum = int(self.account_level_data(con, user_id).get("limits", {}).get("postsPerDay", 0) or 0)
+        if not maximum:
+            return
+        created_today = con.execute(
+            """SELECT
+                   (SELECT count(*) FROM profile_posts WHERE user_id = ? AND created_at >= ?) +
+                   (SELECT count(*) FROM messages m JOIN chats c ON c.id = m.chat_id
+                    WHERE m.sender_id = ? AND m.created_at >= ? AND c.type = 'channel' AND m.forwarded_from IS NULL) AS count""",
+            (user_id, now() - 86400, user_id, now() - 86400),
+        ).fetchone()["count"]
+        if created_today >= maximum:
+            raise ValueError(f"На вашем уровне можно публиковать до {maximum} постов в сутки.")
+
     def update_avatar(self, con, user, body):
-        avatar = str(body.get("avatarData", ""))
-        if not avatar.startswith("data:image/") or len(avatar) > 2_500_000:
-            raise ValueError("Загрузите изображение до 1,8 МБ в формате PNG, JPG или WebP.")
+        avatar = normalize_image_data(body.get("avatarData", ""), 1_800_000, "Аватар")
         con.execute("UPDATE users SET avatar_data = ? WHERE id = ?", (avatar, user["id"]))
         return self.json({"ok": True})
 
@@ -2321,14 +2809,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Пост должен содержать текст или фото, текст — до 3000 символов.")
         if media and (not media.startswith("data:image/") or len(media) > 3_500_000):
             raise ValueError("Фото поста должно быть изображением до 2,5 МБ.")
-        maximum = int(self.account_level_data(con, user["id"]).get("limits", {}).get("postsPerDay", 0) or 0)
-        if maximum:
-            created_today = con.execute(
-                "SELECT count(*) AS count FROM profile_posts WHERE user_id = ? AND created_at >= ?",
-                (user["id"], now() - 86400),
-            ).fetchone()["count"]
-            if created_today >= maximum:
-                raise ValueError(f"На вашем уровне можно публиковать до {maximum} постов в сутки.")
+        self.enforce_post_limit(con, user["id"])
         con.execute("INSERT INTO profile_posts(id,user_id,text,media_data,created_at) VALUES (?,?,?,?,?)", (uid("post"), user["id"], text, media or None, now()))
         return self.json({"ok": True})
 
@@ -2585,19 +3066,19 @@ class Handler(BaseHTTPRequestHandler):
             secret_chat = con.execute("SELECT c.*, 0 AS pinned, 0 AS archived FROM chats c WHERE c.id = ?", (chat_id,)).fetchone()
             return self.json({"ok": True, "chat": chat_to_dict(secret_chat)})
 
-        if chat_type not in ("group", "community", "channel"):
+        if chat_type not in ("community", "channel"):
             raise ValueError("Неизвестный тип чата.")
         limits = self.account_level_data(con, user["id"]).get("limits", {})
-        limit_key = {"group": "groupsCreated", "community": "communitiesCreated", "channel": "channelsCreated"}[chat_type]
+        limit_key = {"community": "communitiesCreated", "channel": "channelsCreated"}[chat_type]
         maximum = int(limits.get(limit_key, 0) or 0)
         if maximum:
             existing = con.execute("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = ?", (user["id"], chat_type)).fetchone()["count"]
             if existing >= maximum:
-                label = {"group": "групп", "community": "бесед", "channel": "каналов"}[chat_type]
+                label = {"community": "бесед", "channel": "каналов"}[chat_type]
                 raise ValueError(f"На вашем уровне доступно до {maximum} {label}.")
         if chat_type == "channel":
             title = str(body.get("title", "")).strip() or "Новый канал"
-            settings = {"showViews": True, "showSubscribers": True, "showReactions": True, "commentsEnabled": True, "isPublic": True}
+            settings = {"showViews": True, "showSubscribers": True, "showReactions": True, "commentsEnabled": True, "isPublic": True, "starBonusType": "stars", "starBonusPercent": 10}
             chat_id = uid("chat")
             con.execute(
                 "INSERT INTO chats(id,type,title,description,invite_code,owner_id,settings_json,subscriber_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -2708,6 +3189,15 @@ class Handler(BaseHTTPRequestHandler):
             for key in ("showViews", "showSubscribers", "showReactions", "commentsEnabled", "isPublic"):
                 if key in body:
                     settings[key] = bool(body[key])
+            if "starBonusType" in body or "starBonusPercent" in body:
+                bonus_type = str(body.get("starBonusType", settings.get("starBonusType", "stars"))).strip().lower()
+                if bonus_type not in {"stars", "money"}:
+                    raise ValueError("Выберите тип бонуса: звёзды или деньги.")
+                bonus_percent = nonnegative_int(body.get("starBonusPercent", settings.get("starBonusPercent", 10)), "starBonusPercent", 100)
+                if not bonus_percent:
+                    raise ValueError("Укажите бонус от 1 до 100 %.")
+                settings["starBonusType"] = bonus_type
+                settings["starBonusPercent"] = bonus_percent
         elif chat["type"] in {"group", "community"} and "inviteLinkEnabled" in body:
             settings["inviteLinkEnabled"] = bool(body["inviteLinkEnabled"])
         con.execute("UPDATE chats SET title = ?, description = ?, avatar_data = ?, settings_json = ?, updated_at = ? WHERE id = ?", (title, description, avatar or None, dumps(settings), now(), chat_id))
@@ -2841,6 +3331,9 @@ class Handler(BaseHTTPRequestHandler):
             raise PermissionError("Публиковать в канале могут только создатель и назначенные администраторы.")
         if reply_to_id and not con.execute("SELECT 1 FROM messages WHERE id = ? AND chat_id = ?", (reply_to_id, chat_id)).fetchone():
             raise ValueError("Сообщение для ответа не найдено.")
+        if chat and chat["type"] == "channel":
+            self.enforce_post_limit(con, user["id"])
+        self.enforce_message_limit(con, user["id"])
         msg_id = uid("msg")
         stored_text = f"Документ: {file_name}" if media_type == "document" and not text else text
         con.execute("INSERT INTO messages(id,chat_id,sender_id,profile_user_id,text,media_type,media_data,voice_waveform_json,views,reply_to_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (msg_id, chat_id, user["id"], profile_user_id, stored_text, media_type, media_data, dumps(voice_waveform), 1, reply_to_id, now()))
@@ -2850,7 +3343,25 @@ class Handler(BaseHTTPRequestHandler):
             if link:
                 con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)", (uid("msg"), link["target_chat_id"], user["id"], text, media_type, media_data, 1, chat["title"], now()))
                 con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), link["target_chat_id"]))
+        with chat_activities_lock:
+            chat_activities.pop((chat_id, user["id"]), None)
         return self.json({"ok": True, "messageId": msg_id})
+
+    def update_chat_activity(self, con, user, body):
+        chat_id = str(body.get("chatId", "")).strip()
+        activity = str(body.get("activity", "")).strip()
+        if activity not in {"typing", "recording", "sending", ""}:
+            raise ValueError("Неизвестный статус активности.")
+        chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] != "direct" or not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        key = (chat_id, user["id"])
+        with chat_activities_lock:
+            if activity:
+                chat_activities[key] = (activity, time.monotonic() + CHAT_ACTIVITY_TTL)
+            else:
+                chat_activities.pop(key, None)
+        return self.json({"ok": True})
 
     def schedule_channel_post(self, con, user, body):
         chat_id = str(body.get("chatId", ""))
@@ -2894,6 +3405,8 @@ class Handler(BaseHTTPRequestHandler):
         if disconnect:
             con.execute("DELETE FROM telegram_channel_links WHERE channel_id = ?", (channel_id,))
             return self.json({"ok": True, "connected": False})
+        if not con.execute("SELECT 1 FROM telegram_channel_links WHERE channel_id = ?", (channel_id,)).fetchone():
+            self.enforce_autopost_source_limit(con, user["id"], channel_id)
         source_ref = str(body.get("sourceChat", "")).strip()
         bot_token = str(body.get("botToken", "")).strip()
         if not re.fullmatch(r"@[A-Za-z0-9_]{5,64}|-?\d{5,20}", source_ref):
@@ -2932,9 +3445,8 @@ class Handler(BaseHTTPRequestHandler):
             if not deleted:
                 raise ValueError("RSS-источник не найден.")
             return self.json({"ok": True, "connected": False})
+        self.enforce_autopost_source_limit(con, user["id"], channel_id)
         count = con.execute("SELECT count(*) FROM rss_channel_sources WHERE channel_id = ?", (channel_id,)).fetchone()[0]
-        if count >= 10:
-            raise ValueError("К одному каналу можно подключить до 10 RSS-источников.")
         feed_url = validate_rss_url(body.get("feedUrl"))
         feed_title, entries = fetch_rss_feed(feed_url)
         current = now()
@@ -2952,6 +3464,45 @@ class Handler(BaseHTTPRequestHandler):
             (source_id, channel_id, feed_url, feed_title, current + RSS_POLL_INTERVAL, current, user["id"], current),
         )
         return self.json({"ok": True, "connected": True, "sourceId": source_id, "feedTitle": feed_title})
+
+    def update_vk_channel_link(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        source_id = str(body.get("sourceId", "")).strip()
+        channel = con.execute("SELECT owner_id, type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+        if not channel or channel["type"] != "channel" or channel["owner_id"] != user["id"]:
+            raise PermissionError("Подключить VK может только создатель канала.")
+        if bool(body.get("disconnect")):
+            if not source_id:
+                raise ValueError("Не выбран VK-источник для отключения.")
+            deleted = con.execute("DELETE FROM vk_channel_sources WHERE id = ? AND channel_id = ?", (source_id, channel_id)).rowcount
+            if not deleted:
+                raise ValueError("VK-источник не найден.")
+            return self.json({"ok": True, "connected": False})
+        self.enforce_autopost_source_limit(con, user["id"], channel_id)
+        count = con.execute("SELECT count(*) FROM vk_channel_sources WHERE channel_id = ?", (channel_id,)).fetchone()[0]
+        access_token = str(body.get("accessToken", "")).strip()
+        if len(access_token) < 20 or len(access_token) > 512:
+            raise ValueError("Введите корректный токен доступа VK API.")
+        source_url, source_ref = validate_vk_group_url(body.get("sourceUrl"))
+        keywords = normalize_vk_keywords(body.get("keywords", ""))
+        existing = con.execute("SELECT id FROM vk_channel_sources WHERE channel_id = ? AND source_url = ?", (channel_id, source_url)).fetchone()
+        if existing:
+            raise ValueError("Эта VK-группа уже подключена к каналу.")
+        owner_id, source_title = vk_group_data(access_token, source_ref)
+        wall = vk_api(access_token, "wall.get", {"owner_id": owner_id, "count": 30, "filter": "owner"})
+        posts = wall.get("items", []) if isinstance(wall, dict) else []
+        current = now()
+        source_id = uid("vk")
+        con.executemany(
+            "INSERT OR IGNORE INTO vk_source_imported_posts(source_id,post_id,imported_at) VALUES (?,?,?)",
+            [(source_id, int(post.get("id", 0)), current) for post in posts if isinstance(post, dict) and int(post.get("id", 0) or 0)],
+        )
+        con.execute(
+            """INSERT INTO vk_channel_sources(id,channel_id,source_url,source_ref,source_title,owner_id,access_token,keywords_json,next_poll_at,last_sync_at,last_error,created_by,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?)""",
+            (source_id, channel_id, source_url, source_ref, source_title, owner_id, access_token, dumps(keywords), current + VK_POLL_INTERVAL, current, user["id"], current),
+        )
+        return self.json({"ok": True, "connected": True, "sourceId": source_id, "sourceTitle": source_title})
 
     def update_channel_appearance(self, con, user, body):
         channel_id = str(body.get("channelId", "")).strip()
@@ -3015,7 +3566,7 @@ class Handler(BaseHTTPRequestHandler):
         con.execute(
             """INSERT INTO users(id,name,username,password,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,avatar_data,created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (user_id, name, username, secrets.token_urlsafe(24), 0, "#ffffff", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", avatar_data or None, current),
+            (user_id, name, username, secrets.token_urlsafe(24), 0, "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", avatar_data or None, current),
         )
         commenter_id = uid("autocommenter")
         con.execute("INSERT INTO automated_commenters(id,user_id,created_at) VALUES (?,?,?)", (commenter_id, user_id, current))
@@ -3213,7 +3764,7 @@ class Handler(BaseHTTPRequestHandler):
 
         placeholders = ",".join("?" for _ in message_ids)
         messages = con.execute(
-            f"""SELECT id, chat_id, sender_id, text, media_type, media_data FROM messages
+            f"""SELECT id, chat_id, sender_id, text, media_type, media_data, forwarded_from, forwarded_from_user_id FROM messages
                 WHERE id IN ({placeholders})
                   AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = messages.id AND hm.user_id = ?)
                 ORDER BY created_at, rowid""",
@@ -3341,13 +3892,15 @@ class Handler(BaseHTTPRequestHandler):
     def copy_messages(self, con, sender_id, messages, target_chat_id):
         for message in messages:
             source_chat = con.execute("SELECT type, title FROM chats WHERE id = ?", (message["chat_id"],)).fetchone()
-            forwarded_from = None
-            if source_chat and source_chat["type"] != "saved":
+            forwarded_from = message["forwarded_from"]
+            forwarded_from_user_id = message["forwarded_from_user_id"]
+            if not forwarded_from and source_chat and source_chat["type"] != "saved":
                 original_sender = con.execute("SELECT name FROM users WHERE id = ?", (message["sender_id"],)).fetchone()
                 forwarded_from = original_sender["name"] if original_sender else source_chat["title"]
+                forwarded_from_user_id = message["sender_id"] if original_sender else None
             con.execute(
-                "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-                (uid("msg"), target_chat_id, sender_id, message["text"], message["media_type"], message["media_data"], 1, forwarded_from, now()),
+                "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,forwarded_from_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (uid("msg"), target_chat_id, sender_id, message["text"], message["media_type"], message["media_data"], 1, forwarded_from, forwarded_from_user_id, now()),
             )
         con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), target_chat_id))
 
@@ -3418,19 +3971,136 @@ class Handler(BaseHTTPRequestHandler):
             (uid("stars"), user_id, amount, kind, description, now()),
         )
 
-    def buy_premium(self, con, user, body):
-        settings = loads(con.execute("SELECT value FROM settings WHERE key='premium'").fetchone()["value"], {})
-        days = nonnegative_int(settings.get("days", 30), "days", 3650)
-        if body.get("method") == "stars":
-            price = nonnegative_int(settings.get("starsPrice", 250), "starsPrice")
-            if price <= 0:
-                raise ValueError("Покупка премиума за звёзды сейчас недоступна.")
-            debited = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (price, user["id"], price)).rowcount
-            if not debited:
-                raise ValueError("Недостаточно звёзд для премиума.")
-            self.record_star_transaction(con, user["id"], -price, "premium", f"Премиум на {days} дн.")
-        con.execute("UPDATE users SET premium_until = ? WHERE id = ?", (now() + days * 86400, user["id"]))
+    def create_yookassa_payment(self, con, user, body):
+        if not yookassa_configured():
+            raise ValueError("Оплата ЮKassa пока не настроена. Попробуйте позже.")
+        if body.get("purchaseTermsAccepted") is not True and str(body.get("purchaseTermsAccepted", "")).lower() != "true":
+            raise ValueError("Для покупки необходимо принять условия покупки.")
+        package_id = str(body.get("packageId", "")).strip().lower()
+        package = next((item for item in yookassa_star_packages(con) if item["id"] == package_id), None)
+        if not package:
+            raise ValueError("Выбранный пакет звёзд недоступен.")
+        discount_percent = self.star_package_discount_percent(con, user["id"])
+        amount_value = discounted_price(package["price"], discount_percent)
+        maximum = int(self.account_level_data(con, user["id"]).get("limits", {}).get("maxStars", 0) or 0)
+        if maximum and int(user["stars"] or 0) + package["stars"] > maximum:
+            raise ValueError(f"Этот пакет превышает лимит баланса: {maximum} звёзд.")
+        channel_id = str(body.get("channelId", "")).strip() or None
+        channel_bonus_type = None
+        channel_bonus_amount = None
+        if channel_id:
+            channel = con.execute("SELECT id, type, owner_id, settings_json FROM chats WHERE id = ?", (channel_id,)).fetchone()
+            if not channel or channel["type"] != "channel" or not channel["owner_id"]:
+                raise ValueError("Канал для покупки не найден.")
+            if not self.has_chat_access(con, user["id"], channel_id):
+                raise PermissionError("Подпишитесь на канал, чтобы купить звёзды через него.")
+            settings = loads(channel["settings_json"], {}) or {}
+            channel_bonus_type = str(settings.get("starBonusType", "stars")).lower()
+            bonus_percent = nonnegative_int(settings.get("starBonusPercent", 10), "starBonusPercent", 100)
+            if channel_bonus_type not in {"stars", "money"} or not bonus_percent:
+                raise ValueError("Владелец канала ещё не настроил бонус за покупку.")
+            if channel_bonus_type == "stars":
+                channel_bonus_amount = str(max(1, package["stars"] * bonus_percent // 100))
+            else:
+                channel_bonus_amount = f"{(float(amount_value) * bonus_percent / 100):.2f}"
+        order_id = uid("yookassa")
+        current = now()
+        con.execute(
+            """INSERT INTO yookassa_payments(id,user_id,package_id,stars,amount_value,channel_id,channel_bonus_type,channel_bonus_amount,status,terms_accepted_at,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,'creating',?,?,?)""",
+            (order_id, user["id"], package["id"], package["stars"], amount_value, channel_id, channel_bonus_type, channel_bonus_amount, current, current, current),
+        )
+        payment = yookassa_request(
+            "/payments",
+            "POST",
+            {
+                "amount": {"value": amount_value, "currency": "RUB"},
+                "capture": True,
+                "confirmation": {"type": "redirect", "return_url": f"{YOOKASSA_RETURN_URL}/payment-return?order={order_id}"},
+                "description": f"Chat-Pro: {package['stars']} звёзд" + (f" со скидкой {discount_percent}%" if discount_percent else "") + (f" через канал" if channel_id else ""),
+                "metadata": {"chat_pro_order_id": order_id},
+            },
+            idempotence_key=order_id,
+        )
+        payment_id = str(payment.get("id", ""))
+        confirmation_url = str((payment.get("confirmation") or {}).get("confirmation_url", ""))
+        if not payment_id or not confirmation_url:
+            con.execute("UPDATE yookassa_payments SET status = 'failed', updated_at = ? WHERE id = ?", (now(), order_id))
+            raise ValueError("ЮKassa не вернула ссылку для оплаты. Попробуйте ещё раз.")
+        con.execute(
+            "UPDATE yookassa_payments SET yookassa_payment_id = ?, status = ?, updated_at = ? WHERE id = ?",
+            (payment_id, str(payment.get("status", "pending")), now(), order_id),
+        )
+        return self.json({"ok": True, "orderId": order_id, "confirmationUrl": confirmation_url})
+
+    def check_yookassa_payment(self, con, user, body):
+        order_id = str(body.get("orderId", "")).strip()
+        payment_order = con.execute("SELECT * FROM yookassa_payments WHERE id = ? AND user_id = ?", (order_id, user["id"])).fetchone()
+        if not payment_order:
+            raise ValueError("Заказ на оплату не найден.")
+        return self.json({"ok": True, **self.finalize_yookassa_payment(con, payment_order)})
+
+    def handle_yookassa_webhook(self, con, body):
+        if not isinstance(body, dict) or body.get("event") != "payment.succeeded":
+            return self.json({"ok": True})
+        payment_id = str((body.get("object") or {}).get("id", "")).strip()
+        if not payment_id:
+            return self.json({"ok": True})
+        payment_order = con.execute("SELECT * FROM yookassa_payments WHERE yookassa_payment_id = ?", (payment_id,)).fetchone()
+        if payment_order:
+            self.finalize_yookassa_payment(con, payment_order)
         return self.json({"ok": True})
+
+    def finalize_yookassa_payment(self, con, payment_order):
+        if payment_order["credited_at"]:
+            return {"status": "succeeded", "credited": True, "stars": payment_order["stars"]}
+        if not payment_order["yookassa_payment_id"]:
+            raise ValueError("Платёж ещё создаётся. Попробуйте обновить страницу.")
+        payment = yookassa_request(f"/payments/{payment_order['yookassa_payment_id']}")
+        status = str(payment.get("status", ""))
+        con.execute("UPDATE yookassa_payments SET status = ?, updated_at = ? WHERE id = ?", (status or "unknown", now(), payment_order["id"]))
+        if status != "succeeded" or payment.get("paid") is not True:
+            return {"status": status or "pending", "credited": False}
+        metadata = payment.get("metadata") or {}
+        amount = payment.get("amount") or {}
+        if (
+            metadata.get("chat_pro_order_id") != payment_order["id"]
+            or amount.get("currency") != "RUB"
+            or amount.get("value") != payment_order["amount_value"]
+        ):
+            raise ValueError("Данные оплаченного заказа не прошли проверку.")
+        claimed = con.execute(
+            "UPDATE yookassa_payments SET credited_at = -1, status = 'succeeded', updated_at = ? WHERE id = ? AND credited_at IS NULL",
+            (now(), payment_order["id"]),
+        ).rowcount
+        if not claimed:
+            return {"status": "succeeded", "credited": True, "stars": payment_order["stars"]}
+        self.credit_stars(con, payment_order["user_id"], payment_order["stars"])
+        self.record_star_transaction(con, payment_order["user_id"], payment_order["stars"], "yookassa_purchase", f"Покупка {payment_order['stars']} звёзд через ЮKassa")
+        if payment_order["channel_id"]:
+            channel = con.execute("SELECT title, owner_id FROM chats WHERE id = ? AND type = 'channel'", (payment_order["channel_id"],)).fetchone()
+            if channel and payment_order["channel_bonus_type"] in {"stars", "money"} and payment_order["channel_bonus_amount"]:
+                bonus_type = payment_order["channel_bonus_type"]
+                bonus_amount = payment_order["channel_bonus_amount"]
+                con.execute(
+                    """INSERT OR IGNORE INTO channel_star_purchases(id,payment_id,channel_id,buyer_user_id,stars,bonus_type,bonus_amount,created_at)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (uid("channel_purchase"), payment_order["id"], payment_order["channel_id"], payment_order["user_id"], payment_order["stars"], bonus_type, bonus_amount, now()),
+                )
+                buyer = con.execute("SELECT name, username FROM users WHERE id = ?", (payment_order["user_id"],)).fetchone()
+                buyer_label = buyer["name"] if buyer else "Пользователь"
+                if bonus_type == "stars":
+                    self.credit_stars(con, channel["owner_id"], int(bonus_amount))
+                    self.record_star_transaction(con, channel["owner_id"], int(bonus_amount), "channel_purchase_bonus", f"Бонус канала «{channel['title']}» за покупку {payment_order['stars']} звёзд")
+                    bonus_label = f"★ {bonus_amount}"
+                else:
+                    bonus_label = f"{bonus_amount} ₽ к выплате"
+                notice = f"{buyer_label} купил(а) {payment_order['stars']} звёзд через канал «{channel['title']}». Бонус: {bonus_label}."
+                con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), channel["owner_id"], "channel_star_purchase", notice, payment_order["channel_id"], now()))
+                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), payment_order["channel_id"], channel["owner_id"], f"{buyer_label} купил(а) ★ {payment_order['stars']} через этот канал.", "system", 1, now()))
+                con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), payment_order["channel_id"]))
+        con.execute("UPDATE yookassa_payments SET credited_at = ?, status = 'succeeded', updated_at = ? WHERE id = ?", (now(), now(), payment_order["id"]))
+        return {"status": "succeeded", "credited": True, "stars": payment_order["stars"]}
 
     def add_review(self, con, user, body):
         url = normalize_review_source(body.get("url"))
@@ -3574,17 +4244,11 @@ class Handler(BaseHTTPRequestHandler):
         return self.json({"ok": True})
 
     def normalize_activity_criteria(self, criteria):
-        allowed = {
-            "stars_balance", "direct_chats", "channels_joined", "communities_joined", "groups_joined",
-            "channels_created", "communities_created", "groups_created", "channel_subscribers",
-            "community_subscribers", "group_subscribers", "messages", "posts", "stories", "reviews",
-            "donations_sent", "stars_donated", "donations_received", "login_streak",
-        }
         if not isinstance(criteria, dict):
             return {}
         normalized = {}
         for key, value in criteria.items():
-            if key not in allowed:
+            if key not in ACTIVITY_METRIC_KEYS:
                 continue
             try:
                 target = max(0, int(value))
@@ -3606,6 +4270,15 @@ class Handler(BaseHTTPRequestHandler):
             return int(row["count"] or 0)
 
         user = con.execute("SELECT stars, login_streak FROM users WHERE id = ?", (user_id,)).fetchone()
+        review_marker = re.compile(r"(?:чат[\s\-_‑–—]*про|chat[\s\-_‑–—]*pro)[\s\-_‑–—]*обзор", re.IGNORECASE)
+        review_video = any(
+            review_marker.search(str(row["text"] or ""))
+            for row in con.execute(
+                """SELECT m.text FROM messages m JOIN chats c ON c.id = m.chat_id
+                   WHERE c.owner_id = ? AND c.type = 'channel' AND m.sender_id = ? AND m.media_type = 'video'""",
+                (user_id, user_id),
+            ).fetchall()
+        )
         return {
             "stars_balance": int(user["stars"] or 0) if user else 0,
             "direct_chats": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'direct'", (user_id,)),
@@ -3626,22 +4299,38 @@ class Handler(BaseHTTPRequestHandler):
             "stars_donated": count("SELECT COALESCE(SUM(ABS(amount)), 0) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_sent'", (user_id,)),
             "donations_received": count("SELECT count(*) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_received'", (user_id,)),
             "login_streak": int(user["login_streak"] or 0) if user else 0,
+            "completed_calls": count("SELECT count(*) AS count FROM calls WHERE (caller_id = ? OR receiver_id = ?) AND answer_sdp IS NOT NULL", (user_id, user_id)),
+            "call_partners": count("SELECT count(DISTINCT CASE WHEN caller_id = ? THEN receiver_id ELSE caller_id END) AS count FROM calls WHERE (caller_id = ? OR receiver_id = ?) AND answer_sdp IS NOT NULL", (user_id, user_id, user_id)),
+            "chat_pro_review_video": int(review_video),
         }
 
     def activity_rewards_data(self, con, user_id):
         metrics = self.activity_metrics(con, user_id)
+        account_level = self.account_level_data(con, user_id)
+        level_indexes = {level["id"]: index for index, level in enumerate(account_level["levels"])}
+        current_level_index = level_indexes.get(account_level["current"]["id"], -1)
         rewards = []
         for row in con.execute("SELECT * FROM activity_rewards WHERE active = 1 ORDER BY created_at DESC").fetchall():
             reward = dict(row)
             criteria = self.normalize_activity_criteria(loads(reward.pop("criteria_json"), {}))
+            reward_data = loads(reward.get("reward_json"), {})
+            try:
+                reward["reward"] = normalize_level_reward(reward_data or {
+                    "stars": reward["reward_stars"],
+                    "premiumDays": reward["premium_days"],
+                }, "reward")
+            except ValueError:
+                reward["reward"] = {"stars": reward["reward_stars"], "premiumDays": reward["premium_days"], "limits": {}, "recurringStars": 0, "recurringIntervalDays": 0, "recurringDurationDays": 0, "accountLevelId": "", "recommendOwnChannel": False}
             reward["criteria"] = criteria
             reward["progress"] = {key: min(metrics.get(key, 0), target) for key, target in criteria.items()}
             reward["claimed"] = bool(con.execute("SELECT 1 FROM activity_reward_claims WHERE reward_id = ? AND user_id = ?", (reward["id"], user_id)).fetchone())
-            reward["available"] = not reward["claimed"] and all(metrics.get(key, 0) >= target for key, target in criteria.items())
+            target_level_index = level_indexes.get(reward["reward"]["accountLevelId"], -1)
+            reward["levelAvailable"] = not reward["reward"]["accountLevelId"] or target_level_index >= current_level_index
+            reward["available"] = not reward["claimed"] and reward["levelAvailable"] and all(metrics.get(key, 0) >= target for key, target in criteria.items())
             rewards.append(reward)
         return rewards
 
-    def claim_activity_reward(self, con, user, reward_id):
+    def claim_activity_reward(self, con, user, reward_id, channel_id=None):
         reward = con.execute("SELECT * FROM activity_rewards WHERE id = ? AND active = 1", (str(reward_id or ""),)).fetchone()
         if not reward:
             raise ValueError("Награда не найдена.")
@@ -3653,12 +4342,45 @@ class Handler(BaseHTTPRequestHandler):
         unmet = [key for key, target in criteria.items() if metrics.get(key, 0) < target]
         if unmet:
             raise ValueError("Условия награды ещё не выполнены.")
+        reward_data = loads(reward["reward_json"], {})
+        reward_benefits = normalize_level_reward(reward_data or {
+            "stars": reward["reward_stars"],
+            "premiumDays": reward["premium_days"],
+        }, "reward")
+        account_level_id = reward_benefits["accountLevelId"]
+        if account_level_id:
+            account_level = self.account_level_data(con, user["id"])
+            target_index = next((index for index, level in enumerate(account_level["levels"]) if level["id"] == account_level_id), None)
+            current_index = next((index for index, level in enumerate(account_level["levels"]) if level["id"] == account_level["current"]["id"]), -1)
+            if target_index is None:
+                raise ValueError("Уровень этой награды больше не существует.")
+            if target_index < current_index:
+                raise ValueError("Нельзя получить уровень ниже текущего.")
+        selected_channel_id = str(channel_id or "").strip()
+        if reward_benefits["recommendOwnChannel"]:
+            channel = con.execute(
+                "SELECT id FROM chats WHERE id = ? AND type = 'channel' AND owner_id = ?",
+                (selected_channel_id, user["id"]),
+            ).fetchone()
+            if not channel:
+                raise ValueError("Выберите свой канал для добавления в рекомендации.")
+            if con.execute("SELECT 1 FROM recommended_groups WHERE chat_id = ?", (selected_channel_id,)).fetchone():
+                raise ValueError("Этот канал уже находится в рекомендациях.")
         con.execute("INSERT INTO activity_reward_claims(reward_id,user_id,claimed_at) VALUES (?,?,?)", (reward["id"], user["id"], now()))
-        if reward["reward_stars"]:
-            self.credit_stars(con, user["id"], reward["reward_stars"])
-            self.record_star_transaction(con, user["id"], reward["reward_stars"], "activity_reward", f"Награда за активность «{reward['title']}»")
-        if reward["premium_days"]:
-            con.execute("UPDATE users SET premium_until = MAX(COALESCE(premium_until, 0), ?) + ? WHERE id = ?", (now(), reward["premium_days"] * 86400, user["id"]))
+        if account_level_id:
+            con.execute(
+                "INSERT INTO account_level_reward_grants(user_id,level_id,reward_id,granted_at) VALUES (?,?,?,?)",
+                (user["id"], account_level_id, reward["id"], now()),
+            )
+        if reward_benefits["recommendOwnChannel"]:
+            con.execute(
+                "INSERT INTO recommended_groups(chat_id,position,created_at) VALUES (?,?,?)",
+                (selected_channel_id, 100, now()),
+            )
+        if reward_benefits["stars"]:
+            self.credit_stars(con, user["id"], reward_benefits["stars"])
+            self.record_star_transaction(con, user["id"], reward_benefits["stars"], "activity_reward", f"Награда за активность «{reward['title']}»")
+        self.apply_reward_benefits(con, user["id"], "activity_reward", reward["id"], reward["title"], reward_benefits)
         return self.json({"ok": True})
 
     def account_level_data(self, con, user_id, configured_levels=None):
@@ -3669,30 +4391,31 @@ class Handler(BaseHTTPRequestHandler):
             levels = normalize_account_levels(configured_levels)
         except ValueError:
             levels = []
-        activity = {
-            "messages": con.execute("SELECT count(*) AS count FROM messages WHERE sender_id = ?", (user_id,)).fetchone()["count"],
-            "posts": con.execute("SELECT count(*) AS count FROM profile_posts WHERE user_id = ?", (user_id,)).fetchone()["count"],
-            "stories": con.execute("SELECT count(*) AS count FROM stories WHERE user_id = ?", (user_id,)).fetchone()["count"],
-            "reviews": con.execute("SELECT count(*) AS count FROM reviews WHERE created_by = ?", (user_id,)).fetchone()["count"],
-            "groups": con.execute("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = 'group'", (user_id,)).fetchone()["count"],
-            "communities": con.execute("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = 'community'", (user_id,)).fetchone()["count"],
-            "channels": con.execute("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = 'channel'", (user_id,)).fetchone()["count"],
-        }
+        activity = self.activity_metrics(con, user_id)
+        activity.update({
+            "communities": activity["communities_created"],
+            "channels": activity["channels_created"],
+        })
         purchased_ids = {
             row["level_id"] for row in con.execute("SELECT level_id FROM account_level_purchases WHERE user_id = ?", (user_id,)).fetchall()
         }
+        granted_ids = {
+            row["level_id"] for row in con.execute("SELECT level_id FROM account_level_reward_grants WHERE user_id = ?", (user_id,)).fetchall()
+        }
+        granted_index = max((index for index, level in enumerate(levels) if level["id"] in granted_ids), default=-1)
         current_index = -1
         level_states = []
         for index, level in enumerate(levels):
             criteria = level.get("criteria", {}) or {}
             earned = all(activity.get(key, 0) >= value for key, value in criteria.items())
             purchased = level["id"] in purchased_ids
-            unlocked = index == 0 or (current_index == index - 1 and (earned or purchased))
+            granted = index <= granted_index
+            unlocked = granted or index == 0 or (current_index == index - 1 and (earned or purchased))
             if unlocked:
                 current_index = index
             claimed = bool(con.execute("SELECT 1 FROM account_level_rewards WHERE user_id = ? AND level_id = ?", (user_id, level["id"])).fetchone())
-            level_states.append({**level, "earned": earned, "purchased": purchased, "unlocked": unlocked, "rewardClaimed": claimed, "rewardAvailable": unlocked and not claimed})
-        current = level_states[current_index] if current_index >= 0 else {"id": "regular", "title": "Обычный", "description": "Стандартный аккаунт.", "limits": {}, "reward": {"stars": 0, "premiumDays": 0}}
+            level_states.append({**level, "earned": earned, "purchased": purchased, "granted": granted, "unlocked": unlocked, "rewardClaimed": claimed, "rewardAvailable": unlocked and not claimed})
+        current = level_states[current_index] if current_index >= 0 else {"id": "regular", "title": "Обычный", "description": "Стандартный аккаунт.", "limits": {}, "reward": {"stars": 0}}
         next_level = level_states[current_index + 1] if current_index + 1 < len(level_states) else None
         return {
             "current": current,
@@ -3711,13 +4434,12 @@ class Handler(BaseHTTPRequestHandler):
         if level["rewardClaimed"]:
             raise ValueError("Награда за этот уровень уже получена.")
         reward = level.get("reward", {}) or {}
-        stars, premium_days = max(0, int(reward.get("stars", 0) or 0)), max(0, int(reward.get("premiumDays", 0) or 0))
+        stars = max(0, int(reward.get("stars", 0) or 0))
         con.execute("INSERT INTO account_level_rewards(user_id,level_id,claimed_at) VALUES (?,?,?)", (user["id"], level["id"], now()))
         if stars:
             self.credit_stars(con, user["id"], stars)
             self.record_star_transaction(con, user["id"], stars, "level_reward", f"Награда за уровень «{level['title']}»")
-        if premium_days:
-            con.execute("UPDATE users SET premium_until = MAX(COALESCE(premium_until, 0), ?) + ? WHERE id = ?", (now(), premium_days * 86400, user["id"]))
+        self.apply_reward_benefits(con, user["id"], "account_level_reward", level["id"], level["title"], reward)
         return self.json({"ok": True})
 
     def buy_account_level(self, con, user, level_id):
@@ -3735,12 +4457,10 @@ class Handler(BaseHTTPRequestHandler):
         self.record_star_transaction(con, user["id"], -price, "account_level_purchase", f"Покупка уровня «{next_level['title']}»")
         reward = next_level.get("purchaseReward", {})
         stars = int(reward.get("stars", 0) or 0)
-        premium_days = int(reward.get("premiumDays", 0) or 0)
         if stars:
             self.credit_stars(con, user["id"], stars)
             self.record_star_transaction(con, user["id"], stars, "account_level_purchase_reward", f"Награда за покупку уровня «{next_level['title']}»")
-        if premium_days:
-            con.execute("UPDATE users SET premium_until = MAX(COALESCE(premium_until, 0), ?) + ? WHERE id = ?", (now(), premium_days * 86400, user["id"]))
+        self.apply_reward_benefits(con, user["id"], "account_level_purchase", next_level["id"], next_level["title"], reward)
         return self.json({"ok": True})
 
     def start_call(self, con, user, body):
@@ -3834,6 +4554,14 @@ class Handler(BaseHTTPRequestHandler):
         for row in con.execute("SELECT * FROM activity_rewards ORDER BY created_at DESC").fetchall():
             reward = dict(row)
             reward["criteria"] = self.normalize_activity_criteria(loads(reward.pop("criteria_json"), {}))
+            reward_data = loads(reward.get("reward_json"), {})
+            try:
+                reward["reward"] = normalize_level_reward(reward_data or {
+                    "stars": reward["reward_stars"],
+                    "premiumDays": reward["premium_days"],
+                }, "reward")
+            except ValueError:
+                reward["reward"] = {"stars": reward["reward_stars"], "premiumDays": reward["premium_days"], "limits": {}, "recurringStars": 0, "recurringIntervalDays": 0, "recurringDurationDays": 0}
             reward["claimsCount"] = con.execute("SELECT count(*) AS count FROM activity_reward_claims WHERE reward_id = ?", (reward["id"],)).fetchone()["count"]
             activity_rewards.append(reward)
         statuses = [dict(r) for r in con.execute("SELECT * FROM statuses ORDER BY created_at DESC").fetchall()]
@@ -3940,22 +4668,29 @@ def validate_username(username: str) -> None:
         raise ValueError("Username может содержать только латиницу, цифры и подчёркивание.")
 
 
-def run_automated_comment_worker() -> None:
+def run_background_worker() -> None:
+    reward_processor = object.__new__(Handler)
     while True:
         try:
             with connect() as con:
+                tick_boosts(con)
+                publish_scheduled_posts(con)
+                poll_telegram_channels(con)
+                poll_rss_channels(con)
+                poll_vk_channels(con)
                 publish_automated_comments(con)
+                reward_processor.process_recurring_star_rewards(con)
         except sqlite3.Error as error:
-            print(f"Не удалось опубликовать автокомментарии: {error}")
+            print(f"Ошибка фоновой обработки: {error}")
         time.sleep(5)
 
 
 def main():
     init_db()
-    threading.Thread(target=run_automated_comment_worker, name="automated-comment-worker", daemon=True).start()
-    server = ThreadingHTTPServer(("0.0.0.0", 8000), Handler)
-    print("Chat-Pro запущен: http://localhost:8000")
-    print("Админка: http://localhost:8000/admin, ключ по умолчанию: admin123")
+    threading.Thread(target=run_background_worker, name="background-worker", daemon=True).start()
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"Chat-Pro запущен: http://{HOST}:{PORT}")
+    print(f"Админка: http://{HOST}:{PORT}/admin")
     server.serve_forever()
 
 
