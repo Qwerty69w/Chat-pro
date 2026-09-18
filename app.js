@@ -1,4720 +1,6164 @@
-const TOKEN_KEY = "minigram_token_v2";
-const BASE_NIGHT_APPEARANCE = { outlineColor: "#65ddf8", glowColor: "#21d5f0", glowIntensity: 35 };
-const SAVED_ACCOUNTS_KEY = "minigram_saved_accounts_v2";
-const RECENT_EMOJI_LIMIT = 24;
-let EMOJI_SET = `
-🏧 🚮 🚰 ♿ 🚹 🚺 🚻 🚼 🚾 🛂 🛃 🛄 🛅 🗣️ 👤 👥 🫂 👣 🫆 ⚠️ 🚸 ⛔ 🚫 🚳 🚭 🚯 🚱 🚷 📵 🔞 ☢️ ☣️
-⬆️ ↗️ ➡️ ↘️ ⬇️ ↙️ ⬅️ ↖️ ↕️ ↔️ ↩️ ↪️ ⤴️ ⤵️ 🔃 🔄 🔙 🔚 🔛 🔜 🔝 🛐 ⚛️ 🕉️ ✡️ ☸️ ☯️ ✝️ ☦️ ☪️ ☮️ 🕎 🔯 🪯
-♈ ♉ ♊ ♋ ♌ ♍ ♎ ♏ ♐ ♑ ♒ ♓ ⛎ 🔀 🔁 🔂 ▶️ ⏩ ⏭️ ⏯️ ◀️ ⏪ ⏮️ 🔼 ⏫ 🔽 ⏬ ⏸️ ⏹️ ⏺️ ⏏️ 🎦 🔅 🔆 📶 🛜 📳 📴
-♀️ ♂️ ⚧️ ✖️ ➕ ➖ ➗ 🟰 ♾️ ‼️ ⁉️ ❓ ❔ ❕ ❗ 〰️ 💱 💲 ⚕️ ♻️ ⚜️ 🔱 📛 🔰 ⭕ ✅ ☑️ ✔️ ❌ ❎ ➰ ➿ 〽️ ✳️ ✴️ ❇️ ©️ ®️ ™️ 🫟 #️⃣ *️⃣
-0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 🔠 🔡 🔢 🔣 🔤 🅰️ 🆎 🅱️ 🆑 🆒 🆓 ℹ️ 🆔 Ⓜ️ 🆕 🆖 🅾️ 🆗 🅿️ 🆘 🆙 🆚 🈁 🈂️ 🈷️ 🈶 🈯 🉐 🈹 🈚 🈲 🉑 🈸 🈴 🈳 ㊗️ ㊙️ 🈺 🈵
-🔴 🟠 🟡 🟢 🔵 🟣 🟤 ⚫ ⚪ 🟥 🟧 🟨 🟩 🟦 🟪 🟫 ⬛ ⬜ ◼️ ◻️ ◾ ◽ ▪️ ▫️ 🔶 🔷 🔸 🔹 🔺 🔻 💠 🔘 🔳 🔲 💬 👁️‍🗨️ 🗨️ 🗯️ 💭
-👨‍👩‍👦 👨‍👩‍👧 👨‍👩‍👧‍👦 👨‍👩‍👦‍👦 👨‍👩‍👧‍👧 👨‍👦 👨‍👦‍👦 👨‍👧 👨‍👧‍👦 👨‍👧‍👧 👩‍👦 👩‍👦‍👦 👩‍👧 👩‍👧‍👦 👩‍👧‍👧 👪 🧑‍🧑‍🧒 🧑‍🧑‍🧒‍🧒 🧑‍🧒 🧑‍🧒‍🧒
-🏁 🚩 🎌 🏴 🏳️
-🇦🇨 🇦🇩 🇦🇪 🇦🇫 🇦🇬 🇦🇮 🇦🇱 🇦🇲 🇦🇴 🇦🇶 🇦🇷 🇦🇸 🇦🇹 🇦🇺 🇦🇼 🇦🇽 🇦🇿 🇧🇦 🇧🇧 🇧🇩 🇧🇪 🇧🇫 🇧🇬 🇧🇭 🇧🇮 🇧🇯 🇧🇱 🇧🇲 🇧🇳 🇧🇴 🇧🇶 🇧🇷 🇧🇸 🇧🇹 🇧🇻 🇧🇼 🇧🇾 🇧🇿
-🇨🇦 🇨🇨 🇨🇩 🇨🇫 🇨🇬 🇨🇭 🇨🇮 🇨🇰 🇨🇱 🇨🇲 🇨🇳 🇨🇴 🇨🇵 🇨🇶 🇨🇷 🇨🇺 🇨🇻 🇨🇼 🇨🇽 🇨🇾 🇨🇿 🇩🇪 🇩🇬 🇩🇯 🇩🇰 🇩🇲 🇩🇴 🇩🇿
-🇪🇦 🇪🇨 🇪🇪 🇪🇬 🇪🇭 🇪🇷 🇪🇸 🇪🇹 🇪🇺 🇫🇮 🇫🇯 🇫🇰 🇫🇲 🇫🇴 🇫🇷 🇬🇦 🇬🇧 🇬🇩 🇬🇪 🇬🇫 🇬🇬 🇬🇭 🇬🇮 🇬🇱 🇬🇲 🇬🇳 🇬🇵 🇬🇶 🇬🇷 🇬🇸 🇬🇹 🇬🇺 🇬🇼 🇬🇾
-🇭🇰 🇭🇲 🇭🇳 🇭🇷 🇭🇹 🇭🇺 🇮🇨 🇮🇩 🇮🇪 🇮🇱 🇮🇲 🇮🇳 🇮🇴 🇮🇶 🇮🇷 🇮🇸 🇮🇹 🇯🇪 🇯🇲 🇯🇴 🇯🇵 🇰🇪 🇰🇬 🇰🇭 🇰🇮 🇰🇲 🇰🇳 🇰🇵 🇰🇷 🇰🇼 🇰🇾 🇰🇿
-🇱🇦 🇱🇧 🇱🇨 🇱🇮 🇱🇰 🇱🇷 🇱🇸 🇱🇹 🇱🇺 🇱🇻 🇱🇾 🇲🇦 🇲🇨 🇲🇩 🇲🇪 🇲🇫 🇲🇬 🇲🇭 🇲🇰 🇲🇱 🇲🇲 🇲🇳 🇲🇴 🇲🇵 🇲🇶 🇲🇷 🇲🇸 🇲🇹 🇲🇺 🇲🇻 🇲🇼 🇲🇽 🇲🇾 🇲🇿
-🇳🇦 🇳🇨 🇳🇪 🇳🇫 🇳🇬 🇳🇮 🇳🇱 🇳🇴 🇳🇵 🇳🇷 🇳🇺 🇳🇿 🇴🇲 🇵🇦 🇵🇪 🇵🇫 🇵🇬 🇵🇭 🇵🇰 🇵🇱 🇵🇲 🇵🇳 🇵🇷 🇵🇸 🇵🇹 🇵🇼 🇵🇾 🇶🇦 🇷🇪 🇷🇴 🇷🇸 🇷🇺 🇷🇼
-🇸🇦 🇸🇧 🇸🇨 🇸🇩 🇸🇪 🇸🇬 🇸🇭 🇸🇮 🇸🇯 🇸🇰 🇸🇱 🇸🇲 🇸🇳 🇸🇴 🇸🇷 🇸🇸 🇸🇹 🇸🇻 🇸🇽 🇸🇾 🇸🇿 🇹🇦 🇹🇨 🇹🇩 🇹🇫 🇹🇬 🇹🇭 🇹🇯 🇹🇰 🇹🇱 🇹🇲 🇹🇳 🇹🇴 🇹🇷 🇹🇹 🇹🇻 🇹🇼 🇹🇿
-🇺🇦 🇺🇬 🇺🇲 🇺🇳 🇺🇸 🇺🇾 🇺🇿 🇻🇦 🇻🇨 🇻🇪 🇻🇬 🇻🇮 🇻🇳 🇻🇺 🇼🇫 🇼🇸 🇽🇰 🇾🇪 🇾🇹 🇿🇦 🇿🇲 🇿🇼 🏴󠁧󠁢󠁥󠁮󠁧󠁿 🏴󠁧󠁢󠁳󠁣󠁴󠁿 🏴󠁧󠁢󠁷󠁬󠁳󠁿
-☺︎ ☹︎ ☠︎ ❣︎ ❤︎ ☘︎ ⛸︎ ♠︎ ♥︎ ♦︎ ♣︎ ♟︎ ⛷︎ ⛰︎ ⛩︎ ♨︎ ⛴︎ ✈︎ ☀︎ ⏱︎ ⏲︎ ☁︎ ⛈︎ ☂︎ ⛱︎ ❄︎ ☃︎ ☄︎ ⛑︎ ☎︎ ⌨︎ ✏︎ ✒︎ ✉︎ ✂︎ ⛏︎ ⚒︎ ⚔︎ ⚙︎ ⚖︎ ⛓︎ ⚗︎ ⚰︎ ⚱︎
-😀 😃 😄 😁 😆 😅 🤣 😂 🙂 🙃 🫠 😉 😊 😇 🥰 😍 🤩 😘 😗 ☺️ 😚 😙 🥲 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🫢 🫣 🤫 🤔 🫡 🤐 🤨 😐 😑 😶 🫥 😶‍🌫️ 😏 😒 🙄 😬 😮‍💨 🤥 🫨 🙂‍↔️ 🙂‍↕️ 😌 😔 😪 🤤 😴 🫩 😷 🤒 🤕 🤢 🤮 🤧 🥵 🥶 🥴 😵 😵‍💫 🤯 🤠 🥳 🥸 😎 🤓 🧐 😕 🫤 😟 🙁 ☹️ 😮 😯 😲 😳 🥺 🥹 😦 😧 😨 😰 😥 😢 😭 😱 😖 😣 😞 😓 😩 😫 🥱 😤 😡 😠 🤬 😈 👿 💀 ☠️ 💩 🤡 👹 👺 👻 👽 👾 🤖 😺 😸 😹 😻 😼 😽 🙀 😿 😾 🙈 🙉 🙊 💋 💯 💢 💥 💫 💦 💨 🕳️ 💤
-👋 🤚 🖐️ ✋ 🖖 🫱 🫲 🫳 🫴 🫷 🫸 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 🫵 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦿 🦵 🦶 👂 🦻 👃 🧠 🫀 🫁 🦷 🦴 👀 👁️ 👅 👄 🫦
-👶 🧒 👦 👧 🧑 👱 👨 🧔 👨‍🦰 👨‍🦱 👨‍🦳 👨‍🦲 👩 👩‍🦰 🧑‍🦰 👩‍🦱 🧑‍🦱 👩‍🦳 🧑‍🦳 👩‍🦲 🧑‍🦲 👱‍♀️ 👱‍♂️ 🧓 👴 👵 🙍 🙍‍♂️ 🙍‍♀️ 🙎 🙎‍♂️ 🙎‍♀️ 🙅 🙅‍♂️ 🙅‍♀️ 🙆 🙆‍♂️ 🙆‍♀️ 💁 💁‍♂️ 💁‍♀️ 🙋 🙋‍♂️ 🙋‍♀️ 🧏 🧏‍♂️ 🧏‍♀️ 🙇 🙇‍♂️ 🙇‍♀️ 🤦 🤦‍♂️ 🤦‍♀️ 🤷 🤷‍♂️ 🤷‍♀️ 🫅 🤴 👸 👳 👲 🧕 🤵 👰 🤰 🤱 👩‍🍼 👨‍🍼 🧑‍🍼 💃 🕺 🛀 🛌 👫 💏 👩‍❤️‍💋‍👨 💑 👩‍❤️‍👨 💌 💘 💝 💖 💗 💓 💞 💕 💟 ❣️ 💔 ❤️‍🔥 ❤️‍🩹 ❤️ 🩷 🧡 💛 💚 💙 🩵 💜 🤎 🖤 🩶 🤍
-🐵 🐒 🦍 🦧 🐶 🐕 🦮 🐕‍🦺 🐩 🐺 🦊 🦝 🐱 🐈 🐈‍⬛ 🦁 🐯 🐅 🐆 🐴 🫎 🫏 🐎 🦄 🦓 🦌 🦬 🐮 🐂 🐃 🐄 🐷 🐖 🐗 🐽 🐏 🐑 🐐 🐪 🐫 🦙 🦒 🐘 🦣 🦏 🦛 🐭 🐁 🐀 🐹 🐰 🐇 🐿️ 🦫 🦔 🦇 🐻 🐻‍❄️ 🐨 🐼 🦥 🦦 🦨 🦘 🦡 🐾 🦃 🐔 🐓 🐣 🐤 🐥 🐦 🐧 🕊️ 🦅 🦆 🦢 🦉 🦤 🪶 🦩 🦚 🦜 🪽 🐦‍⬛ 🪿 🐦‍🔥 🐸 🐊 🐢 🦎 🐍 🐲 🐉 🦕 🦖 🐳 🐋 🐬 🦭 🐟 🐠 🐡 🦈 🐙 🐚 🪸 🪼 🦀 🦞 🦐 🦑 🦪 🐌 🦋 🐛 🐜 🐝 🪲 🐞 🦗 🪳 🕷️ 🕸️ 🦂 🦟 🪰 🪱 🦠 💐 🌸 💮 🪷 🏵️ 🌹 🥀 🌺 🌻 🌼 🌷 🪻 🌱 🪴 🌲 🌳 🌴 🌵 🌾 🌿 ☘️ 🍀 🍁 🍂 🍃 🪹 🪺 🍄 🪾
-🍇 🍈 🍉 🍊 🍋 🍋‍🟩 🍌 🍍 🥭 🍎 🍏 🍐 🍑 🍒 🍓 🫐 🥝 🍅 🫒 🥥 🥑 🍆 🥔 🥕 🌽 🌶️ 🫑 🥒 🥬 🥦 🧄 🧅 🥜 🫘 🌰 🫚 🫛 🍄‍🟫 🫜 🍞 🥐 🥖 🫓 🥨 🥯 🥞 🧇 🧀 🍖 🍗 🥩 🥓 🍔 🍟 🍕 🌭 🥪 🌮 🌯 🫔 🥙 🧆 🥚 🍳 🥘 🍲 🫕 🥣 🥗 🍿 🧈 🧂 🥫 🍱 🍘 🍙 🍚 🍛 🍜 🍝 🍠 🍢 🍣 🍤 🍥 🥮 🍡 🥟 🥠 🥡 🍦 🍧 🍨 🍩 🍪 🎂 🍰 🧁 🥧 🍫 🍬 🍭 🍮 🍯 🍼 🥛 ☕ 🫖 🍵 🍶 🍾 🍷 🍸 🍹 🍺 🍻 🥂 🥃 🫗 🥤 🧋 🧃 🧉 🧊 🥢 🍽️ 🍴 🥄 🔪 🫙 🏺
-🎃 🎄 🎆 🎇 🧨 ✨ 🎈 🎉 🎊 🎋 🎍 🎎 🎏 🎐 🎑 🧧 🎀 🎁 🎗️ 🎟️ 🎫 🎖️ 🏆 🏅 🥇 🥈 🥉 ⚽ ⚾ 🥎 🏀 🏐 🏈 🏉 🎾 🥏 🎳 🏏 🏑 🏒 🥍 🏓 🏸 🥊 🥋 🥅 ⛳ ⛸️ 🎣 🤿 🎽 🎿 🛷 🥌 🎯 🪀 🪁 🔫 🎱 🔮 🪄 🎮 🕹️ 🎰 🎲 🧩 🧸 🪅 🪩 🪆 ♠️ ♥️ ♦️ ♣️ ♟️ 🃏 🀄 🎴 🎭 🖼️ 🎨 🧵 🪡 🧶 🪢
-🧑‍⚕️ 👨‍⚕️ 👩‍⚕️ 🧑‍🎓 👨‍🎓 👩‍🎓 🧑‍🏫 👨‍🏫 👩‍🏫 🧑‍⚖️ 👨‍⚖️ 👩‍⚖️ 🧑‍🌾 👨‍🌾 👩‍🌾 🧑‍🍳 👨‍🍳 👩‍🍳 🧑‍🔧 👨‍🔧 👩‍🔧 🧑‍🏭 👨‍🏭 👩‍🏭 🧑‍💼 👨‍💼 👩‍💼 🧑‍🔬 👨‍🔬 👩‍🔬 🧑‍💻 👨‍💻 👩‍💻 🧑‍🎤 👨‍🎤 👩‍🎤 🧑‍🎨 👨‍🎨 👩‍🎨 🧑‍✈️ 👨‍✈️ 👩‍✈️ 🧑‍🚀 👨‍🚀 👩‍🚀 🧑‍🚒 👨‍🚒 👩‍🚒 👮 👮‍♂️ 👮‍♀️ 🕵️ 🕵️‍♂️ 🕵️‍♀️ 💂 💂‍♂️ 💂‍♀️ 🥷 👷 👷‍♂️ 👷‍♀️ 👼 🎅 🤶 🧑‍🎄 🦸 🦸‍♂️ 🦸‍♀️ 🦹 🦹‍♂️ 🦹‍♀️ 🧙 🧙‍♂️ 🧙‍♀️ 🧚 🧚‍♂️ 🧚‍♀️ 🧛 🧛‍♂️ 🧛‍♀️ 🧜 🧜‍♂️ 🧜‍♀️ 🧝 🧝‍♂️ 🧝‍♀️ 🧞 🧞‍♂️ 🧞‍♀️ 🧟 🧟‍♂️ 🧟‍♀️ 🧌
-🚶 🚶‍♂️ 🚶‍♀️ 🚶‍➡️ 🚶‍♀️‍➡️ 🚶‍♂️‍➡️ 🧍 🧍‍♂️ 🧍‍♀️ 🧎 🧎‍♂️ 🧎‍♀️ 🧎‍➡️ 🧎‍♀️‍➡️ 🧎‍♂️‍➡️ 🧑‍🦯 🧑‍🦯‍➡️ 👨‍🦯 👨‍🦯‍➡️ 👩‍🦯 👩‍🦯‍➡️ 🧑‍🦼 🧑‍🦼‍➡️ 👨‍🦼 👨‍🦼‍➡️ 👩‍🦼 👩‍🦼‍➡️ 🧑‍🦽 🧑‍🦽‍➡️ 👨‍🦽 👨‍🦽‍➡️ 👩‍🦽 👩‍🦽‍➡️ 🏃 🏃‍♂️ 🏃‍♀️ 🏃‍➡️ 🏃‍♀️‍➡️ 🏃‍♂️‍➡️ 💇 💇‍♂️ 💇‍♀️ 🕴️ 👯 👯‍♂️ 👯‍♀️ 🧖 🧖‍♂️ 🧖‍♀️ 🧗 🧗‍♂️ 🧗‍♀️ 🤺 🏇 ⛷️ 🏂 🏌️ 🏌️‍♂️ 🏌️‍♀️ 🏄 🏄‍♂️ 🏄‍♀️ 🚣 🚣‍♂️ 🚣‍♀️ 🏊 🏊‍♂️ 🏊‍♀️ ⛹️ ⛹️‍♂️ ⛹️‍♀️ 🏋️ 🏋️‍♂️ 🏋️‍♀️ 🚴 🚴‍♂️ 🚴‍♀️ 🚵 🚵‍♂️ 🚵‍♀️ 🤸 🤸‍♂️ 🤸‍♀️ 🤼 🤼‍♂️ 🤼‍♀️ 🤽 🤽‍♂️ 🤽‍♀️ 🤾 🤾‍♂️ 🤾‍♀️ 🤹 🤹‍♂️ 🤹‍♀️ 🧘 🧘‍♂️ 🧘‍♀️
-🌍 🌎 🌏 🌐 🗺️ 🗾 🧭 🏔️ ⛰️ 🌋 🗻 🏕️ 🏖️ 🏜️ 🏝️ 🏞️ 🏟️ 🏛️ 🏗️ 🧱 🪨 🪵 🛖 🏘️ 🏚️ 🏠 🏡 🏢 🏣 🏤 🏥 🏦 🏨 🏩 🏪 🏫 🏬 🏭 🏯 🏰 💒 🗼 🗽 ⛪ 🕌 🛕 🕍 ⛩️ 🕋 ⛲ ⛺ 🌁 🌃 🏙️ 🌄 🌅 🌆 🌇 🌉 ♨️ 🎠 🛝 🎡 🎢 💈 🎪
-🚂 🚃 🚄 🚅 🚆 🚇 🚈 🚉 🚊 🚝 🚞 🚋 🚌 🚍 🚎 🚐 🚑 🚒 🚓 🚔 🚕 🚖 🚗 🚘 🚙 🛻 🚚 🚛 🚜 🏎️ 🏍️ 🛵 🦽 🦼 🛺 🚲 🛴 🛹 🛼 🚏 🛣️ 🛤️ 🛢️ ⛽ 🛞 🚨 🚥 🚦 🛑 🚧 ⚓ 🛟 ⛵ 🛶 🚤 🛳️ ⛴️ 🛥️ 🚢 ✈️ 🛩️ 🛫 🛬 🪂 💺 🚁 🚟 🚠 🚡 🛰️ 🚀 🛸 🛎️ 🧳 ⌛ ⏳ ⌚ ⏰ ⏱️ ⏲️ 🕰️ 🕛 🕧 🕐 🕜 🕑 🕝 🕒 🕞 🕓 🕟 🕔 🕠 🕕 🕡 🕖 🕢 🕗 🕣 🕘 🕤 🕙 🕥 🕚 🕦
-🌑 🌒 🌓 🌔 🌕 🌖 🌗 🌘 🌙 🌚 🌛 🌜 🌡️ ☀️ 🌝 🌞 🪐 ⭐ 🌟 🌠 🌌 ☁️ ⛅ ⛈️ 🌤️ 🌥️ 🌦️ 🌧️ 🌨️ 🌩️ 🌪️ 🌫️ 🌬️ 🌀 🌈 🌂 ☂️ ☔ ⛱️ ⚡ ❄️ ☃️ ⛄ ☄️ 🔥 💧 🌊
-👓 🕶️ 🥽 🥼 🦺 👔 👕 👖 🧣 🧤 🧥 🧦 👗 👘 🥻 🩱 🩲 🩳 👙 👚 🪭 👛 👜 👝 🛍️ 🎒 🩴 👞 👟 🥾 🥿 👠 👡 🩰 👢 🪮 👑 👒 🎩 🎓 🧢 🪖 ⛑️ 📿 💄 💍 💎
-🔇 🔈 🔉 🔊 📢 📣 📯 🔔 🔕 🎼 🎵 🎶 🎙️ 🎚️ 🎛️ 🎤 🎧 📻 🎷 🪗 🎸 🎹 🎺 🎻 🪕 🥁 🪘 🪇 🪈 🪉 📱 📲 ☎️ 📞 📟 📠 🔋 🪫 🔌 💻 🖥️ 🖨️ ⌨️ 🖱️ 🖲️ 💽 💾 💿 📀 🧮 🎥 🎞️ 📽️ 🎬 📺 📷 📸 📹 📼 🔍 🔎 🕯️ 💡 🔦 🏮 🪔
-📔 📕 📖 📗 📘 📙 📚 📓 📒 📃 📜 📄 📰 🗞️ 📑 🔖 🏷️ 💰 🪙 💴 💵 💶 💷 💸 💳 🧾 💹 ✉️ 📧 📨 📩 📤 📥 📦 📫 📪 📬 📭 📮 🗳️ ✏️ ✒️ 🖋️ 🖊️ 🖌️ 🖍️ 📝 💼 📁 📂 🗂️ 📅 📆 🗒️ 🗓️ 📇 📈 📉 📊 📋 📌 📍 📎 🖇️ 📏 📐 ✂️ 🗃️ 🗄️ 🗑️
-🔒 🔓 🔏 🔐 🔑 🗝️ 🔨 🪓 ⛏️ ⚒️ 🛠️ 🗡️ ⚔️ 💣 🪃 🏹 🛡️ 🪚 🔧 🪛 🔩 ⚙️ 🗜️ ⚖️ 🦯 🔗 ⛓️‍💥 ⛓️ 🪝 🧰 🧲 🪜 🪏 ⚗️ 🧪 🧫 🧬 🔬 🔭 📡 💉 🩸 💊 🩹 🩼 🩺 🩻 🚪 🛗 🪞 🪟 🛏️ 🛋️ 🪑 🚽 🪠 🚿 🛁 🪤 🪒 🧴 🧷 🧹 🧺 🧻 🪣 🧼 🫧 🪥 🧽 🧯 🛒 🚬 ⚰️ 🪦 ⚱️ 🧿 🪬 🗿 🪧 🪪
-`.trim().split(/\s+/);
-const FIRST_FACE_EMOJI = EMOJI_SET.indexOf("😀");
-if (FIRST_FACE_EMOJI > 0) EMOJI_SET = [...EMOJI_SET.slice(FIRST_FACE_EMOJI), ...EMOJI_SET.slice(0, FIRST_FACE_EMOJI)];
-const CHANNEL_REACTION_OPTIONS = ["👍", "❤️", "🔥", "👏", "🤩", "⚡", "🎉", "😍", "😢", "🤔", "👎", "💯"];
-const DEFAULT_CHANNEL_REACTIONS = ["👍", "❤️", "🔥", "👏", "🤩", "⚡"];
-const CALL_RINGTONES = [
-  { id: "classic", title: "Классический", description: "Спокойный стандартный сигнал" },
-  { id: "pulse", title: "Пульс", description: "Ритмичный двойной сигнал" },
-  { id: "bright", title: "Яркий", description: "Более высокий и заметный сигнал" },
-];
+#!/usr/bin/env python3
+"""Chat-Pro local backend with admin panel.
 
-function channelReactionEmojis() {
-  const configured = state?.settings?.channel_reactions;
-  return Array.isArray(configured) && configured.length
-    ? configured.filter((emoji) => CHANNEL_REACTION_OPTIONS.includes(emoji))
-    : DEFAULT_CHANNEL_REACTIONS;
+Run: python3 server.py
+Open: http://localhost:8000
+Admin: http://localhost:8000/admin
+
+This is a local demo backend. Counters, boosts and reviews work only inside this
+application and do not affect real Telegram/VK/web pages.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import datetime
+import hashlib
+import hmac
+import ipaddress
+import json
+import mimetypes
+import os
+import re
+import secrets
+import socket
+import sqlite3
+import smtplib
+import threading
+import time
+from decimal import Decimal, ROUND_HALF_UP
+from email.message import EmailMessage
+from html import unescape
+from http import HTTPStatus
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+from urllib import error as urlerror
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
+from urllib import request as urlrequest
+from xml.etree import ElementTree
+
+
+ROOT = Path(__file__).resolve().parent
+DB_PATH = ROOT / "minigram.sqlite3"
+HOST = os.environ.get("CHAT_PRO_HOST", "127.0.0.1")
+PORT = int(os.environ.get("CHAT_PRO_PORT", "8000"))
+ADMIN_KEY = os.environ.get("MINIGRAM_ADMIN_KEY", "admin123")
+TELEGRAM_POLL_INTERVAL = 15
+TELEGRAM_MEDIA_MAX_BYTES = 2_500_000
+RSS_POLL_INTERVAL = 300
+RSS_MAX_BYTES = 512_000
+RSS_MAX_ENTRIES = 100
+RSS_IMAGE_MAX_BYTES = 2_500_000
+VK_POLL_INTERVAL = 300
+VK_API_VERSION = "5.199"
+AUTH_CODE_TTL = 600
+AUTH_CODE_MAX_ATTEMPTS = 5
+CHAT_ACTIVITY_TTL = 6
+chat_activities: dict[tuple[str, str], tuple[str, float]] = {}
+chat_activities_lock = threading.Lock()
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USERNAME)
+SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").strip().lower() in {"1", "true", "yes"}
+YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
+YOOKASSA_SECRET_KEY = os.environ.get("YOOKASSA_SECRET_KEY", "")
+YOOKASSA_RETURN_URL = os.environ.get("YOOKASSA_RETURN_URL", "").rstrip("/")
+
+
+def read_genapi_settings() -> dict[str, str]:
+    settings: dict[str, str] = {}
+    try:
+        for line in Path("/etc/chat-pro/genapi.env").read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.strip().partition("=")
+            if separator and key in {"GENAPI_API_KEY", "GENAPI_BASE_URL", "GENAPI_MODEL"}:
+                settings[key] = value.strip()
+    except OSError:
+        pass
+    return settings
+
+
+GENAPI_SETTINGS = read_genapi_settings()
+GENAPI_API_KEY = os.environ.get("GENAPI_API_KEY", GENAPI_SETTINGS.get("GENAPI_API_KEY", "")).strip()
+GENAPI_BASE_URL = os.environ.get("GENAPI_BASE_URL", GENAPI_SETTINGS.get("GENAPI_BASE_URL", "https://proxy.gen-api.ru/v1")).strip().rstrip("/")
+GENAPI_MODEL = os.environ.get("GENAPI_MODEL", GENAPI_SETTINGS.get("GENAPI_MODEL", "deepseek-v4-flash")).strip()
+
+
+def genapi_configuration() -> tuple[str, str, str]:
+    settings = read_genapi_settings()
+    api_key = settings.get("GENAPI_API_KEY", "").strip() or GENAPI_API_KEY
+    base_url = settings.get("GENAPI_BASE_URL", "").strip().rstrip("/") or GENAPI_BASE_URL
+    model = settings.get("GENAPI_MODEL", "").strip() or GENAPI_MODEL
+    return api_key, base_url, model
+
+
+def read_s3_settings() -> dict[str, str]:
+    allowed = {"S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_REGION"}
+    settings: dict[str, str] = {}
+    try:
+        for line in Path("/etc/chat-pro/s3.env").read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.strip().partition("=")
+            if separator and key in allowed:
+                settings[key] = value.strip()
+    except OSError:
+        pass
+    return settings
+
+
+def s3_configuration() -> dict[str, str]:
+    settings = read_s3_settings()
+    return {
+        "endpoint": settings.get("S3_ENDPOINT", "").strip().rstrip("/"),
+        "bucket": settings.get("S3_BUCKET", "").strip(),
+        "access_key": settings.get("S3_ACCESS_KEY", "").strip(),
+        "secret_key": settings.get("S3_SECRET_KEY", "").strip(),
+        "region": settings.get("S3_REGION", "us-east-1").strip() or "us-east-1",
+    }
+
+
+def s3_is_configured() -> bool:
+    config = s3_configuration()
+    endpoint = urlparse(config["endpoint"])
+    return bool(config["bucket"] and config["access_key"] and config["secret_key"] and endpoint.scheme == "https" and endpoint.netloc)
+
+
+def s3_quote(value: str) -> str:
+    return quote(str(value), safe="~-._/")
+
+
+def s3_query_quote(value: str) -> str:
+    return quote(str(value), safe="~-._")
+
+
+def s3_signing_key(secret_key: str, date_stamp: str, region: str) -> bytes:
+    date_key = hmac.new(("AWS4" + secret_key).encode("utf-8"), date_stamp.encode("utf-8"), hashlib.sha256).digest()
+    region_key = hmac.new(date_key, region.encode("utf-8"), hashlib.sha256).digest()
+    service_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
+    return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
+
+
+def s3_object_url(config: dict[str, str], key: str) -> tuple[str, str, str]:
+    endpoint = urlparse(config["endpoint"])
+    canonical_uri = s3_quote(f"/{config['bucket']}/{key}")
+    return config["endpoint"] + canonical_uri, endpoint.netloc, canonical_uri
+
+
+def s3_presigned_url(method: str, key: str, expires_in: int = 900, content_type: str | None = None) -> tuple[str, dict[str, str]]:
+    config = s3_configuration()
+    if not s3_is_configured():
+        raise ValueError("S3-хранилище пока не подключено.")
+    current = datetime.datetime.now(datetime.timezone.utc)
+    amz_date = current.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = current.strftime("%Y%m%d")
+    credential_scope = f"{date_stamp}/{config['region']}/s3/aws4_request"
+    url, host, canonical_uri = s3_object_url(config, key)
+    canonical_headers = f"host:{host}\n"
+    signed_headers = "host"
+    headers: dict[str, str] = {}
+    if content_type:
+        canonical_headers = f"content-type:{content_type}\n" + canonical_headers
+        signed_headers = "content-type;host"
+        headers["Content-Type"] = content_type
+    query = {
+        "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+        "X-Amz-Credential": f"{config['access_key']}/{credential_scope}",
+        "X-Amz-Date": amz_date,
+        "X-Amz-Expires": str(max(60, min(expires_in, 3600))),
+        "X-Amz-SignedHeaders": signed_headers,
+    }
+    canonical_query = "&".join(f"{s3_query_quote(name)}={s3_query_quote(query[name])}" for name in sorted(query))
+    canonical_request = "\n".join((method, canonical_uri, canonical_query, canonical_headers, signed_headers, "UNSIGNED-PAYLOAD"))
+    string_to_sign = "\n".join(("AWS4-HMAC-SHA256", amz_date, credential_scope, hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()))
+    signature = hmac.new(s3_signing_key(config["secret_key"], date_stamp, config["region"]), string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{url}?{canonical_query}&X-Amz-Signature={signature}", headers
+
+
+def s3_object_metadata(key: str) -> tuple[int, str]:
+    config = s3_configuration()
+    if not s3_is_configured():
+        raise ValueError("S3-хранилище пока не подключено.")
+    current = datetime.datetime.now(datetime.timezone.utc)
+    amz_date = current.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = current.strftime("%Y%m%d")
+    credential_scope = f"{date_stamp}/{config['region']}/s3/aws4_request"
+    url, host, canonical_uri = s3_object_url(config, key)
+    canonical_headers = f"host:{host}\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:{amz_date}\n"
+    signed_headers = "host;x-amz-content-sha256;x-amz-date"
+    canonical_request = "\n".join(("HEAD", canonical_uri, "", canonical_headers, signed_headers, "UNSIGNED-PAYLOAD"))
+    string_to_sign = "\n".join(("AWS4-HMAC-SHA256", amz_date, credential_scope, hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()))
+    signature = hmac.new(s3_signing_key(config["secret_key"], date_stamp, config["region"]), string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    authorization = f"AWS4-HMAC-SHA256 Credential={config['access_key']}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    request = urlrequest.Request(url, method="HEAD", headers={"Authorization": authorization, "x-amz-content-sha256": "UNSIGNED-PAYLOAD", "x-amz-date": amz_date})
+    try:
+        with urlrequest.urlopen(request, timeout=15) as response:
+            return int(response.headers.get("Content-Length", "0")), response.headers.get_content_type()
+    except (OSError, ValueError) as error:
+        raise ValueError("Не удалось проверить загруженный файл в S3.") from error
+
+
+CHANNEL_MANAGER_ROLES = {"owner", "admin", "author"}
+LEVEL_LIMIT_KEYS = {
+    "maxStars", "messagesPerDay", "storiesPerDay", "storiesPerMonth", "postsPerDay",
+    "communitiesJoined", "communitiesCreated",
+    "channelsJoined", "channelsCreated", "savedAccounts", "autopostSourcesTotal", "autopostSourcesPerChannel",
+}
+ACTIVITY_METRIC_KEYS = {
+    "stars_balance", "direct_chats", "channels_joined", "communities_joined",
+    "channels_created", "communities_created", "channel_subscribers",
+    "community_subscribers", "messages", "posts", "stories", "reviews",
+    "donations_sent", "stars_donated", "donations_received", "login_streak", "completed_calls",
+    "call_partners", "chat_pro_review_video",
+}
+LEVEL_CRITERIA_KEYS = ACTIVITY_METRIC_KEYS | {"communities", "channels"}
+DEFAULT_UI_APPEARANCE = {"outlineColor": "#65ddf8", "glowColor": "#21d5f0", "glowIntensity": 35}
+DEFAULT_PUBLIC_BRANDING = {"loginLogoData": ""}
+LOGIN_LOGO_MAX_BYTES = 2_500_000
+CHANNEL_REACTION_OPTIONS = ("👍", "❤️", "🔥", "👏", "🤩", "⚡", "🎉", "😍", "😢", "🤔", "👎", "💯")
+DEFAULT_CHANNEL_REACTIONS = ("👍", "❤️", "🔥", "👏", "🤩", "⚡")
+DEFAULT_STAR_PACKAGES = [
+    {"id": "stars-100", "stars": 100, "price": "99.00"},
+    {"id": "stars-550", "stars": 550, "price": "449.00"},
+    {"id": "stars-1200", "stars": 1200, "price": "899.00"},
+]
+DEFAULT_PUBLIC_LEGAL = {
+    "sellerStatus": "самозанятый", "sellerName": "Ковнерев Андрей Александрович", "inn": "440601014935",
+    "vkUrl": "https://vk.ru/id_ne_naidi", "telegram": "Qwerty248i", "email": "andreikovnerev333@gmail.com",
+    "purchaseDescription": "Пользователь приобретает внутренние звёзды Chat-Pro для доступа к доступным функциям аккаунта: Premium, повышению уровня аккаунта, увеличению лимитов и функциям автопостинга в соцсети. Доступность, стоимость и лимиты конкретных функций устанавливаются в интерфейсе сервиса.",
+    "refundTerms": "Обращение по возврату принимается на andreikovnerev333@gmail.com. Возврат рассматривается, если деньги были списаны, но звёзды не начислены, либо оплаченная функция не предоставлена по вине сервиса. Если платёж не был успешно завершён и списание не произошло, возврат не требуется. При технической ошибке сервиса средства возвращаются или звёзды начисляются после проверки платежа.",
+    "userAgreementUrl": "/requisites#user-agreement", "purchaseTermsUrl": "/requisites#purchase-terms", "privacyPolicyUrl": "/requisites#privacy-policy",
+    "userAgreementText": "ПОЛЬЗОВАТЕЛЬСКОЕ СОГЛАШЕНИЕ CHAT-PRO\n\nДата публикации: 21 августа 2026 года\n\n1. ОБЩИЕ ПОЛОЖЕНИЯ\n1.1. Настоящее соглашение определяет условия использования сервиса Chat-Pro (далее — Сервис), доступного по адресу chat-pro-ru.space. Администратор Сервиса — самозанятый Ковнерев Андрей Александрович, ИНН 440601014935 (далее — Администратор).\n1.2. Регистрация, вход в аккаунт или фактическое использование Сервиса означает принятие настоящего соглашения. Если пользователь не согласен с его условиями, он обязан прекратить использование Сервиса.\n1.3. Сервис предоставляет функции обмена сообщениями, создания групп, сообществ и каналов, публикации материалов, работы со звёздами, уровнями аккаунта, Premium и иными доступными функциями. Состав функций может изменяться.\n\n2. ВОЗРАСТ И АККАУНТ\n2.1. Самостоятельно пользоваться Сервисом могут лица, достигшие 14 лет. Пользователь от 14 до 18 лет подтверждает, что при необходимости получил согласие законного представителя.\n2.2. Пользователь обязан указывать достоверные данные, обеспечивать сохранность пароля и не передавать доступ к аккаунту третьим лицам. Все действия, совершённые через аккаунт до сообщения о его компрометации, считаются действиями пользователя.\n2.3. Администратор вправе ограничить, приостановить или удалить аккаунт при нарушении настоящего соглашения, требований закона, прав третьих лиц или безопасности Сервиса.\n\n3. ПРАВИЛА ИСПОЛЬЗОВАНИЯ\n3.1. Пользователь самостоятельно отвечает за сообщения, файлы, публикации, ссылки и иные материалы, которые он размещает или направляет через Сервис.\n3.2. Запрещается размещать незаконные материалы, нарушать авторские и иные права третьих лиц, распространять вредоносное ПО, спам, персональные данные третьих лиц без основания, угрозы, оскорбления, материалы с призывами к противоправным действиям, а также обходить технические ограничения Сервиса.\n3.3. При использовании автопостинга пользователь подтверждает наличие прав и законных оснований на подключение источника и публикацию импортируемых материалов.\n3.4. Администратор не является автором пользовательских материалов и не несёт ответственности за их содержание, однако вправе удалить или ограничить доступ к материалу при получении обоснованной жалобы или выявлении нарушения.\n\n4. ДОСТУПНОСТЬ И БЕЗОПАСНОСТЬ\n4.1. Сервис предоставляется по принципу «как есть». Администратор принимает разумные меры для его работоспособности, но не гарантирует отсутствие технических перерывов, ошибок или совместимость со всеми устройствами и программами.\n4.2. Передача данных между браузером и Сервисом выполняется по защищённому соединению HTTPS. Сквозное шифрование сообщений не заявляется, если оно прямо не обозначено в интерфейсе отдельной функции.\n4.3. Пользователь обязан самостоятельно создавать резервные копии значимых материалов, если это допускает функциональность Сервиса.\n\n5. ЗВЁЗДЫ И ПЛАТНЫЕ ФУНКЦИИ\n5.1. Звёзды являются внутренними цифровыми единицами Сервиса, не являются денежными средствами, электронной валютой или банковским счётом. Порядок их покупки и использования установлен условиями покупки.\n5.2. Лимиты функций, стоимость звёзд, Premium и уровней аккаунта отображаются в интерфейсе Сервиса и могут меняться для будущих операций.\n\n6. ОБРАБОТКА ДАННЫХ И ОБРАЩЕНИЯ\n6.1. Порядок обработки данных изложен в Политике обработки персональных данных, являющейся частью настоящего соглашения.\n6.2. По вопросам Сервиса, платежей, возвратов и нарушений можно обратиться по адресу andreikovnerev333@gmail.com.\n\n7. ЗАКЛЮЧИТЕЛЬНЫЕ ПОЛОЖЕНИЯ\n7.1. Администратор может изменять настоящее соглашение. Новая редакция публикуется на этой странице и применяется с момента публикации, если не указан иной срок.\n7.2. К отношениям сторон применяется законодательство Российской Федерации с учётом обязательных норм страны пользователя, если они применимы.",
+    "purchaseTermsText": "УСЛОВИЯ ПОКУПКИ ЗВЁЗД CHAT-PRO\n\nДата публикации: 21 августа 2026 года\n\n1. ПРЕДМЕТ ПОКУПКИ\n1.1. Пользователь приобретает внутренние звёзды Chat-Pro в количестве и по цене, указанным на странице оплаты перед её подтверждением. Продавец — самозанятый Ковнерев Андрей Александрович, ИНН 440601014935.\n1.2. Звёзды могут использоваться только внутри Chat-Pro для доступных функций аккаунта, включая Premium, уровни аккаунта, увеличение лимитов и функции автопостинга, если такие функции доступны пользователю. Конкретные лимиты и стоимость определяются настройками Сервиса и показываются пользователю до совершения операции.\n1.3. Звёзды не являются деньгами, не обмениваются на наличные или безналичные денежные средства, не подлежат переводу за пределы Сервиса и не предоставляют имущественных прав вне Chat-Pro.\n\n2. ОПЛАТА И НАЧИСЛЕНИЕ\n2.1. Оплата проводится на защищённой странице платёжного партнёра. Сервис не получает и не хранит реквизиты банковской карты пользователя.\n2.2. Звёзды начисляются только после подтверждения успешной оплаты платёжным сервисом. Время начисления может зависеть от обработки платежа и технических обстоятельств.\n2.3. До подтверждения оплаты пользователь видит количество звёзд, цену в рублях и ссылку на условия покупки. Нажатие кнопки перехода к оплате после принятия условий означает согласие с этими условиями.\n\n3. ИСПОЛЬЗОВАНИЕ ЗВЁЗД\n3.1. После списания звёзд за цифровую функцию результат операции отображается в интерфейсе Сервиса.\n3.2. Если функция временно недоступна по технической причине, пользователь может обратиться в поддержку для проверки операции.\n3.3. Стоимость будущих пакетов и функций может меняться. Изменение не влияет на уже начисленные звёзды и уже оплаченные операции, кроме случаев исправления очевидной технической ошибки.\n\n4. ВОЗВРАТ И РАССМОТРЕНИЕ ОБРАЩЕНИЙ\n4.1. Обращение по вопросам оплаты и возврата направляется на andreikovnerev333@gmail.com с описанием проблемы, датой, суммой и, при наличии, идентификатором платежа. Не направляйте полные данные банковской карты.\n4.2. Возврат рассматривается, если денежные средства были списаны, но звёзды не начислены, либо оплаченная цифровая функция не была предоставлена по вине Сервиса. Перед решением Администратор вправе сверить статус платежа с платёжным сервисом.\n4.3. Если платёж не был завершён и списания денежных средств не произошло, возврат не требуется. Если банк временно зарезервировал сумму, сроки её разблокировки определяются банком или платёжным сервисом.\n4.4. Решение по обращению принимается в разумный срок после получения данных, необходимых для проверки. Права пользователя, предусмотренные применимым законодательством, не ограничиваются настоящими условиями.\n\n5. ЗАКЛЮЧИТЕЛЬНЫЕ ПОЛОЖЕНИЯ\n5.1. Эти условия являются частью пользовательского соглашения Chat-Pro.\n5.2. Актуальная редакция всегда размещается на этой странице. Для будущих покупок применяется редакция, опубликованная на момент перехода к оплате.",
+    "privacyPolicyText": "ПОЛИТИКА ОБРАБОТКИ ПЕРСОНАЛЬНЫХ ДАННЫХ CHAT-PRO\n\nДата публикации: 21 августа 2026 года\n\n1. ОПЕРАТОР И ОБЛАСТЬ ПРИМЕНЕНИЯ\n1.1. Оператором персональных данных является самозанятый Ковнерев Андрей Александрович, ИНН 440601014935, e-mail: andreikovnerev333@gmail.com (далее — Оператор).\n1.2. Политика применяется к данным пользователей сайта и Сервиса Chat-Pro.\n\n2. КАКИЕ ДАННЫЕ ОБРАБАТЫВАЮТСЯ\n2.1. Оператор может обрабатывать: имя, username, адрес e-mail или номер телефона, пароль в защищённом виде, сообщения, файлы и иные материалы, которые пользователь размещает в Сервисе, сведения о действиях в Сервисе, IP-адрес, сведения браузера и устройства, технические журналы, а также данные обращений в поддержку.\n2.2. Платёжные реквизиты банковских карт не обрабатываются и не хранятся Оператором; оплату обрабатывает платёжный партнёр на своей защищённой странице.\n\n3. ЦЕЛИ И ОСНОВАНИЯ ОБРАБОТКИ\n3.1. Данные используются для регистрации и работы аккаунта, подтверждения контакта, предоставления функций Сервиса, обеспечения безопасности, предотвращения нарушений, ответа на обращения, исполнения пользовательского соглашения, выполнения требований законодательства и урегулирования споров.\n3.2. Основанием обработки являются согласие пользователя, исполнение договора с пользователем, законный интерес Оператора по защите Сервиса, а также обязанности, установленные применимым законодательством.\n\n4. ХРАНЕНИЕ И ЗАЩИТА\n4.1. Данные хранятся в течение срока, необходимого для работы Сервиса, исполнения соглашения, рассмотрения обращений и выполнения обязанностей, предусмотренных законом. Сообщения, файлы и технические журналы могут храниться в том числе для обеспечения безопасности и исполнения требований законодательства; при наличии соответствующей обязанности срок хранения может составлять до 6 месяцев или иной срок, установленный законом.\n4.2. Оператор применяет организационные и технические меры защиты, включая разграничение доступа и защищённое HTTPS-соединение при передаче данных. Сквозное шифрование сообщений не заявляется, если это прямо не обозначено в интерфейсе отдельной функции.\n4.3. Пользователь понимает, что абсолютная безопасность в сети Интернет не может быть гарантирована.\n\n5. ПЕРЕДАЧА ДАННЫХ\n5.1. Данные могут быть переданы лицам, которые обеспечивают техническую работу Сервиса, хостинг, доставку e-mail, обработку платежей или поддержку, только в объёме, необходимом для соответствующей цели и при наличии правового основания.\n5.2. Данные также могут быть предоставлены государственным органам в случаях и порядке, предусмотренных законодательством.\n5.3. Сервис доступен пользователям за пределами России. При использовании Сервиса пользователь понимает, что обработка может затрагивать трансграничную передачу данных, если это необходимо для работы используемой инфраструктуры и допускается применимым законодательством.\n\n6. ПРАВА ПОЛЬЗОВАТЕЛЯ\n6.1. Пользователь вправе запросить сведения об обработке своих данных, уточнить их, отозвать согласие в случаях, когда обработка основана на согласии, а также обратиться с вопросом или жалобой по адресу andreikovnerev333@gmail.com.\n6.2. Удаление аккаунта или отдельных данных может быть ограничено, если их хранение необходимо для исполнения закона, предотвращения злоупотреблений, защиты прав Оператора или третьих лиц.\n\n7. ИЗМЕНЕНИЕ ПОЛИТИКИ\n7.1. Оператор может обновлять Политику. Новая редакция публикуется на этой странице и действует с момента публикации, если не указан иной срок.",
+    "starPackages": DEFAULT_STAR_PACKAGES,
 }
 
-function availableMessageReactions(chat) {
-  return chat?.type === "channel" ? channelReactionEmojis() : ["❤️", ...EMOJI_SET.filter((emoji) => emoji !== "❤️")];
-}
 
-function hasActiveAccountLevel() {
-  const levels = state?.accountLevel?.levels || [];
-  const activeIndex = levels.findIndex((level) => level.id === "active");
-  const currentIndex = levels.findIndex((level) => level.id === state?.accountLevel?.current?.id);
-  return activeIndex >= 0 && currentIndex >= activeIndex;
-}
+def nonnegative_int(value, field_name: str, maximum: int = 1_000_000) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"Поле «{field_name}» должно быть целым числом.") from None
+    if parsed < 0 or parsed > maximum:
+        raise ValueError(f"Поле «{field_name}» должно быть от 0 до {maximum}.")
+    return parsed
 
-const app = document.querySelector("#app");
-let token = localStorage.getItem(TOKEN_KEY) || "";
-let state = null;
-let activeSection = "chats";
-let settingsSection = "general";
-let menuOpen = false;
-let chatFilter = "all";
-let storiesCollapsed = false;
-let activeChatId = null;
-let openedProfileId = null;
-let profileReturnSection = "chats";
-let activeCall = null;
-let callPollTimer = null;
-let messagePollTimer = null;
-let messagePollInProgress = false;
-let ringTone = null;
-let callVoiceActivity = [];
-let scrollChatToLatest = false;
-let selectedMessageIds = new Set();
-let expandedRssPostIds = new Set();
-let pinnedMessageIndex = 0;
-let reviewPageUrl = "";
-let publicLegal = null;
-let publicBranding = null;
-let chatActivityPingTimer = null;
-let lastChatActivity = { chatId: null, activity: "", sentAt: 0 };
-let globalSearchTimer = null;
-let globalSearchRequest = 0;
-let activeChatSearchOpen = false;
-let activeChatSearchQuery = "";
-let activeChatSearchTimer = null;
-let highlightedMessageSearch = { chatId: null, query: "" };
-let aiAgentConversation = [];
-const pendingOutgoingMessages = new Map();
 
-function pinIcon(className = "") {
-  return `<svg${className ? ` class="${className}"` : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12M8 4v5l-3 4h14l-3-4V4M12 13v7"/></svg>`;
-}
+def normalize_channel_reactions(value) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("Реакции каналов должны быть списком.")
+    reactions = []
+    for item in value:
+        emoji = str(item)
+        if emoji not in CHANNEL_REACTION_OPTIONS:
+            raise ValueError("Выбрана неподдерживаемая реакция канала.")
+        if emoji not in reactions:
+            reactions.append(emoji)
+    if not reactions:
+        raise ValueError("Выберите хотя бы одну реакцию для каналов.")
+    return reactions
 
-function actionIcon(name, className = "") {
-  const paths = {
-    more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
-    reaction: '<circle cx="12" cy="12" r="8.25"/><path d="M8.2 14c1 1.35 2.25 2 3.8 2s2.8-.65 3.8-2M9 10h.01M15 10h.01"/>',
-    select: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="m8 12 2.5 2.5L16.5 8.5"/>',
-    profile: '<circle cx="12" cy="8" r="3"/><path d="M5.5 20v-1a5.5 5.5 0 0 1 11 0v1"/>',
-    forward: '<path d="M14 5.5 20.5 12 14 18.5M20 12H9a5 5 0 0 0-5 5v1"/>',
-    confidential: '<rect x="5" y="10" width="14" height="10" rx="2.5"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"/>',
-    donate: '<path d="m12 3 2.15 5.1 5.5.45-4.18 3.62 1.27 5.33L12 14.3 7.26 17.5l1.27-5.33L4.35 8.55l5.5-.45L12 3Z"/>',
-    download: '<path d="M12 3v11M8 10l4 4 4-4M5 20h14"/>',
-    play: '<path d="m9 5 10 7-10 7V5Z"/>',
-    stop: '<rect x="7" y="7" width="10" height="10" rx="1.5"/>',
-    edit: '<path d="m4 16.5-.7 4.2 4.2-.7L18.7 8.8a2.45 2.45 0 0 0-3.46-3.46L4 16.5Z"/><path d="m13.8 6.8 3.45 3.45"/>',
-    report: '<path d="M6 21V4m0 1h11l-1.7 3.5L17 12H6"/>',
-    delete: '<path d="M4 7h16M10 11v6M14 11v6M9 7l1-3h4l1 3M6.5 7l.7 13h9.6l.7-13"/>',
-    cancel: '<path d="M7 7h9a5 5 0 1 1-4.5 7.2"/><path d="M7 7v5M7 7h5"/>',
-  };
-  return `<svg${className ? ` class="${className}"` : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ""}</svg>`;
-}
 
-function callControlIcon(name) {
-  const paths = {
-    accept: '<path d="M7.2 3.8 4.6 6.4c-.8.8-.9 2-.3 2.9 2.9 4.7 6.8 8.6 11.5 11.5.9.6 2.1.5 2.9-.3l2.6-2.6c.7-.7.7-1.9 0-2.6l-2.1-2.1c-.7-.7-1.8-.7-2.5-.1l-1.4 1.1a13.6 13.6 0 0 1-5.5-5.5l1.1-1.4c.6-.7.6-1.8-.1-2.5L9.8 3.8c-.7-.7-1.9-.7-2.6 0Z"/>',
-    decline: '<path d="M7 15.6c3.2-2.1 6.8-2.1 10 0l1.7 1.1c.7.5.8 1.5.2 2.1l-1.2 1.2c-.4.4-1 .5-1.5.3a10.2 10.2 0 0 0-8.4 0c-.5.2-1.1.1-1.5-.3l-1.2-1.2c-.6-.6-.5-1.6.2-2.1L7 15.6Z"/><path d="M5.5 8.5c4.1-2.7 8.9-2.7 13 0"/>',
-    microphone: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V21M9 21h6"/>',
-    microphoneOff: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6.5 11a5.5 5.5 0 0 0 11 0M12 16.5V21M9 21h6M4 4l16 16"/>',
-    pause: '<path d="M8 5v14M16 5v14"/>',
-    play: '<path d="m9 5 10 7-10 7V5Z"/>',
-    camera: '<rect x="3.5" y="6.5" width="11.5" height="11" rx="2.5"/><path d="m15 10 5-3v10l-5-3"/>',
-    cameraOff: '<rect x="3.5" y="6.5" width="11.5" height="11" rx="2.5"/><path d="m15 10 5-3v10l-5-3M4 4l16 16"/>',
-    cameraFlip: '<rect x="4" y="7" width="11" height="10" rx="2"/><path d="m15 10 4-2.5v9L15 14M7 4.5a8 8 0 0 1 11 2M18 5v2.5h-2.5M17 19.5a8 8 0 0 1-11-2M6 19v-2.5h2.5"/>',
-    end: '<path d="M7 15.6c3.2-2.1 6.8-2.1 10 0l1.7 1.1c.7.5.8 1.5.2 2.1l-1.2 1.2c-.4.4-1 .5-1.5.3a10.2 10.2 0 0 0-8.4 0c-.5.2-1.1.1-1.5-.3l-1.2-1.2c-.6-.6-.5-1.6.2-2.1L7 15.6Z"/><path d="M5.5 8.5c4.1-2.7 8.9-2.7 13 0"/>',
-    expand: '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 9h6v6"/>',
-    shrink: '<rect x="5" y="5" width="14" height="14" rx="3"/><path d="M15 9H9v6"/>',
-    minimize: '<path d="M5 12h14"/>',
-  };
-  return `<svg class="call-control__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || ""}</svg>`;
-}
+def channel_reaction_emojis(con: sqlite3.Connection) -> tuple[str, ...]:
+    row = con.execute("SELECT value FROM settings WHERE key = 'channel_reactions'").fetchone()
+    try:
+        reactions = normalize_channel_reactions(loads(row["value"], []) if row else list(DEFAULT_CHANNEL_REACTIONS))
+    except ValueError:
+        reactions = list(DEFAULT_CHANNEL_REACTIONS)
+    return tuple(reactions)
 
-const CHAT_WALLPAPERS = [
-  { id: "mint", title: "Мятный свет", description: "По вашему зелёному референсу" },
-  { id: "aurora", title: "Неоновая аура", description: "Розовый, синий и индиго" },
-  { id: "noir", title: "Ночной бархат", description: "Глубокий сине-чёрный" },
-  { id: "cyan", title: "Бирюзовая волна", description: "Яркий циан и синий" },
-  { id: "mist", title: "Северный туман", description: "Холодный с мягким цветом" },
-  { id: "sunset", title: "Тёплый закат", description: "Персиковый и лиловый" },
-  { id: "ocean", title: "Океан", description: "Светлая глубина" },
-  { id: "lavender", title: "Лаванда", description: "Нежный фиолетовый" },
-  { id: "forest", title: "Лес", description: "Спокойный зелёный" },
-  { id: "midnight", title: "Мотивация", description: "Сдержанный синий с фразами" },
-  { id: "ember", title: "Янтарный огонь", description: "Авторский тёплый вариант" },
-  { id: "iris", title: "Ирис", description: "Авторский фиолетовый вариант" },
-  { id: "default", title: "Чистый", description: "Нейтральный фон" },
-  { id: "prism", title: "Живая призма", description: "8 редких градиентных переливов" },
-];
 
-const DIALOG_PANEL_STYLES = [
-  { id: "custom", title: "Свой цвет", description: "Выберите цвет вручную" },
-  { id: "pearl", title: "Жемчужный", description: "Светлый голубой" },
-  { id: "sky", title: "Небесный", description: "Светлый синий" },
-  { id: "mint", title: "Мятный", description: "Свежий зелёный" },
-  { id: "sunset", title: "Закат", description: "Персиковый и лиловый" },
-  { id: "lavender", title: "Лаванда", description: "Нежный фиолетовый" },
-  { id: "midnight", title: "Полночь", description: "Глубокий синий" },
-  { id: "noir", title: "Ночной бархат", description: "Сине-чёрный" },
-  { id: "aurora", title: "Аура", description: "Индиго и циан" },
-  { id: "live", title: "Живой градиент", description: "Медленно переливается" },
-  { id: "interactive", title: "Интерактивный космос", description: "Перелив по нажатию" },
-  { id: "interactive-light", title: "Интерактивный свет", description: "Светлый перелив по нажатию" },
-  { id: "ember", title: "Янтарный огонь", description: "Тёплый тёмный" },
-];
+def normalize_ui_appearance(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Настройки подсветки должны быть объектом.")
+    unknown = set(value) - {"outlineColor", "glowColor", "glowIntensity"}
+    if unknown:
+        raise ValueError("В настройках подсветки есть неподдерживаемые поля.")
+    outline_color = str(value.get("outlineColor", DEFAULT_UI_APPEARANCE["outlineColor"]))
+    glow_color = str(value.get("glowColor", DEFAULT_UI_APPEARANCE["glowColor"]))
+    if not all(re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in (outline_color, glow_color)):
+        raise ValueError("Выберите корректные цвета подсветки.")
+    return {
+        "outlineColor": outline_color.lower(),
+        "glowColor": glow_color.lower(),
+        "glowIntensity": nonnegative_int(value.get("glowIntensity", DEFAULT_UI_APPEARANCE["glowIntensity"]), "glowIntensity", 100),
+    }
 
-const DIALOG_FONTS = [
-  { id: "business", title: "Деловой" },
-  { id: "system", title: "Системный" },
-  { id: "classic", title: "Классический" },
-  { id: "script", title: "Прописной" },
-  { id: "rounded", title: "Мягкий" },
-  { id: "serif", title: "С засечками" },
-  { id: "mono", title: "Моноширинный" },
-  { id: "humanist", title: "Гуманистический" },
-  { id: "condensed", title: "Компактный" },
-  { id: "typewriter", title: "Печатная машинка" },
-  { id: "elegant", title: "Элегантный" },
-];
 
-function dialogMessageFont(font) {
-  return {
-    business: 'Avenir Next, Avenir, "Helvetica Neue", Arial, sans-serif',
-    classic: 'Palatino, "Palatino Linotype", Book Antiqua, Georgia, serif',
-    script: 'Snell Roundhand, "Segoe Script", "Bradley Hand", cursive',
-    rounded: 'ui-rounded, "Arial Rounded MT Bold", Arial, sans-serif',
-    serif: 'Georgia, "Times New Roman", serif',
-    mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-    humanist: 'Optima, Candara, "Segoe UI", sans-serif',
-    condensed: 'Arial Narrow, "Roboto Condensed", "Helvetica Neue", sans-serif',
-    typewriter: 'Courier New, Courier, ui-monospace, monospace',
-    elegant: 'Baskerville, "Times New Roman", Georgia, serif',
-  }[font] || 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif';
-}
+def normalize_image_data(value, maximum_bytes: int, field_name: str) -> str:
+    data = str(value or "").strip()
+    match = re.fullmatch(r"data:image/(png|jpe?g|webp);base64,([A-Za-z0-9+/]*={0,2})", data, re.IGNORECASE)
+    if not match:
+        raise ValueError(f"{field_name} должен быть в формате PNG, JPG или WebP.")
+    image_type = "jpeg" if match.group(1).lower() in ("jpg", "jpeg") else match.group(1).lower()
+    try:
+        image = base64.b64decode(match.group(2), validate=True)
+    except (ValueError, binascii.Error):
+        raise ValueError(f"Не удалось прочитать {field_name.lower()}.") from None
+    if len(image) > maximum_bytes:
+        raise ValueError(f"Размер файла не должен превышать {maximum_bytes / 1_000_000:g} МБ.")
+    signatures = {
+        "png": b"\x89PNG\r\n\x1a\n",
+        "jpeg": b"\xff\xd8\xff",
+        "webp": b"RIFF",
+    }
+    valid = image.startswith(signatures[image_type])
+    if image_type == "webp":
+        valid = valid and image[8:12] == b"WEBP"
+    if not valid:
+        raise ValueError(f"Файл не является корректным изображением {image_type.upper()}.")
+    return f"data:image/{image_type};base64,{match.group(2)}"
 
-function dialogBubbleTextColor(color = "#ffffff") {
-  const hex = String(color).replace("#", "");
-  if (!/^[\da-f]{6}$/i.test(hex)) return "#17212b";
-  const [red, green, blue] = [0, 2, 4].map((index) => Number.parseInt(hex.slice(index, index + 2), 16));
-  return (red * 299 + green * 587 + blue * 114) / 1000 < 150 ? "#ffffff" : "#17212b";
-}
 
-function recentEmojiKey() {
-  return `minigram_recent_emoji_${state?.me?.id || "guest"}`;
-}
+def normalize_public_branding(value) -> dict:
+    if value in (None, ""):
+        value = {}
+    if not isinstance(value, dict) or set(value) - set(DEFAULT_PUBLIC_BRANDING):
+        raise ValueError("Настройки логотипа содержат неподдерживаемые поля.")
+    logo_data = str(value.get("loginLogoData", "")).strip()
+    if not logo_data:
+        return DEFAULT_PUBLIC_BRANDING.copy()
+    return {"loginLogoData": normalize_image_data(logo_data, LOGIN_LOGO_MAX_BYTES, "Логотип")}
 
-function recentEmojis() {
-  try {
-    const emojis = JSON.parse(localStorage.getItem(recentEmojiKey()) || "[]");
-    return Array.isArray(emojis) ? emojis.filter((emoji) => typeof emoji === "string").slice(0, RECENT_EMOJI_LIMIT) : [];
-  } catch {
-    return [];
-  }
-}
 
-function rememberRecentEmoji(emoji) {
-  const emojis = [emoji, ...recentEmojis().filter((item) => item !== emoji)].slice(0, RECENT_EMOJI_LIMIT);
-  localStorage.setItem(recentEmojiKey(), JSON.stringify(emojis));
-}
+def normalize_star_packages(value) -> list[dict]:
+    if not isinstance(value, list) or not value or len(value) > 20:
+        raise ValueError("Укажите от одного до 20 пакетов звёзд.")
+    normalized, package_ids = [], set()
+    for package in value:
+        if not isinstance(package, dict):
+            raise ValueError("Каждый пакет звёзд должен быть объектом.")
+        package_id = str(package.get("id", "")).strip().lower()
+        stars = nonnegative_int(package.get("stars"), "stars", 1_000_000)
+        price = str(package.get("price", "")).strip()
+        if not re.fullmatch(r"[1-9]\d{0,6}\.\d{2}", price):
+            raise ValueError("Цена пакета должна быть в формате 99.00.")
+        if not re.fullmatch(r"[a-z0-9_-]{3,40}", package_id) or package_id in package_ids or not stars:
+            raise ValueError("Некорректный ID или количество звёзд в пакете.")
+        package_ids.add(package_id)
+        normalized.append({"id": package_id, "stars": stars, "price": price})
+    return normalized
 
-start();
 
-async function start() {
-  if (!token) {
-    await loadPublicLegal();
-    renderAuth();
-    hidePageLoader();
-    return;
-  }
-  try {
-    activeSection = "chats";
-    settingsSection = "general";
-    activeChatId = null;
-    menuOpen = false;
-    await loadState();
-    trimSavedAccountsToLimit();
-    const paymentOrder = new URLSearchParams(window.location.search).get("order");
-    if (paymentOrder && window.location.pathname === "/payment-return") {
-      window.history.replaceState({}, "", "/");
-      try {
-        const payment = await api("/api/yookassa/payments/status", { method: "POST", body: { orderId: paymentOrder } });
-        if (payment.credited) {
-          await loadState();
-          toast(`Начислено ★ ${payment.stars}.`);
-        } else {
-          toast("Оплата ещё обрабатывается. Проверьте баланс немного позже.");
+def normalize_public_url(value, field_name: str) -> str:
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    if value.startswith("/") or urlparse(value).scheme in {"http", "https"}:
+        return value[:500]
+    raise ValueError(f"Поле «{field_name}» должно содержать ссылку http(s) или путь сайта.")
+
+
+def normalize_public_legal(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Публичная информация должна быть объектом.")
+    unknown = set(value) - set(DEFAULT_PUBLIC_LEGAL)
+    if unknown:
+        raise ValueError("В публичной информации есть неподдерживаемые поля.")
+    legal = {**DEFAULT_PUBLIC_LEGAL, **value}
+    normalized = {
+        "sellerStatus": str(legal["sellerStatus"]).strip()[:120], "sellerName": str(legal["sellerName"]).strip()[:160],
+        "inn": str(legal["inn"]).strip()[:20], "vkUrl": normalize_public_url(legal["vkUrl"], "vkUrl"),
+        "telegram": str(legal["telegram"]).strip().lstrip("@")[:64], "email": str(legal["email"]).strip()[:254],
+        "purchaseDescription": str(legal["purchaseDescription"]).strip()[:1000], "refundTerms": str(legal["refundTerms"]).strip()[:5000],
+        "userAgreementUrl": normalize_public_url(legal["userAgreementUrl"], "userAgreementUrl"),
+        "purchaseTermsUrl": normalize_public_url(legal["purchaseTermsUrl"], "purchaseTermsUrl"), "privacyPolicyUrl": normalize_public_url(legal["privacyPolicyUrl"], "privacyPolicyUrl"),
+        "userAgreementText": str(legal["userAgreementText"]).strip()[:10000], "purchaseTermsText": str(legal["purchaseTermsText"]).strip()[:10000],
+        "privacyPolicyText": str(legal["privacyPolicyText"]).strip()[:10000],
+        "starPackages": normalize_star_packages(legal["starPackages"]),
+    }
+    if normalized["email"] and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", normalized["email"]):
+        raise ValueError("Укажите корректный e-mail для публичной страницы.")
+    if normalized["inn"] and not re.fullmatch(r"\d{10}|\d{12}", normalized["inn"]):
+        raise ValueError("ИНН должен состоять из 10 или 12 цифр.")
+    return normalized
+
+
+def normalize_level_reward(value, field_name: str) -> dict:
+    if value in (None, ""):
+        value = {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Поле «{field_name}» должно быть объектом.")
+    unknown = set(value) - {"stars", "premiumDays", "limits", "recurringStars", "recurringIntervalDays", "recurringDurationDays", "accountLevelId", "recommendOwnChannel", "starPackageDiscountPercent"}
+    if unknown:
+        raise ValueError("В награде указаны неподдерживаемые поля.")
+    limits = value.get("limits", {})
+    if not isinstance(limits, dict) or set(limits) - LEVEL_LIMIT_KEYS:
+        raise ValueError("В награде указаны неподдерживаемые лимиты.")
+    recurring_stars = nonnegative_int(value.get("recurringStars", 0), "recurringStars")
+    recurring_interval_days = nonnegative_int(value.get("recurringIntervalDays", 0), "recurringIntervalDays", 365)
+    recurring_duration_days = nonnegative_int(value.get("recurringDurationDays", 0), "recurringDurationDays", 3650)
+    if recurring_stars and (not recurring_interval_days or not recurring_duration_days):
+        raise ValueError("Для периодических звёзд укажите интервал и срок действия.")
+    if (recurring_interval_days or recurring_duration_days) and not recurring_stars:
+        raise ValueError("Укажите количество периодических звёзд.")
+    account_level_id = str(value.get("accountLevelId", "") or "").strip().lower()
+    if account_level_id and not re.fullmatch(r"[a-z0-9_-]{2,40}", account_level_id):
+        raise ValueError("ID уровня в награде указан некорректно.")
+    recommend_own_channel = value.get("recommendOwnChannel", False)
+    if not isinstance(recommend_own_channel, bool):
+        raise ValueError("Параметр рекомендации канала должен быть логическим значением.")
+    return {
+        "stars": nonnegative_int(value.get("stars", 0), "stars"),
+        "premiumDays": nonnegative_int(value.get("premiumDays", 0), "premiumDays", 3650),
+        "limits": {key: nonnegative_int(limits[key], key) for key in limits},
+        "recurringStars": recurring_stars,
+        "recurringIntervalDays": recurring_interval_days,
+        "recurringDurationDays": recurring_duration_days,
+        "accountLevelId": account_level_id,
+        "recommendOwnChannel": recommend_own_channel,
+        "starPackageDiscountPercent": nonnegative_int(value.get("starPackageDiscountPercent", 0), "starPackageDiscountPercent", 99),
+    }
+
+
+def normalize_account_levels(value) -> list[dict]:
+    if not isinstance(value, list) or not value:
+        raise ValueError("Укажите от одного до 20 уровней аккаунта.")
+    if len(value) > 20:
+        raise ValueError("Можно настроить не более 20 уровней аккаунта.")
+    levels = []
+    ids = set()
+    for raw_level in value:
+        if not isinstance(raw_level, dict):
+            raise ValueError("Каждый уровень должен быть объектом.")
+        level_id = str(raw_level.get("id", "")).strip().lower()
+        if not re.fullmatch(r"[a-z0-9_-]{2,40}", level_id):
+            raise ValueError("ID уровня: от 2 до 40 латинских символов, цифр, _ или -.")
+        if level_id in ids:
+            raise ValueError("ID уровней не должны повторяться.")
+        ids.add(level_id)
+        title = str(raw_level.get("title", "")).strip()
+        if not title or len(title) > 120:
+            raise ValueError("Название уровня должно содержать от 1 до 120 символов.")
+        description = str(raw_level.get("description", "")).strip()
+        if len(description) > 1000:
+            raise ValueError("Описание уровня не должно превышать 1000 символов.")
+        criteria = raw_level.get("criteria", {})
+        limits = raw_level.get("limits", {})
+        if not isinstance(criteria, dict) or not isinstance(limits, dict):
+            raise ValueError("Критерии и лимиты уровня должны быть объектами.")
+        unknown_criteria = set(criteria) - LEVEL_CRITERIA_KEYS - {"groups", "groups_created", "groups_joined", "group_subscribers"}
+        unknown_limits = set(limits) - LEVEL_LIMIT_KEYS - {"groupsJoined", "groupsCreated"}
+        if unknown_criteria or unknown_limits:
+            raise ValueError("В уровне есть неподдерживаемые критерии или лимиты.")
+        normalized_criteria = {
+            key: nonnegative_int(criteria[key], key)
+            for key in criteria if key in LEVEL_CRITERIA_KEYS and nonnegative_int(criteria[key], key)
         }
-      } catch (error) { toast(error.message, true); }
+        normalized_limits = {key: nonnegative_int(limits[key], key) for key in limits if key in LEVEL_LIMIT_KEYS}
+        levels.append({
+            "id": level_id,
+            "title": title,
+            "description": description,
+            "criteria": normalized_criteria,
+            "limits": normalized_limits,
+            "reward": normalize_level_reward(raw_level.get("reward", {}), "reward"),
+            "starsPrice": nonnegative_int(raw_level.get("starsPrice", 0), "starsPrice"),
+            "purchaseReward": normalize_level_reward(raw_level.get("purchaseReward", {}), "purchaseReward"),
+        })
+    return levels
+
+
+def now() -> int:
+    return int(time.time())
+
+
+def connect() -> sqlite3.Connection:
+    con = sqlite3.connect(DB_PATH, timeout=10)
+    con.row_factory = sqlite3.Row
+    con.create_function("casefold", 1, lambda value: str(value or "").casefold())
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+def dumps(value) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def loads(value, default=None):
+    if value in (None, ""):
+        return default
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return default
+
+
+def yookassa_star_packages(con: sqlite3.Connection | None = None) -> list[dict]:
+    if con:
+        row = con.execute("SELECT value FROM settings WHERE key = 'public_legal'").fetchone()
+        legal = loads(row["value"], {}) if row else {}
+        if isinstance(legal, dict) and legal.get("starPackages"):
+            return normalize_star_packages(legal["starPackages"])
+    raw_packages = os.environ.get("YOOKASSA_STAR_PACKAGES", "")
+    return normalize_star_packages(loads(raw_packages, None) if raw_packages else DEFAULT_STAR_PACKAGES)
+
+
+def discounted_price(price: str, discount_percent: int) -> str:
+    amount = Decimal(price)
+    multiplier = Decimal(100 - discount_percent) / Decimal(100)
+    return str((amount * multiplier).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def yookassa_configured() -> bool:
+    return bool(YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY and YOOKASSA_RETURN_URL)
+
+
+def yookassa_request(path: str, method: str = "GET", payload: dict | None = None, idempotence_key: str | None = None) -> dict:
+    if not yookassa_configured():
+        raise ValueError("Оплата ЮKassa пока не настроена на сервере.")
+    credentials = base64.b64encode(f"{YOOKASSA_SHOP_ID}:{YOOKASSA_SECRET_KEY}".encode("utf-8")).decode("ascii")
+    data = dumps(payload).encode("utf-8") if payload is not None else None
+    headers = {"Authorization": f"Basic {credentials}", "Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    if idempotence_key:
+        headers["Idempotence-Key"] = idempotence_key
+    request = urlrequest.Request(f"https://api.yookassa.ru/v3{path}", data=data, headers=headers, method=method)
+    try:
+        with urlrequest.urlopen(request, timeout=20) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urlerror.URLError, urlerror.HTTPError, json.JSONDecodeError) as error:
+        raise ValueError("Не удалось подтвердить операцию в ЮKassa. Попробуйте позже.") from error
+
+
+def hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 210_000)
+    return f"pbkdf2_sha256${salt.hex()}${digest.hex()}"
+
+
+def password_matches(stored: str, candidate: str) -> bool:
+    if not stored.startswith("pbkdf2_sha256$"):
+        return secrets.compare_digest(stored, candidate)
+    try:
+        _, salt_hex, digest_hex = stored.split("$", 2)
+        expected = bytes.fromhex(digest_hex)
+        actual = hashlib.pbkdf2_hmac("sha256", candidate.encode("utf-8"), bytes.fromhex(salt_hex), 210_000)
+        return secrets.compare_digest(expected, actual)
+    except ValueError:
+        return False
+
+
+def normalize_email(value) -> str:
+    email = str(value or "").strip().lower()
+    if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+        raise ValueError("Введите корректный e-mail.")
+    return email
+
+
+def generate_auth_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def deliver_email_code(email: str, code: str, purpose: str) -> None:
+    subject = "Код подтверждения Chat-Pro"
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = SMTP_FROM
+    message["To"] = email
+    message.set_content(f"{purpose}\n\nВаш код: {code}\nОн действует 10 минут. Никому не сообщайте этот код.")
+    if not all((SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM)):
+        raise ValueError("Отправка e-mail пока не настроена. Обратитесь к администрации сайта.")
+    try:
+        client_class = smtplib.SMTP_SSL if SMTP_USE_SSL else smtplib.SMTP
+        with client_class(SMTP_HOST, SMTP_PORT, timeout=15) as client:
+            if not SMTP_USE_SSL:
+                client.starttls()
+            client.login(SMTP_USERNAME, SMTP_PASSWORD)
+            client.send_message(message)
+    except (OSError, smtplib.SMTPException) as error:
+        raise ValueError("Не удалось отправить код на e-mail. Попробуйте позже.") from error
+
+
+def public_user(row: sqlite3.Row | dict | None) -> dict | None:
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "username": row["username"],
+        "stars": row["stars"],
+        "theme": row["theme"],
+        "siteColor": row["site_color"],
+        "siteBackground": row["site_background"],
+        "siteBackgroundData": row["site_background_data"],
+        "dialogColor": row["dialog_color"],
+        "otherDialogColor": row["other_dialog_color"],
+        "dialogPanelColor": row["dialog_panel_color"],
+        "dialogPanelStyle": row["dialog_panel_style"],
+        "dialogBubbleStyle": row["dialog_bubble_style"],
+        "dialogFont": row["dialog_font"],
+        "textScale": row["text_scale"] if "text_scale" in row.keys() else "system",
+        "chatBackground": row["chat_background"],
+        "chatBackgroundData": row["chat_background_data"],
+        "sidebarBackgroundData": row["sidebar_background_data"],
+        "nightAppearanceCustom": bool(row["night_appearance_custom"]) if "night_appearance_custom" in row.keys() else False,
+        "nightOutlineColor": row["night_outline_color"] if "night_outline_color" in row.keys() else None,
+        "nightGlowColor": row["night_glow_color"] if "night_glow_color" in row.keys() else None,
+        "nightGlowIntensity": row["night_glow_intensity"] if "night_glow_intensity" in row.keys() else None,
+        "callRingtone": row["call_ringtone"] if "call_ringtone" in row.keys() else "classic",
+        "hiddenStatusIds": loads(row["hidden_status_ids"], []),
+        "groupInvitePrivacy": row["group_invite_privacy"] if "group_invite_privacy" in row.keys() else "contacts",
+        "directMessagePrivacy": row["direct_message_privacy"] if "direct_message_privacy" in row.keys() else "everyone",
+        "avatarData": row["avatar_data"],
+        "createdAt": row["created_at"],
     }
-    const channelMatch = window.location.pathname.match(/^\/channel\/([^/]+)(?:\/post\/[^/]+)?$/);
-    const inviteCode = channelMatch?.[1] || window.location.pathname.match(/^\/invite\/([^/]+)$/)?.[1];
-    const linkedPostId = channelMatch && window.location.pathname.match(/^\/channel\/[^/]+\/post\/([^/]+)$/)?.[1];
-    if (inviteCode) {
-      window.history.replaceState({}, "", "/");
-      try {
-        const result = await api("/api/invites/join", { method: "POST", body: { code: inviteCode } });
-        activeChatId = result.chatId || null;
-        await loadState();
-        toast(channelMatch ? "Вы открыли канал по ссылке." : "Вы вступили в группу по ссылке.");
-      } catch (error) { toast(error.message, true); }
+
+
+def chat_to_dict(row: sqlite3.Row) -> dict:
+    settings = loads(row["settings_json"], {})
+    return {
+        "id": row["id"],
+        "type": row["type"],
+        "title": row["title"],
+        "description": row["description"],
+        "avatarData": row["avatar_data"] if "avatar_data" in row.keys() else None,
+        "inviteCode": row["invite_code"] if "invite_code" in row.keys() else None,
+        "ownerId": row["owner_id"],
+        "settings": settings,
+        "subscriberCount": row["subscriber_count"] + row["subscriber_boost"],
+        "subscriberBoost": row["subscriber_boost"],
+        "pinned": bool(row["pinned"]) if "pinned" in row.keys() else False,
+        "archived": bool(row["archived"]) if "archived" in row.keys() else False,
+        "unreadCount": int(row["unread_count"]) if "unread_count" in row.keys() else 0,
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
     }
-    renderApp();
-    if (linkedPostId) requestAnimationFrame(() => document.querySelector(`#message-${CSS.escape(linkedPostId)}`)?.scrollIntoView({ block: "center" }));
-    beginCallPolling();
-    beginMessagePolling();
-  } catch {
-    token = "";
-    localStorage.removeItem(TOKEN_KEY);
-    renderAuth();
-  }
-  hidePageLoader();
-}
 
-async function loadPublicLegal() {
-  try {
-    const response = await fetch("/api/public/legal");
-    const data = await response.json();
-    if (response.ok && data.ok) {
-      publicLegal = data.legal;
-      publicBranding = data.branding;
+
+def message_to_dict(row: sqlite3.Row) -> dict:
+    reactions = loads(row["reactions_json"], {}) or {}
+    return {
+        "id": row["id"],
+        "chatId": row["chat_id"],
+        "senderId": row["sender_id"],
+        "profileUserId": row["profile_user_id"] if "profile_user_id" in row.keys() else None,
+        "text": row["text"],
+        "mediaType": row["media_type"],
+        "voiceWaveform": loads(row["voice_waveform_json"], []) if "voice_waveform_json" in row.keys() else [],
+        "views": int(row["views"] or 0) + int(row["views_boost"] or 0) if "views" in row.keys() else 0,
+        "reactions": reactions,
+        "reactionTotal": sum(int(v) for v in reactions.values()),
+        "pinned": bool(row["pinned"]),
+        "pinHidden": bool(row["pin_hidden"]) if "pin_hidden" in row.keys() else False,
+        "forwardedFrom": row["forwarded_from"] if "forwarded_from" in row.keys() else None,
+        "forwardedFromUserId": row["forwarded_from_user_id"] if "forwarded_from_user_id" in row.keys() else None,
+        "sourceType": row["source_type"] if "source_type" in row.keys() else None,
+        "sourceId": row["source_id"] if "source_id" in row.keys() else None,
+        "aiAgent": bool(row["ai_agent"]) if "ai_agent" in row.keys() else False,
+        "replyToId": row["reply_to_id"] if "reply_to_id" in row.keys() else None,
+        "editedAt": row["edited_at"] if "edited_at" in row.keys() else None,
+        "unread": bool(row["is_unread"]) if "is_unread" in row.keys() else False,
+        "readByRecipient": bool(row["is_read_by_recipient"]) if "is_read_by_recipient" in row.keys() else False,
+        "createdAt": row["created_at"],
     }
-  } catch {
-    publicLegal = null;
-    publicBranding = null;
-  }
-}
-
-function loginLogoSrc() {
-  const logo = String(publicBranding?.loginLogoData || "");
-  return /^data:image\/png;base64,[A-Za-z0-9+/]*={0,2}$/.test(logo) ? logo : "icon.svg";
-}
-
-function hidePageLoader() {
-  document.querySelector("#pageLoader")?.classList.add("page-loader--hidden");
-}
-
-async function api(path, options = {}) {
-  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(path, { ...options, headers, body: options.body ? JSON.stringify(options.body) : undefined });
-  const data = await response.json();
-  if (!response.ok || data.ok === false) throw new Error(data.error || "Ошибка запроса");
-  return data;
-}
-
-async function uploadMessageAttachment(chatId, file) {
-  const mediaType = file.type.startsWith("image/") ? "photo" : file.type.startsWith("video/") ? "video" : "document";
-  const upload = await api("/api/media/messages/upload", {
-    method: "POST",
-    body: {
-      chatId,
-      mediaType,
-      fileName: file.name,
-      contentType: file.type,
-      sizeBytes: file.size,
-    },
-  });
-  const response = await fetch(upload.uploadUrl, {
-    method: "PUT",
-    headers: upload.uploadHeaders || {},
-    body: file,
-  });
-  if (!response.ok) throw new Error("Не удалось загрузить файл в хранилище.");
-  return { mediaType, mediaKey: upload.mediaKey, fileName: file.name, previewUrl: URL.createObjectURL(file) };
-}
-
-async function loadState() {
-  state = await api("/api/bootstrap");
-  state.posts ||= [];
-  state.stories ||= [];
-  state.scheduledPosts ||= [];
-  state.channelLinks ||= [];
-  state.telegramChannelLinks ||= [];
-  state.rssChannelLinks ||= [];
-  state.vkChannelLinks ||= [];
-  state.channelComments ||= [];
-  state.channelStarPurchases ||= [];
-  state.notifications ||= [];
-  state.activities ||= {};
-  document.body.classList.toggle("theme-dark", state.me.theme === "dark");
-  document.documentElement.style.setProperty("--primary", state.me.siteColor || "#2aabee");
-  document.documentElement.style.setProperty("--primary-dark", colorShade(state.me.siteColor || "#2aabee", -20));
-  document.documentElement.style.setProperty("--primary-rgb", colorToRgb(state.me.siteColor || "#2aabee"));
-  const ownBubble = state.me.dialogColor || "#dff9f9";
-  const otherBubble = state.me.otherDialogColor || "#ffffff";
-  const ownBubbleText = dialogBubbleTextColor(ownBubble);
-  const otherBubbleText = dialogBubbleTextColor(otherBubble);
-  document.documentElement.style.setProperty("--own-bubble", ownBubble);
-  document.documentElement.style.setProperty("--own-bubble-background", ownBubble);
-  document.documentElement.style.setProperty("--own-bubble-text", ownBubbleText);
-  document.documentElement.style.setProperty("--other-bubble", otherBubble);
-  document.documentElement.style.setProperty("--other-bubble-text", otherBubbleText);
-  document.body.style.setProperty("--own-bubble", ownBubble);
-  document.body.style.setProperty("--own-bubble-background", ownBubble);
-  document.body.style.setProperty("--own-bubble-text", ownBubbleText);
-  document.body.style.setProperty("--other-bubble", otherBubble);
-  document.body.style.setProperty("--other-bubble-text", otherBubbleText);
-  document.documentElement.style.setProperty("--message-font", dialogMessageFont(state.me.dialogFont || "business"));
-  document.documentElement.style.setProperty("--text-scale", ({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[state.me.textScale] || 1);
-  const nightAppearance = effectiveNightAppearance();
-  document.body.classList.toggle("night-appearance-customized", Boolean(state.me.nightAppearanceCustom) || !sameNightAppearance(defaultNightAppearance(), BASE_NIGHT_APPEARANCE));
-  document.documentElement.style.setProperty("--night-outline", nightAppearance.outlineColor);
-  document.documentElement.style.setProperty("--night-outline-rgb", colorToRgb(nightAppearance.outlineColor));
-  document.documentElement.style.setProperty("--night-glow-rgb", colorToRgb(nightAppearance.glowColor));
-  document.documentElement.style.setProperty("--night-glow-low", String(nightAppearance.glowIntensity / 670));
-  document.documentElement.style.setProperty("--night-glow-medium", String(nightAppearance.glowIntensity / 330));
-  document.documentElement.style.setProperty("--night-glow-strong", String(nightAppearance.glowIntensity / 220));
-  document.documentElement.style.setProperty("--night-glow-composer", String(nightAppearance.glowIntensity / 620));
-  document.body.className = document.body.className.replace(/site-background-\S+/g, "").trim();
-  document.body.classList.add(`site-background-${state.me.siteBackground || "default"}`);
-  document.body.className = document.body.className.replace(/chat-theme-\S+/g, "").trim();
-  document.body.classList.add(`chat-theme-${state.me.chatBackground || "default"}`);
-  document.body.style.setProperty("--site-background-image", state.me.siteBackground === "custom" && state.me.siteBackgroundData ? `url('${state.me.siteBackgroundData.replace(/'/g, "%27")}')` : "none");
-  document.documentElement.style.setProperty("--dialog-panel-wallpaper", state.me.chatBackground === "custom" && state.me.chatBackgroundData ? `url('${state.me.chatBackgroundData.replace(/'/g, "%27")}')` : "none");
-  if (activeChatId && !state.chats.some((chat) => chat.id === activeChatId)) activeChatId = null;
-}
-
-function renderAuth() {
-  document.body.classList.remove("theme-dark");
-  app.innerHTML = `
-    <main class="auth-shell">
-      <section class="auth-card">
-        <div class="brand">
-          <img class="brand-logo brand-logo--uploaded" src="${esc(loginLogoSrc())}" width="64" height="64" alt="Логотип Chat-Pro">
-          <div><h1 class="auth-brand-title" aria-label="Chat-Pro"><span aria-hidden="true" style="--letter-delay: 0ms">C</span><span aria-hidden="true" style="--letter-delay: 65ms">h</span><span aria-hidden="true" style="--letter-delay: 130ms">a</span><span aria-hidden="true" style="--letter-delay: 195ms">t</span><span aria-hidden="true" style="--letter-delay: 260ms">-</span><span aria-hidden="true" style="--letter-delay: 325ms">P</span><span aria-hidden="true" style="--letter-delay: 390ms">r</span><span aria-hidden="true" style="--letter-delay: 455ms">o</span></h1><p>Мессенджер, каналы, отзывы, звёзды и акции</p></div>
-        </div>
-        <div class="tabs"><button class="tab active" data-tab="login">Вход</button><button class="tab" data-tab="register">Регистрация</button></div>
-        <form class="form" data-form="login">
-          <label>Username или e-mail<input name="login" required autocomplete="username" placeholder="andrei или you@example.com"></label>
-          <label>Пароль<span class="password-field"><input name="password" type="password" required><button class="button small" type="button" data-toggle-password>Показать</button></span></label>
-          <button class="button primary">Войти</button>
-          <button class="auth-link" type="button" data-open-password-reset>Забыли пароль?</button>
-        </form>
-        <form class="form hidden" data-form="register">
-          <label>Имя<input name="name" required placeholder="Ваше имя"></label>
-          <label>Username<input name="username" required placeholder="latin_123"></label>
-          <label>E-mail<input name="email" type="email" autocomplete="email" required placeholder="you@example.com"></label>
-          <label>Пароль<span class="password-field"><input name="password" type="password" minlength="8" autocomplete="new-password" required><button class="button small" type="button" data-toggle-password>Показать</button></span></label>
-          <small class="muted">Код подтверждения придёт на e-mail.</small>
-          <label class="consent"><input name="agreementAccepted" type="checkbox" required> <span>Используя сайт, я принимаю <a href="${esc(publicLegal?.userAgreementUrl || "/requisites#user-agreement")}" target="_blank" rel="noopener">пользовательское соглашение</a>.</span></label>
-          <button class="button primary">Создать аккаунт</button>
-        </form>
-        <div class="card"><b>Сохранённые аккаунты</b><div id="savedAccounts" class="grid" style="margin-top:10px"></div></div>
-      </section>
-    </main>`;
-
-  app.querySelectorAll("[data-tab]").forEach((tab) => tab.addEventListener("click", () => {
-    app.querySelectorAll("[data-tab]").forEach((x) => x.classList.toggle("active", x === tab));
-    app.querySelectorAll("[data-form]").forEach((form) => form.classList.toggle("hidden", form.dataset.form !== tab.dataset.tab));
-  }));
-  app.querySelector('[data-form="login"]').addEventListener("submit", (event) => submitAuth(event, "/api/login"));
-  app.querySelector('[data-form="register"]').addEventListener("submit", submitRegistration);
-  app.querySelector("[data-open-password-reset]").addEventListener("click", openPasswordReset);
-  app.querySelectorAll("[data-toggle-password]").forEach((button) => button.addEventListener("click", togglePasswordVisibility));
-  renderSavedAccounts();
-}
-
-async function submitRegistration(event) {
-  event.preventDefault();
-  try {
-    const form = new FormData(event.currentTarget);
-    const body = Object.fromEntries(form);
-    body.agreementAccepted = event.currentTarget.elements.agreementAccepted.checked;
-    const data = await api("/api/register", { method: "POST", body });
-    openContactVerification(data.challengeId, "registration");
-  } catch (error) { toast(error.message, true); }
-}
-
-function openContactVerification(challengeId, purpose) {
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  const apiPurpose = purpose === "registration" ? "register" : "password_reset";
-  overlay.innerHTML = `<section class="member-manager auth-verification" role="dialog" aria-modal="true" aria-label="Подтверждение контактов"><header><div><b>${purpose === "registration" ? "Подтвердите контакт" : "Восстановление пароля"}</b><small>Введите шестизначный код из выбранного e-mail или SMS. Он действует 10 минут.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-contact-verification><label>Код подтверждения<input name="code" inputmode="numeric" pattern="\\d{6}" maxlength="6" autocomplete="one-time-code" required placeholder="000000"></label>${purpose === "reset" ? '<label>Новый пароль<span class="password-field"><input name="password" type="password" minlength="8" autocomplete="new-password" required><button class="button small" type="button" data-toggle-password>Показать</button></span></label>' : ""}<button class="button primary">${purpose === "registration" ? "Подтвердить и войти" : "Изменить пароль"}</button><button class="auth-link" type="button" data-resend-auth-code>Отправить код повторно</button><small class="muted" data-resend-auth-status></small></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-toggle-password]").forEach((button) => button.addEventListener("click", togglePasswordVisibility));
-  const resendButton = overlay.querySelector("[data-resend-auth-code]");
-  const resendStatus = overlay.querySelector("[data-resend-auth-status]");
-  let resendTimer;
-  const setResendCooldown = (seconds) => {
-    window.clearInterval(resendTimer);
-    let remaining = seconds;
-    const update = () => {
-      resendButton.disabled = remaining > 0;
-      resendStatus.textContent = remaining > 0 ? `Повторная отправка будет доступна через ${remaining} с.` : "";
-    };
-    update();
-    resendTimer = window.setInterval(() => {
-      remaining -= 1;
-      update();
-      if (remaining <= 0) window.clearInterval(resendTimer);
-    }, 1000);
-  };
-  setResendCooldown(60);
-  resendButton.addEventListener("click", async () => {
-    audio.dataset.playbackAttempted = "true";
-    try {
-      const data = await api("/api/auth-challenges/resend", { method: "POST", body: { challengeId, purpose: apiPurpose } });
-      toast(data.message);
-      setResendCooldown(60);
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelector("[data-contact-verification]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const body = { challengeId, ...Object.fromEntries(new FormData(event.currentTarget)) };
-      const data = await api(purpose === "registration" ? "/api/register/verify" : "/api/password-reset/confirm", { method: "POST", body });
-      if (purpose === "registration") {
-        token = data.token;
-        localStorage.setItem(TOKEN_KEY, token);
-        activeSection = "chats";
-        activeChatId = null;
-        menuOpen = false;
-        await loadState();
-        rememberAccount(state.me, token);
-        close();
-        render();
-      } else {
-        close();
-        toast(data.message);
-      }
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function openPasswordReset() {
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager auth-verification" role="dialog" aria-modal="true" aria-label="Восстановление пароля"><header><div><b>Восстановление пароля</b><small>Введите e-mail или номер телефона, привязанный к аккаунту.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-password-reset-request><label>E-mail или номер телефона<input name="contact" required autocomplete="username" placeholder="you@example.com или +79991234567"></label><button class="button primary">Получить коды</button></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-password-reset-request]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const data = await api("/api/password-reset/request", { method: "POST", body: Object.fromEntries(new FormData(event.currentTarget)) });
-      close();
-      if (data.challengeId) openContactVerification(data.challengeId, "reset");
-      else toast(data.message);
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function togglePasswordVisibility(event) {
-  const button = event.currentTarget;
-  const input = button.closest(".password-field").querySelector("input");
-  const shouldShow = input.type === "password";
-  input.type = shouldShow ? "text" : "password";
-  button.textContent = shouldShow ? "Скрыть" : "Показать";
-}
-
-function renderSavedAccounts() {
-  const box = app.querySelector("#savedAccounts");
-  const accounts = getSavedAccounts();
-  box.innerHTML = accounts.length ? "" : '<span class="muted">Пока нет сохранённых входов.</span>';
-  accounts.forEach((account) => {
-    const item = document.createElement("div");
-    item.className = "saved-account";
-    item.innerHTML = `<button class="row saved-account__login" type="button">${avatarHtml(account)}<div class="row__body"><div class="row__title">${esc(account.name)}</div><div class="row__sub">@${esc(account.username)}</div></div></button><button class="saved-account__remove" type="button" aria-label="Убрать ${esc(account.name)} из сохранённых аккаунтов" title="Убрать из сохранённых">×</button>`;
-    item.querySelector(".saved-account__login").addEventListener("click", async () => {
-      token = account.token;
-      localStorage.setItem(TOKEN_KEY, token);
-      await start();
-    });
-    item.querySelector(".saved-account__remove").addEventListener("click", () => {
-      if (!window.confirm(`Вы уверены, что хотите убрать аккаунт «${account.name}» из сохранённых?`)) return;
-      removeSavedAccount(account.id);
-      renderSavedAccounts();
-    });
-    box.append(item);
-  });
-}
-
-async function submitAuth(event, path) {
-  event.preventDefault();
-  const body = Object.fromEntries(new FormData(event.currentTarget));
-  try {
-    const data = await api(path, { method: "POST", body });
-    token = data.token;
-    localStorage.setItem(TOKEN_KEY, token);
-    activeSection = "chats";
-    activeChatId = null;
-    menuOpen = false;
-    await loadState();
-    rememberAccount(state.me, token);
-    renderApp();
-  } catch (error) {
-    toast(error.message, true);
-  }
-}
-
-function renderApp() {
-  if (activeSection === "profile") return renderProfileScreen();
-  app.innerHTML = `
-    <main class="app-shell without-rightbar${activeChatId ? " chat-is-open" : ""}">
-      <aside class="sidebar ${chatBackgroundClass(state.me)}"${state.me.chatBackground === "custom" && state.me.chatBackgroundData ? ` style="--sidebar-chat-wallpaper: url('${esc(state.me.chatBackgroundData)}');"` : ""}>
-        <header class="profile">
-          <button class="profile-trigger" data-menu-toggle aria-expanded="${menuOpen}">
-            ${avatarHtml(state.me)}
-            <div class="profile__body">
-              <strong>${esc(state.me.name)} ${premiumBadge(state.me)}</strong>
-              <span>@${esc(state.me.username)}</span>
-            </div>
-            <span class="profile-menu-arrow" aria-hidden="true">⌄</span>
-          </button>
-          <nav class="nav menu-drawer${menuOpen ? " open" : ""}" aria-hidden="${!menuOpen}">
-            ${navButton("chats", "Чаты", "💬")}${navButton("profile", "Профиль", "◉")}${navButton("ai-agent", "ИИ-агент", "")}${navButton("channels", "Создать канал", "")}${navButton("autoposting", "Автопостинг в соцсети", "")}${navButton("community", "Создать беседу", "👥")}${navButton("secret-chat", "Скрытый чат", "")}${navButton("stars", "Звёзды", "★")}${navButton("account-level", "Уровень аккаунта", "✦")}${navButton("reviews", "Отзывы о действиях людей", "★")}${navButton("activity-rewards", "Награды за активность", "✧")}${navButton("wallpapers", "Оформление диалогов", "")}${navButton("settings", "Настройки", "⚙")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a>
-          </nav>
-        </header>
-        <div class="list" id="leftList"></div>
-      </aside>
-      <div class="sidebar-resize-handle" data-resize-sidebar role="separator" aria-orientation="vertical" aria-label="Изменить ширину списка чатов"></div>
-      <section class="chat-panel" id="chatPanel"></section>
-
-    </main>`;
-
-  app.querySelectorAll(".menu-drawer [data-section]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      openMenuSection(button.dataset.section);
-    });
-  });
-  app.querySelector("[data-menu-toggle]").addEventListener("click", (event) => {
-    menuOpen = !menuOpen;
-    event.currentTarget.setAttribute("aria-expanded", String(menuOpen));
-    const menu = app.querySelector(".menu-drawer");
-    menu.classList.toggle("open", menuOpen);
-    menu.setAttribute("aria-hidden", String(!menuOpen));
-  });
-  bindSidebarResize(app.querySelector(".app-shell"), app.querySelector("[data-resize-sidebar]"));
-  renderLeft();
-  renderChat();
-}
-
-function syncMobileViewportHeight() {
-  const viewport = window.visualViewport;
-  const height = Math.round(viewport?.height || window.innerHeight);
-  document.documentElement.style.setProperty("--mobile-viewport-height", `${height}px`);
-}
-
-syncMobileViewportHeight();
-window.addEventListener("resize", syncMobileViewportHeight, { passive: true });
-window.visualViewport?.addEventListener("resize", syncMobileViewportHeight, { passive: true });
-window.visualViewport?.addEventListener("scroll", syncMobileViewportHeight, { passive: true });
-
-function bindSidebarResize(shell, handle) {
-  if (!shell || !handle || !window.matchMedia("(min-width: 761px)").matches) return;
-  const storageKey = "chatpro_sidebar_width_v1";
-  const minimum = 240;
-  const maximum = 520;
-  const savedWidth = Number(localStorage.getItem(storageKey));
-  const setWidth = (width) => {
-    const available = Math.max(minimum, shell.clientWidth - 280);
-    const value = Math.round(Math.min(Math.max(width, minimum), Math.min(maximum, available)));
-    shell.style.setProperty("--sidebar-width", `${value}px`);
-    return value;
-  };
-  if (Number.isFinite(savedWidth)) setWidth(savedWidth);
-  handle.addEventListener("pointerdown", (event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    handle.setPointerCapture(event.pointerId);
-    document.body.classList.add("is-resizing-sidebar");
-    const move = (moveEvent) => setWidth(moveEvent.clientX - shell.getBoundingClientRect().left);
-    const finish = () => {
-      document.body.classList.remove("is-resizing-sidebar");
-      localStorage.setItem(storageKey, String(Math.round(parseFloat(shell.style.getPropertyValue("--sidebar-width")) || 330)));
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", finish);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", finish, { once: true });
-    window.addEventListener("pointercancel", finish, { once: true });
-  });
-}
-
-function openMenuSection(section) {
-  profileReturnSection = activeSection;
-  activeSection = section;
-  if (activeSection === "secret-chat") {
-    activeSection = "chats";
-    menuOpen = false;
-    renderApp();
-    openSecretChatCreator();
-    return;
-  }
-  if (activeSection === "settings") settingsSection = "general";
-  if (activeSection === "profile") openedProfileId = state.me.id;
-  menuOpen = false;
-  renderApp();
-}
-
-function openMobileChatMenu() {
-  const overlay = document.createElement("div");
-  overlay.className = "mobile-chat-menu-overlay";
-  overlay.innerHTML = `<section class="mobile-chat-menu" role="dialog" aria-modal="true" aria-label="Меню чата"><header><div><b>Меню</b><small>Навигация по Chat-Pro</small></div><button type="button" data-close-mobile-chat-menu aria-label="Закрыть меню">×</button></header><div class="mobile-chat-menu__actions"><button class="mobile-chat-menu__chats" type="button" data-mobile-chat-list>${navIcon("chats")}<span>Все чаты</span></button>${["profile", "ai-agent", "channels", "autoposting", "community", "secret-chat", "stars", "account-level", "reviews", "activity-rewards", "wallpapers", "settings"].map((section) => navButton(section, ({ profile: "Профиль", "ai-agent": "ИИ-агент", channels: "Создать канал", autoposting: "Автопостинг в соцсети", community: "Создать беседу", "secret-chat": "Скрытый чат", stars: "Звёзды", "account-level": "Уровень аккаунта", reviews: "Отзывы о действиях людей", "activity-rewards": "Награды за активность", wallpapers: "Оформление диалогов", settings: "Настройки" })[section], "")).join("")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a></div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector("[data-close-mobile-chat-menu]").addEventListener("click", close);
-  overlay.querySelector("[data-mobile-chat-list]").addEventListener("click", () => {
-    activeChatId = null;
-    close();
-    renderApp();
-  });
-  overlay.querySelectorAll("[data-section]").forEach((button) => button.addEventListener("click", () => {
-    activeChatId = null;
-    close();
-    openMenuSection(button.dataset.section);
-  }));
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-}
-
-function navIcon(id) {
-  const icons = {
-    chats: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M7.3 14.8h-.9A3.9 3.9 0 0 1 2.5 11V8.1a3.9 3.9 0 0 1 3.9-3.9h5.4a3.9 3.9 0 0 1 3.9 3.9v.6"/><path d="M5.9 14.6v3.1l3.5-2.5"/><path d="M8.6 13a4.5 4.5 0 0 1 4.5-4.5h4.1a4.3 4.3 0 0 1 4.3 4.3v1.8a4.3 4.3 0 0 1-4.3 4.3h-3.8L9.5 21v-2.5a4.5 4.5 0 0 1-.9-2.7V13Z"/></svg>',
-    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="4.7"/><path d="m14.2 14.2 4.3 4.3"/></svg>',
-    community: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7.5" r="3.25"/><path d="M5 20v-1.25A4.75 4.75 0 0 1 9.75 14h4.5A4.75 4.75 0 0 1 19 18.75V20"/><path d="M5.25 6.25a2.75 2.75 0 0 0 0 5.5M18.75 6.25a2.75 2.75 0 0 1 0 5.5M2.25 19v-.5a3.5 3.5 0 0 1 2.5-3.35M21.75 19v-.5a3.5 3.5 0 0 0-2.5-3.35"/></svg>',
-    channels: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5 20 5l-4.6 14-4.15-5.05L4 12.5Z"/><path d="m11.25 13.95 2.55-2.55"/></svg>',
-    "secret-chat": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="10" width="13" height="10" rx="2.5"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"/><path d="M12 14v2"/></svg>',
-    profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.25"/><circle cx="12" cy="12" r="4.7"/></svg>',
-    autoposting: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.68"/><path d="M20 4.5v4.18h-4.18"/><path d="M20 12a8 8 0 0 1-13.66 5.66L4 15.32"/><path d="M4 19.5v-4.18h4.18"/><path d="M9 12h6M12 9v6"/></svg>',
-    "ai-agent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="4"/><path d="M12 2.5v2M9 12h.01M15 12h.01M9 15.25c1.8 1.15 4.2 1.15 6 0M2.5 11.5H4M20 11.5h1.5"/></svg>',
-    stars: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.7 5.55 6.12.88-4.43 4.31 1.05 6.1L12 16.77l-5.44 2.86 1.05-6.1-4.43-4.31 6.12-.88L12 2.8Z"/></svg>',
-    "account-level": '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2 14.2 9.8 20.8 12l-6.6 2.2L12 20.8l-2.2-6.6L3.2 12l6.6-2.2L12 3.2Z"/></svg>',
-    reviews: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3" width="17" height="18" rx="3"/><path d="m12 7 1.05 2.13 2.35.34-1.7 1.65.4 2.33L12 12.35l-2.1 1.1.4-2.33-1.7-1.65 2.35-.34L12 7Z"/><path d="M7.5 17h9"/></svg>',
-    "activity-rewards": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 14.05 9.95 20.5 12l-6.45 2.05L12 20.5l-2.05-6.45L3.5 12l6.45-2.05L12 3.5Z"/></svg>',
-    wallpapers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m5.5 16 4.2-4.1 3.2 2.8 2.2-2 3.1 3.3"/></svg>',
-    settings: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M10.35 3h3.3l.52 2.15c.42.16.82.33 1.19.54l1.93-1.15 2.33 2.33-1.15 1.93c.21.37.39.77.54 1.19l2.15.52v3.3l-2.15.52c-.15.42-.33.82-.54 1.19l1.15 1.93-2.33 2.33-1.93-1.15c-.37.21-.77.39-1.19.54L13.65 21h-3.3l-.52-2.15c-.42-.15-.82-.33-1.19-.54l-1.93 1.15-2.33-2.33 1.15-1.93c-.21-.37-.39-.77-.54-1.19L2.84 13.5v-3.3l2.15-.52c.15-.42.33-.82.54-1.19L4.38 6.56l2.33-2.33 1.93 1.15c.37-.21.77-.39 1.19-.54L10.35 3Zm1.65 6a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>',
-  };
-  return icons[id] || "";
-}
-
-function informationIcon() { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 10.7v5.1M12 7.7h.01"/></svg>'; }
-
-function navButton(id, label, icon) { return `<button class="nav-button${activeSection === id ? " active" : ""}" data-section="${id}"><span class="nav-button__icon" aria-hidden="true">${navIcon(id) || icon}</span><span class="nav-button__label">${label}</span></button>`; }
-
-function renderLeft() {
-  const box = app.querySelector("#leftList");
-  box.dataset.section = activeSection;
-  if (activeSection === "chats") return renderChatsList(box);
-  if (activeSection === "archive") return renderArchiveList(box);
-  if (activeSection === "community") return renderGroupsList(box, "community");
-  if (activeSection === "channels") return renderGroupsList(box, "channel");
-  if (activeSection === "autoposting") return renderAutopostingPanel(box);
-  if (activeSection === "ai-agent") return renderAiAgentPanel(box);
-  if (activeSection === "stars") return renderStarsPanel(box);
-  if (activeSection === "account-level") return renderAccountLevelPanel(box);
-  if (activeSection === "reviews") return renderReviewsPanel(box);
-  if (activeSection === "activity-rewards") return renderActivityRewardsPanel(box);
-  if (activeSection === "wallpapers") return renderWallpaperSettings(box);
-  renderSettingsPanel(box, settingsSection);
-}
-
-function renderChatsList(box) {
-  const filters = [["all", "Все"], ["direct", "Диалоги"], ["community", "Беседы"], ["channel", "Каналы"]];
-  const chats = visibleChats(false).filter((chat) => chatFilter === "all" || chat.type === chatFilter);
-  const hasOnlySavedChats = chatFilter === "all" && !chats.some((chat) => chat.type !== "saved");
-  const recommendedChannels = (chatFilter === "channel" || hasOnlySavedChats)
-    ? (state.recommended || []).map((rec) => state.chats.find((chat) => chat.id === rec.chat_id && chat.type === "channel" && !isMember(chat.id))).filter(Boolean)
-    : [];
-  const storyStrip = directStoryStripHtml();
-  box.dataset.dialogFilter = chatFilter;
-  const agentRow = chatFilter === "all" || chatFilter === "direct" ? aiAgentChatRow() : "";
-  const channelsHtml = `${agentRow}${chats.map(chatRow).join("")}` || (recommendedChannels.length ? '<p class="muted">Здесь появятся ваши диалоги. А пока — интересные каналы.</p>' : '<p class="muted">Пока нет диалогов.</p>');
-  const recommendationsHtml = recommendedChannels.length ? `<section class="recommended-channels"><div class="recommended-channels__title"><b>Рекомендованные каналы</b><span>Подборка для вас</span></div>${recommendedChannels.map(recommendedChannelRow).join("")}</section>` : "";
-  const activityPromoHtml = hasOnlySavedChats ? `<section class="activity-rewards-promo"><b>Проявляйте активность и получайте звёзды!</b><button class="button small" type="button" data-open-activity-rewards>Подробнее</button></section>` : "";
-  box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск сообщений и людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="globalSearch" placeholder="Поиск сообщений и людей"></label><div id="searchResults"></div>${channelsHtml}${recommendationsHtml}${activityPromoHtml}`;
-  box.querySelectorAll("[data-chat-filter]").forEach((button) => button.addEventListener("click", () => { chatFilter = button.dataset.chatFilter; renderChatsList(box); }));
-  bindChatRows(box);
-  box.querySelector("[data-open-ai-agent-chat]")?.addEventListener("click", () => {
-    activeSection = "chats";
-    activeChatId = "ai-agent";
-    renderApp();
-  });
-  bindStoriesStrip(box);
-  box.querySelector("#globalSearch").addEventListener("input", searchGlobal);
-  box.querySelector("[data-open-activity-rewards]")?.addEventListener("click", () => openMenuSection("activity-rewards"));
-  box.querySelectorAll("[data-open-recommended-channel]").forEach((button) => button.addEventListener("click", () => {
-    activeChatId = button.dataset.openRecommendedChannel;
-    scrollChatToLatest = true;
-    renderApp();
-  }));
-  box.querySelectorAll("[data-join-recommended-channel]").forEach((button) => button.addEventListener("click", async (event) => {
-    try { await api("/api/chats/join", { method: "POST", body: { chatId: event.currentTarget.dataset.joinRecommendedChannel } }); toast("Вы подписались на канал."); await refresh(); }
-    catch (error) { toast(error.message, true); }
-  }));
-}
-
-function renderArchiveList(box) {
-  const chats = visibleChats(true);
-  box.innerHTML = `<div class="panel-title"><b>Архив</b><span class="muted">${chats.length}</span></div><p class="muted">Здесь находятся чаты, которые вы убрали из общего списка.</p>${chats.map(chatRow).join("") || '<p class="muted">Архив пока пуст.</p>'}`;
-  bindChatRows(box);
-}
-
-function renderAiAgentPanel(box) {
-  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-агент</b><small>Ваш личный помощник в Chat‑Pro.</small></div><span class="badge">Полный доступ</span></div><section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><p class="muted">Напишите команду или вопрос. Агент может отправить сообщение, включить автопилот и вести ваш канал.</p></section>${aiAgentConversationHtml()}</section>`;
-  bindAiAgentConversation(box);
-}
-
-function aiAgentConversationHtml() {
-  const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
-  return `<section class="card ai-agent-help"><div class="panel-title"><div><b>Диалог с ИИ-агентом</b><small>${running ? "Автоматические задачи выполняются" : "Автоматические задачи остановлены"}</small></div><button class="button small" type="button" data-ai-agent-control>${running ? "Остановить" : "Возобновить"}</button></div><div class="ai-agent-conversation${aiAgentConversation.length ? "" : " hidden"}" data-ai-agent-conversation></div><form data-ai-agent-ask><textarea name="question" maxlength="2000" placeholder="Например: опубликуй в мой канал: Доброе утро!"></textarea><button class="button primary small" type="submit">Отправить</button></form></section>`;
-}
-
-function bindAiAgentConversation(root) {
-  const conversation = root.querySelector("[data-ai-agent-conversation]");
-  const renderConversation = () => {
-    conversation.innerHTML = aiAgentConversation.map((item) => `<article class="ai-agent-message ai-agent-message--${item.role}"><b>${item.role === "user" ? "Вы" : "ИИ-агент"}</b><span>${esc(item.text)}</span>${item.messages?.length ? `<div class="ai-agent-found-messages">${item.messages.map((message) => `<button type="button" data-ai-agent-open-message="${esc(message.id)}" data-ai-agent-chat="${esc(message.chat_id)}"><b>${esc(message.chat_title)}</b><span>${esc(message.text).slice(0, 220)}</span></button>`).join("")}</div>` : ""}</article>`).join("");
-    conversation.classList.toggle("hidden", !aiAgentConversation.length);
-    conversation.querySelectorAll("[data-ai-agent-open-message]").forEach((item) => item.addEventListener("click", () => openSearchMessage(item.dataset.aiAgentChat, item.dataset.aiAgentOpenMessage, item.textContent)));
-    conversation.scrollTop = conversation.scrollHeight;
-  };
-  renderConversation();
-  root.querySelector("[data-ai-agent-control]")?.addEventListener("click", async () => {
-    const button = root.querySelector("[data-ai-agent-control]");
-    try {
-      button.disabled = true;
-      await api("/api/ai-agent/control", { method: "POST", body: { enabled: !Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled) } });
-      await refresh();
-    } catch (error) { toast(error.message, true); button.disabled = false; }
-  });
-  root.querySelector("[data-ai-agent-ask]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const button = form.querySelector("button");
-    const question = String(new FormData(form).get("question") || "").trim();
-    if (!question) return;
-    const workingMessage = { role: "assistant", text: "Работаю…" };
-    try {
-      button.disabled = true;
-      form.reset();
-      aiAgentConversation.push({ role: "user", text: question });
-      aiAgentConversation.push(workingMessage);
-      renderConversation();
-      const result = await api("/api/ai-agent/ask", { method: "POST", body: { question, history: aiAgentConversation.slice(-10, -1) } });
-      await loadState();
-      const index = aiAgentConversation.indexOf(workingMessage);
-      if (index >= 0) aiAgentConversation[index] = { role: "assistant", text: result.answer, messages: result.messages || [] };
-      renderConversation();
-    } catch (error) {
-      const index = aiAgentConversation.indexOf(workingMessage);
-      if (index >= 0) aiAgentConversation[index] = { role: "assistant", text: error.message };
-      else aiAgentConversation.push({ role: "assistant", text: error.message });
-      renderConversation();
-    } finally { button.disabled = false; }
-  });
-}
-
-function aiAgentChatRow() {
-  const active = activeChatId === "ai-agent" ? " active" : "";
-  const latest = aiAgentConversation.at(-1);
-  const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
-  return `<div class="chat-row${active}"><button class="row chat-row__main" data-open-ai-agent-chat><div class="avatar">🤖</div><div class="row__body"><div class="row__title">ИИ-агент</div><div class="row__sub">${esc(latest?.text || (running ? "Автопилот работает" : "Личный помощник"))}</div></div><span class="chat-row__aside"><span class="badge">${running ? "Работает" : ""}</span></span></button></div>`;
-}
-
-function renderAutopostingPanel(box) {
-  const channels = state.chats.filter((chat) => chat.type === "channel" && chat.ownerId === state.me.id);
-  const sourceCount = (channelId) => state.telegramChannelLinks.filter((item) => item.channel_id === channelId).length
-    + state.rssChannelLinks.filter((item) => item.channel_id === channelId).length
-    + state.vkChannelLinks.filter((item) => item.channel_id === channelId).length;
-  box.innerHTML = `<section class="autoposting-panel"><div class="panel-title"><div><b>Автопостинг в соцсети</b><small>Импортируйте новые публикации в свои каналы Chat‑Pro.</small></div></div><section class="card autoposting-panel__notice"><b>Подключённые возможности</b><p>RSS, VK и Telegram уже публикуются в выбранный канал как обычные посты. Для материалов из сайта и VK показывается кликабельный «Источник».</p><p class="muted">Вход через VK / Telegram / MAX и публикация обратно в эти сервисы появятся только после подключения их официальных приложений. Сейчас эти сервисы не имитируются.</p></section>${channels.length ? `<div class="autoposting-channel-list">${channels.map((chat) => {
-    const rss = state.rssChannelLinks.filter((item) => item.channel_id === chat.id).length;
-    const vk = state.vkChannelLinks.filter((item) => item.channel_id === chat.id).length;
-    const telegram = state.telegramChannelLinks.some((item) => item.channel_id === chat.id);
-    const scheduled = (state.scheduledPosts || []).filter((item) => item.chat_id === chat.id).length;
-    return `<article class="card autoposting-channel"><div class="autoposting-channel__head">${chatAvatarHtml(chat)}<div><b>${esc(chat.title)}</b><small>${sourceCount(chat.id) ? `Подключено источников: ${sourceCount(chat.id)}` : "Источники не подключены"}</small></div><button class="button small" type="button" data-open-autopost-channel="${chat.id}">Открыть</button></div><div class="autoposting-channel__sources"><button type="button" data-autopost-source="telegram" data-autopost-channel="${chat.id}">Telegram${telegram ? " · подключён" : ""}</button><button type="button" data-autopost-source="rss" data-autopost-channel="${chat.id}">Сайты / RSS${rss ? ` · ${rss}` : ""}</button><button type="button" data-autopost-source="vk" data-autopost-channel="${chat.id}">VK${vk ? ` · ${vk}` : ""}</button><button type="button" data-autopost-schedule="${chat.id}">План · ${scheduled}</button></div></article>`;
-  }).join("")}</div>` : '<section class="card"><b>Нет собственных каналов</b><p class="muted">Сначала создайте канал, затем вернитесь сюда, чтобы подключить источники.</p><button class="button primary small" type="button" data-create-autopost-channel>Создать канал</button></section>'}</section>`;
-  box.querySelectorAll("[data-autopost-source]").forEach((button) => button.addEventListener("click", () => {
-    const chat = state.chats.find((item) => item.id === button.dataset.autopostChannel);
-    if (!chat) return;
-    if (button.dataset.autopostSource === "telegram") openChannelTelegramDialog(chat, () => renderAutopostingPanel(box));
-    if (button.dataset.autopostSource === "rss") openChannelRssDialog(chat, () => renderAutopostingPanel(box));
-    if (button.dataset.autopostSource === "vk") openChannelVkDialog(chat, () => renderAutopostingPanel(box));
-  }));
-  box.querySelectorAll("[data-autopost-schedule]").forEach((button) => button.addEventListener("click", () => {
-    const chat = state.chats.find((item) => item.id === button.dataset.autopostSchedule);
-    if (chat) openChannelScheduleDialog(chat, () => renderAutopostingPanel(box));
-  }));
-  box.querySelectorAll("[data-open-autopost-channel]").forEach((button) => button.addEventListener("click", () => {
-    activeChatId = button.dataset.openAutopostChannel;
-    scrollChatToLatest = true;
-    renderApp();
-  }));
-  box.querySelector("[data-create-autopost-channel]")?.addEventListener("click", () => openMenuSection("channels"));
-}
-
-function bindChatRows(box) {
-  box.querySelectorAll("[data-chat]").forEach((row) => row.addEventListener("click", () => {
-    activeChatId = row.dataset.chat;
-    scrollChatToLatest = true;
-    renderApp();
-    markChatRead(row.dataset.chat);
-  }));
-  box.querySelectorAll("[data-chat-menu]").forEach((button) => button.addEventListener("click", () => openChatMenu(button.dataset.chatMenu)));
-}
-
-function highlightedText(value, query = "") {
-  const text = String(value ?? "");
-  const needle = String(query || "").trim();
-  if (!needle) return esc(text);
-  const escapedNeedle = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return text.split(new RegExp(`(${escapedNeedle})`, "gi")).map((part, index) => index % 2 ? `<mark class="search-highlight">${esc(part)}</mark>` : esc(part)).join("");
-}
-
-function messageSearchResultHtml(message, query, compact = false) {
-  const title = message.chat_title || state.chats.find((chat) => chat.id === message.chat_id)?.title || "Диалог";
-  const timestamp = message.created_at || message.createdAt;
-  return `<button class="message-search-result${compact ? " message-search-result--compact" : ""}" type="button" data-open-search-message="${esc(message.id)}" data-search-chat="${esc(message.chat_id || message.chatId)}"><span class="message-search-result__body"><small>${esc(title)}</small><b>${highlightedText(message.text, query)}</b></span><time>${timestamp ? starDateFmt(timestamp) : ""}</time></button>`;
-}
-
-function bindMessageSearchResults(target, query) {
-  target.querySelectorAll("[data-open-search-message]").forEach((button) => button.addEventListener("click", () => {
-    openSearchMessage(button.dataset.searchChat, button.dataset.openSearchMessage, query);
-  }));
-}
-
-function openSearchMessage(chatId, messageId, query) {
-  activeSection = "chats";
-  activeChatId = chatId;
-  activeChatSearchOpen = false;
-  activeChatSearchQuery = "";
-  highlightedMessageSearch = { chatId, query };
-  renderApp();
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const message = app.querySelector(`#message-${CSS.escape(messageId)}`);
-    if (message) {
-      message.scrollIntoView({ block: "center", behavior: "smooth" });
-      message.classList.add("message--search-match");
-      setTimeout(() => message.classList.remove("message--search-match"), 1800);
-    } else toast("Сообщение больше недоступно.", true);
-  }));
-}
-
-async function searchGlobal(event) {
-  const q = event.target.value.trim();
-  const target = app.querySelector("#searchResults");
-  clearTimeout(globalSearchTimer);
-  if (!q) { target.innerHTML = ""; return; }
-  if (q.length < 2) { target.innerHTML = '<p class="muted search-hint">Введите ещё один символ для поиска сообщений.</p>'; return; }
-  const request = ++globalSearchRequest;
-  target.innerHTML = '<p class="muted search-hint">Ищем сообщения…</p>';
-  globalSearchTimer = setTimeout(async () => {
-  try {
-    const [messageData, userData] = await Promise.all([
-      api(`/api/messages/search?q=${encodeURIComponent(q)}`),
-      api(`/api/users?q=${encodeURIComponent(q)}`),
-    ]);
-    if (request !== globalSearchRequest || !target.isConnected) return;
-    const messages = messageData.messages || [];
-    const users = userData.users || [];
-    target.innerHTML = `${messages.length ? `<section class="search-results-section"><b>Сообщения</b>${messages.map((message) => messageSearchResultHtml(message, q)).join("")}</section>` : ""}${users.length ? `<section class="search-results-section"><b>Люди</b>${users.map((u) => `<button class="row" data-open-profile="${u.id}">${avatarHtml(u)}<div class="row__body"><div class="row__title">${highlightedText(u.name, q)}</div><div class="row__sub">@${highlightedText(u.username, q)}</div></div><span class="badge">Профиль</span></button>`).join("")}</section>` : ""}` || '<p class="muted search-hint">Ничего не найдено.</p>';
-    bindMessageSearchResults(target, q);
-    target.querySelectorAll("[data-open-profile]").forEach((btn) => btn.addEventListener("click", () => openProfile(btn.dataset.openProfile)));
-  } catch (error) { toast(error.message, true); }
-  }, 220);
-}
-
-async function runChatMessageSearch(chat, query, target, count) {
-  const text = query.trim();
-  if (!text) { target.innerHTML = ""; count.textContent = ""; return; }
-  if (text.length < 2) { target.innerHTML = '<p class="chat-search-empty">Введите ещё один символ.</p>'; count.textContent = ""; return; }
-  target.innerHTML = '<p class="chat-search-empty">Ищем…</p>';
-  try {
-    const response = await api(`/api/messages/search?chatId=${encodeURIComponent(chat.id)}&q=${encodeURIComponent(text)}`);
-    if (!target.isConnected) return;
-    const results = response.messages || [];
-    count.textContent = results.length ? `${results.length}` : "";
-    target.innerHTML = results.length ? results.map((message) => messageSearchResultHtml(message, text, true)).join("") : '<p class="chat-search-empty">Совпадений нет.</p>';
-    bindMessageSearchResults(target, text);
-  } catch (error) {
-    if (target.isConnected) target.innerHTML = `<p class="chat-search-empty">${esc(error.message || "Поиск недоступен.")}</p>`;
-  }
-}
-
-
-function renderProfileScreen() {
-  const profileUser = userById(openedProfileId) || state.me;
-  const ownProfile = profileUser.id === state.me.id;
-  const posts = (state.posts || []).filter((post) => post.user_id === profileUser.id);
-  const stories = (state.stories || []).filter((story) => story.user_id === profileUser.id);
-  const avatarSources = [profileUser.avatarData, ...(profileUser.avatarHistory || [])].filter(Boolean);
-  app.innerHTML = `<main class="profile-screen"><header class="profile-screen__head"><button class="back-button" data-close-profile aria-label="Вернуться">←</button><b>${ownProfile ? "Мой профиль" : "Профиль"}</b><button class="profile-more" type="button" data-profile-menu="${profileUser.id}" aria-label="Действия с профилем">⋯</button></header><section class="profile-screen__content"><div class="profile-hero"><button class="profile-avatar-button" data-open-avatar="${profileUser.id}" ${avatarSources.length ? "" : "disabled"}>${avatarHtml(profileUser, "avatar profile-avatar")}</button><div><h1>${esc(profileUser.name)} ${premiumBadge(profileUser)}</h1><p class="muted">@${esc(profileUser.username)}</p>${!ownProfile ? `<button class="button primary small" data-message-user="${profileUser.id}">Написать</button>` : ""}</div></div>
-    ${ownProfile ? `<section class="profile-actions"><div class="profile-action-grid"><button class="profile-action-button" type="button" data-profile-action="avatar"><span class="profile-action-button__icon">◉</span><span><b>Аватар</b><small>Фото профиля</small></span></button><button class="profile-action-button" type="button" data-profile-action="post"><span class="profile-action-button__icon">▤</span><span><b>Публикация</b><small>Текст или фото</small></span></button><button class="profile-action-button" type="button" data-profile-action="story"><span class="profile-action-button__icon">◌</span><span><b>История</b><small>На 48 часов</small></span></button></div><form class="card form profile-edit-card" id="avatarForm" data-profile-action-panel="avatar" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">◉</span><div><b>Фото профиля</b><p class="muted">Обновите аватар, который видят друзья.</p></div></div><label>Аватар<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" data-image-preview-input="avatar-preview"></label><img class="profile-upload-preview profile-upload-preview--avatar" data-image-preview="avatar-preview" alt="Предпросмотр нового аватара" hidden><button class="button primary">Загрузить аватар</button></form><form class="card form profile-edit-card" id="postForm" data-profile-action-panel="post" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">▤</span><div><b>Новая публикация</b><p class="muted">Добавьте текст или фото в профиль.</p></div></div><label>Подпись<textarea name="text" placeholder="Что у вас нового?"></textarea></label><label>Фото<input name="photo" type="file" accept="image/png,image/jpeg,image/webp" data-image-preview-input="post-preview"></label><img class="profile-upload-preview" data-image-preview="post-preview" alt="Предпросмотр фото для публикации" hidden><button class="button primary">Опубликовать пост</button></form><form class="card form profile-edit-card" id="storyForm" data-profile-action-panel="story" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">◌</span><div><b>История на 48 часов</b><p class="muted">После выбора фото откроется редактор с текстом и вторым изображением.</p></div></div><label>Основное фото<input name="media" type="file" accept="image/png,image/jpeg,image/webp" required data-image-preview-input="story-preview"></label><img class="profile-upload-preview profile-upload-preview--story" data-image-preview="story-preview" alt="Предпросмотр истории" hidden><label>Подпись<input name="caption" placeholder="Можно оставить пустым"></label><button class="button primary">Открыть редактор</button></form></section>${state.notifications.length ? `<section class="card owner-notifications"><b>Уведомления владельца</b>${state.notifications.map((notice) => `<p>${esc(notice.text)}</p>`).join("")}</section>` : ""}` : ""}<div class="profile-publications"><section class="card"><b>Сторис</b><div class="stories-row">${stories.map(storyHtml).join("") || '<p class="muted">Сторис пока нет.</p>'}</div></section>${posts.some((post) => post.media_data) ? `<section class="card"><b>Фотографии</b><div class="post-gallery">${posts.filter((post) => post.media_data).map(galleryPostHtml).join("")}</div></section>` : ""}${posts.some((post) => post.text) ? `<section class="card"><b>Публикации</b>${posts.filter((post) => post.text).map(postHtml).join("")}</section>` : ""}${posts.length ? "" : '<section class="card"><p class="muted">Постов пока нет.</p></section>'}</div></section></main>`;
-  app.querySelector("#avatarForm")?.addEventListener("submit", submitAvatar);
-  app.querySelector("#postForm")?.addEventListener("submit", submitProfilePost);
-  app.querySelector("#storyForm")?.addEventListener("submit", submitStory);
-  app.querySelectorAll("[data-profile-action]").forEach((button) => button.addEventListener("click", () => {
-    const action = button.dataset.profileAction;
-    app.querySelectorAll("[data-profile-action]").forEach((item) => item.classList.toggle("active", item === button));
-    app.querySelectorAll("[data-profile-action-panel]").forEach((panel) => { panel.hidden = panel.dataset.profileActionPanel !== action; });
-  }));
-  app.querySelectorAll("[data-image-preview-input]").forEach((input) => input.addEventListener("change", () => {
-    const preview = app.querySelector(`[data-image-preview="${input.dataset.imagePreviewInput}"]`);
-    const file = input.files?.[0];
-    if (!preview || !file) return;
-    const reader = new FileReader();
-    reader.onload = () => { preview.src = reader.result; preview.hidden = false; };
-    reader.readAsDataURL(file);
-  }));
-  app.querySelector("[data-close-profile]").addEventListener("click", closeProfile);
-  app.querySelector("[data-message-user]")?.addEventListener("click", async (event) => { await openDirectChat(event.currentTarget.dataset.messageUser); });
-  app.querySelector("[data-profile-menu]")?.addEventListener("click", (event) => openSimpleActions(event.currentTarget, profileMenuActions(profileUser)));
-  app.querySelectorAll("[data-open-avatar]").forEach((item) => item.addEventListener("click", () => openMedia(avatarSources[0], "photo", avatarSources)));
-  app.querySelectorAll("[data-open-profile-post]").forEach((item) => item.addEventListener("click", () => openProfilePost(item.dataset.openProfilePost)));
-  app.querySelectorAll("[data-open-story]").forEach((item) => item.addEventListener("click", () => openStory(item.dataset.openStory)));
-  app.querySelectorAll("[data-share-profile-post]").forEach((item) => item.addEventListener("click", () => openGroupContentShare("profile-post", item.dataset.shareProfilePost)));
-  app.querySelectorAll("[data-post-menu]").forEach((item) => item.addEventListener("click", (event) => {
-    const post = state.posts.find((entry) => entry.id === event.currentTarget.dataset.postMenu);
-    if (!post) return;
-    const actions = [
-      { label: "Открыть публикацию", action: () => openProfilePost(post.id) },
-      { label: "Поделиться", action: () => openGroupContentShare("profile-post", post.id) },
-    ];
-    if (post.user_id !== state.me.id) actions.push({ label: "Пожаловаться", action: () => reportTarget("profile-post", post.id) });
-    openSimpleActions(event.currentTarget, actions);
-  }));
-}
-
-async function submitAvatar(event) {
-  event.preventDefault();
-  const file = new FormData(event.currentTarget).get("avatar");
-  if (!file?.size) return toast("Выберите фото.", true);
-  const avatarData = await fileToDataUrl(file, 1_800_000);
-  await api("/api/profile/avatar", { method: "POST", body: { avatarData } });
-  toast("Аватар обновлён.");
-  await refresh();
-}
-
-async function submitProfilePost(event) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const photo = form.get("photo");
-  const mediaData = photo?.size ? await fileToDataUrl(photo, 2_500_000) : "";
-  await api("/api/profile/posts", { method: "POST", body: { text: form.get("text"), mediaData } });
-  toast("Пост опубликован.");
-  await refresh();
-}
-
-async function submitStory(event) {
-  event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  const file = form.get("media");
-  if (!file?.size) return toast("Выберите основное фото.", true);
-  openStoryEditor(file, String(form.get("caption") || ""));
-}
-
-function openStoryEditor(primaryFile, initialCaption) {
-  const overlay = document.createElement("div");
-  overlay.className = "story-editor-overlay";
-  overlay.innerHTML = `<section class="story-editor" role="dialog" aria-modal="true" aria-label="Редактор сторис"><header><div><b>Редактор сторис</b><small>Перетаскивайте фото и текст прямо на макете</small></div><button type="button" class="member-manager__close" data-close-story-editor aria-label="Закрыть">×</button></header><div class="story-editor__canvas" data-story-editor-canvas><img data-story-primary alt="Основное фото"><img class="story-editor__sticker hidden" data-story-secondary alt="Дополнительное фото"><div class="story-editor__text" data-story-editor-text></div></div><form class="form story-editor__controls" data-story-editor-form><label>Дополнительное фото<input name="secondary" type="file" accept="image/png,image/jpeg,image/webp"></label><label>Размер фото<input name="secondarySize" type="range" min="18" max="70" value="34"></label><label>Текст на сторис<textarea name="text" maxlength="300" placeholder="Напишите что-нибудь">${esc(initialCaption)}</textarea></label><label>Размер текста<input name="textSize" type="range" min="18" max="64" value="36"></label><label>Шрифт<select name="font"><option value="system">Современный</option><option value="serif">С засечками</option><option value="mono">Моно</option><option value="script">Рукописный</option></select></label><label>Цвет текста<input name="color" type="color" value="#ffffff"></label><button class="button primary" type="submit">Опубликовать сторис</button></form></section>`;
-  document.body.append(overlay);
-  const primaryData = URL.createObjectURL(primaryFile);
-  const primary = overlay.querySelector("[data-story-primary]");
-  const secondary = overlay.querySelector("[data-story-secondary]");
-  const canvas = overlay.querySelector("[data-story-editor-canvas]");
-  const text = overlay.querySelector("[data-story-editor-text]");
-  const form = overlay.querySelector("[data-story-editor-form]");
-  let secondaryData = "";
-  let secondaryPosition = { x: 50, y: 50 };
-  let textPosition = { x: 50, y: 88 };
-  let drag = null;
-  primary.src = primaryData;
-  const close = () => { URL.revokeObjectURL(primaryData); overlay.remove(); };
-  overlay.querySelector("[data-close-story-editor]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  const renderText = () => {
-    const values = new FormData(form);
-    text.textContent = String(values.get("text") || "");
-    text.dataset.font = String(values.get("font") || "system");
-    text.style.color = String(values.get("color") || "#ffffff");
-    text.style.fontSize = `${values.get("textSize") || 36}px`;
-    text.style.left = `${textPosition.x}%`;
-    text.style.top = `${textPosition.y}%`;
-  };
-  const renderSecondaryPosition = () => {
-    secondary.style.left = `${secondaryPosition.x}%`;
-    secondary.style.top = `${secondaryPosition.y}%`;
-    secondary.style.width = `${form.elements.secondarySize.value}%`;
-  };
-  form.elements.secondary.addEventListener("change", async (event) => {
-    const file = event.currentTarget.files[0];
-    if (!file) return;
-    try {
-      secondaryData = await fileToDataUrl(file, 2_500_000);
-      secondary.src = secondaryData;
-      secondary.classList.remove("hidden");
-      secondaryPosition = { x: 50, y: 50 };
-      renderSecondaryPosition();
-    } catch (error) { toast(error.message, true); }
-  });
-  form.elements.text.addEventListener("input", renderText);
-  form.elements.textSize.addEventListener("input", renderText);
-  form.elements.font.addEventListener("change", renderText);
-  form.elements.color.addEventListener("input", renderText);
-  form.elements.secondarySize.addEventListener("input", renderSecondaryPosition);
-  secondary.addEventListener("pointerdown", (event) => {
-    if (!secondaryData) return;
-    event.preventDefault();
-    secondary.setPointerCapture(event.pointerId);
-    drag = { pointerId: event.pointerId, target: "secondary", startX: event.clientX, startY: event.clientY, x: secondaryPosition.x, y: secondaryPosition.y };
-  });
-  secondary.addEventListener("pointermove", (event) => {
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const rect = canvas.getBoundingClientRect();
-    secondaryPosition.x = Math.max(12, Math.min(88, drag.x + (event.clientX - drag.startX) / rect.width * 100));
-    secondaryPosition.y = Math.max(12, Math.min(88, drag.y + (event.clientY - drag.startY) / rect.height * 100));
-    renderSecondaryPosition();
-  });
-  secondary.addEventListener("pointerup", () => { drag = null; });
-  text.addEventListener("pointerdown", (event) => {
-    if (!text.textContent) return;
-    event.preventDefault();
-    text.setPointerCapture(event.pointerId);
-    drag = { pointerId: event.pointerId, target: "text", startX: event.clientX, startY: event.clientY, x: textPosition.x, y: textPosition.y };
-  });
-  text.addEventListener("pointermove", (event) => {
-    if (!drag || drag.target !== "text" || drag.pointerId !== event.pointerId) return;
-    const rect = canvas.getBoundingClientRect();
-    textPosition.x = Math.max(10, Math.min(90, drag.x + (event.clientX - drag.startX) / rect.width * 100));
-    textPosition.y = Math.max(8, Math.min(92, drag.y + (event.clientY - drag.startY) / rect.height * 100));
-    renderText();
-  });
-  text.addEventListener("pointerup", () => { drag = null; });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const values = new FormData(form);
-    try {
-      const mediaData = await composeStoryImage(primaryFile, secondaryData, secondaryPosition, Number(values.get("secondarySize") || 34), String(values.get("text") || ""), textPosition, Number(values.get("textSize") || 36), String(values.get("font") || "system"), String(values.get("color") || "#ffffff"));
-      await api("/api/profile/stories", { method: "POST", body: { mediaData, caption: values.get("text") } });
-      close();
-      toast("Сторис опубликована.");
-      await refresh();
-    } catch (error) { toast(error.message, true); }
-  });
-  renderText();
-}
-
-function loadEditorImage(source) {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("Не удалось обработать изображение."));
-    image.src = source;
-  });
-}
-
-async function composeStoryImage(primaryFile, secondaryData, position, secondarySize, text, textPosition, textSize, font, color) {
-  const primarySource = URL.createObjectURL(primaryFile);
-  try {
-    const primary = await loadEditorImage(primarySource);
-    const scale = Math.min(1, 1080 / Math.max(primary.naturalWidth, primary.naturalHeight));
-    const width = Math.max(1, Math.round(primary.naturalWidth * scale));
-    const height = Math.max(1, Math.round(primary.naturalHeight * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const context = canvas.getContext("2d");
-    context.drawImage(primary, 0, 0, width, height);
-    if (secondaryData) {
-      const secondary = await loadEditorImage(secondaryData);
-      const stickerWidth = Math.round(width * secondarySize / 100);
-      const stickerHeight = Math.round(stickerWidth * secondary.naturalHeight / secondary.naturalWidth);
-      const x = Math.round(width * position.x / 100 - stickerWidth / 2);
-      const y = Math.round(height * position.y / 100 - stickerHeight / 2);
-      context.save();
-      context.shadowColor = "rgba(0,0,0,.3)";
-      context.shadowBlur = Math.max(8, width * .02);
-      context.fillStyle = "#fff";
-      context.fillRect(x - 4, y - 4, stickerWidth + 8, stickerHeight + 8);
-      context.drawImage(secondary, x, y, stickerWidth, stickerHeight);
-      context.restore();
-    }
-    if (text.trim()) {
-      const fonts = { system: "Arial, sans-serif", serif: "Georgia, serif", mono: "Menlo, monospace", script: "cursive" };
-      context.save();
-      const fontSize = Math.max(18, Math.round(width * textSize / 510));
-      context.font = `700 ${fontSize}px ${fonts[font] || fonts.system}`;
-      context.textAlign = "center";
-      context.textBaseline = "bottom";
-      context.lineWidth = Math.max(3, Math.round(width * .008));
-      context.strokeStyle = "rgba(0,0,0,.42)";
-      context.fillStyle = color;
-      const words = text.trim().split(/\s+/);
-      const lines = [];
-      let line = "";
-      const maxWidth = width * .86;
-      words.forEach((word) => { const next = line ? `${line} ${word}` : word; if (context.measureText(next).width > maxWidth && line) { lines.push(line); line = word; } else line = next; });
-      if (line) lines.push(line);
-      lines.slice(-4).reverse().forEach((lineText, index) => { const y = height * textPosition.y / 100 - index * fontSize * 1.2; context.strokeText(lineText, width * textPosition.x / 100, y); context.fillText(lineText, width * textPosition.x / 100, y); });
-      context.restore();
-    }
-    return canvas.toDataURL("image/jpeg", .86);
-  } finally { URL.revokeObjectURL(primarySource); }
-}
-
-function renderGroupsList(box, type) {
-  const title = type === "group" ? "Группы" : type === "channel" ? "Каналы" : "Комьюнити / беседы";
-  const mine = state.chats.filter((chat) => chat.type === type && isMember(chat.id));
-  box.innerHTML = `
-    <div class="panel-title"><b>${title}</b></div>
-    <form class="card form" id="createGroup">
-      <label>Название<input name="title" required></label>
-      <label>Описание<textarea name="description" placeholder="${type === "channel" ? "О чём этот канал" : ""}"></textarea></label>
-      ${type === "channel" ? '<p class="muted">Публиковать смогут только вы и выбранные авторы.</p>' : ""}
-      <button class="button primary">Создать${type === "channel" ? " канал" : ""}</button>
-    </form>
-    ${mine.map(chatRow).join("") || '<p class="muted">Пока нет.</p>'}`;
-  box.querySelector("#createGroup").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const body = Object.fromEntries(new FormData(event.currentTarget));
-    body.type = type;
-    const data = await api("/api/chats", { method: "POST", body });
-    activeChatId = data.chat.id;
-    await refresh();
-  });
-  box.querySelectorAll("[data-chat]").forEach((row) => row.addEventListener("click", () => { activeChatId = row.dataset.chat; renderApp(); }));
-}
-
-function renderReviewsPanel(box) {
-  const sources = reviewStats();
-  const activeUrl = normalizeReviewIdentifier(reviewPageUrl);
-  const page = activeUrl ? sources[activeUrl] : null;
-  const reviews = activeUrl ? state.reviews.filter((review) => normalizeReviewIdentifier(review.url) === activeUrl) : [];
-  const relatedUrls = activeUrl ? reviewRelatedUrls(activeUrl) : [];
-  const relatedReviews = !page ? state.reviews.filter((review) => relatedUrls.includes(normalizeReviewIdentifier(review.url))) : [];
-  const searchForm = `<form class="review-search" data-review-search><input name="url" type="text" required placeholder="Ссылка, телефон, @username или название" value="${esc(activeUrl)}"><button class="button primary small">Найти</button></form>`;
-  if (!activeUrl) {
-    box.innerHTML = `<div class="panel-title"><b>Отзывы об источниках</b></div><p class="muted">Найдите ссылку, телефон, @username или название и оставьте первый отзыв.</p>${searchForm}<p class="review-suggestions-title">Возможные знакомые люди и компании</p><div class="review-source-list">${Object.values(sources).map(reviewSourceHtml).join("") || '<p class="muted">Пока нет отзывов. Укажите ссылку, телефон, @username или название выше, чтобы стать первым автором.</p>'}</div>`;
-    return bindReviewSearch(box);
-  }
-  const positive = page?.positive || 0;
-  const negative = page?.negative || 0;
-  const sourceType = page?.sourceType || reviews[0]?.sourceType || (isReviewUrl(activeUrl) ? "website" : "");
-  const relatedSection = relatedUrls.length ? `<section class="review-related"><b>${page ? "Связанные источники" : "Связанные источники и отзывы"}</b><div>${relatedUrls.map((url) => `<button type="button" data-open-review-page="${esc(url)}">${esc(url)}</button>`).join("")}</div></section>` : "";
-  const feed = page ? `<section class="review-feed"><h3>Отзывы</h3>${reviews.map(reviewItemHtml).join("")}</section>` : `<section class="card review-empty"><b>На этот источник ещё не оставляли отзывов.</b><p class="muted">${relatedReviews.length ? "Ниже показаны отзывы со связанных источников." : "Вы можете стать первым."}</p></section>${relatedReviews.length ? `<section class="review-feed"><h3>Отзывы со связанных источников</h3>${relatedReviews.map(reviewItemHtml).join("")}</section>` : ""}`;
-  box.innerHTML = `<div class="panel-title"><button class="back-button" type="button" data-close-review-page aria-label="Назад">←</button><b>Страница отзывов</b><button class="review-more" type="button" data-review-page-menu="${esc(activeUrl)}" aria-label="Действия со страницей">⋯</button></div>${searchForm}<section class="review-page card"><div class="review-page__url">${esc(activeUrl)}${sourceType ? sourceTypeBadge(sourceType) : ""}</div><div class="review-summary"><div><b>${page?.count || 0}</b><span>всего отзывов</span></div><div class="positive"><b>${positive}</b><span>положительных</span></div><div class="negative"><b>${negative}</b><span>отрицательных</span></div></div>${relatedSection}</section>${feed}${reviewFormHtml(activeUrl)}`;
-  bindReviewSearch(box);
-  box.querySelector("[data-close-review-page]").addEventListener("click", () => { reviewPageUrl = ""; renderReviewsPanel(box); });
-  box.querySelectorAll("[data-open-review-page]").forEach((button) => button.addEventListener("click", () => { reviewPageUrl = button.dataset.openReviewPage; renderReviewsPanel(box); }));
-  box.querySelectorAll("[data-open-media]").forEach((button) => button.addEventListener("click", () => openMedia(button.dataset.openMedia)));
-  box.querySelector("[data-review-page-menu]")?.addEventListener("click", (event) => openSimpleActions(event.currentTarget, [{ label: "Пожаловаться на страницу", action: () => reportTarget("review-page", event.currentTarget.dataset.reviewPageMenu) }, { label: "Поделиться страницей", action: () => shareText(event.currentTarget.dataset.reviewPageMenu) }]));
-  box.querySelectorAll("[data-review-menu]").forEach((button) => button.addEventListener("click", (event) => openSimpleActions(event.currentTarget, [{ label: "Пожаловаться на отзыв", action: () => reportTarget("review", event.currentTarget.dataset.reviewMenu) }, { label: "Поделиться отзывом", action: () => shareText(`Отзыв: ${event.currentTarget.dataset.reviewMenu}`) }])));
-  bindReviewForm(box);
-}
-
-function bindReviewSearch(box) {
-  box.querySelector("[data-review-search]").addEventListener("submit", (event) => {
-    event.preventDefault();
-    reviewPageUrl = normalizeReviewIdentifier(new FormData(event.currentTarget).get("url"));
-    renderReviewsPanel(box);
-  });
-  box.querySelectorAll("[data-open-review-page]").forEach((button) => button.addEventListener("click", () => { reviewPageUrl = button.dataset.openReviewPage; renderReviewsPanel(box); }));
-}
-
-function reviewFormHtml(url) {
-  const sourceType = isReviewUrl(url) || isReviewPhone(url) || isReviewTelegram(url) ? "" : `<label>Площадка этого источника<select name="sourceType" required><option value="" selected disabled>Выберите площадку</option><option value="telegram">Telegram</option><option value="instagram">Instagram</option><option value="other">Другая</option><option value="custom">Указать вручную</option></select></label><label class="review-custom-source hidden" data-custom-source>Название площадки<input name="customSourceType" maxlength="80" placeholder="Например, VK, Яндекс Карты"></label>`;
-  return `<form class="card form review-form" data-review-form><h3>Оставить отзыв</h3><label>Ссылка, телефон, @username или название<input name="url" required readonly value="${esc(url)}"></label>${sourceType}<label>Город<input name="city" maxlength="120" placeholder="Например, Москва"></label><label>Оценка<select name="rating"><option value="1">Положительный</option><option value="-1">Отрицательный</option></select></label><label>Комментарий<textarea name="comment" maxlength="3000" placeholder="Расскажите о своём опыте"></textarea></label><label>Фото или видео<input name="media" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm"></label><label>Связанные контакты и источники<textarea name="links" placeholder="По одному телефону, ссылке, @username или названию в строке"></textarea></label><p class="review-form__hint">Свяжите карточку с другими номерами, Telegram-именами и ссылками. По ним можно будет открыть общую страницу отзывов.</p><button class="button primary">Опубликовать отзыв</button></form>`;
-}
-
-function bindReviewForm(box) {
-  const reviewForm = box.querySelector("[data-review-form]");
-  const sourceType = reviewForm?.elements.sourceType;
-  const customSource = reviewForm?.querySelector("[data-custom-source]");
-  const syncCustomSource = () => {
-    const isCustom = sourceType?.value === "custom";
-    customSource?.classList.toggle("hidden", !isCustom);
-    customSource?.querySelector("input").toggleAttribute("required", isCustom);
-  };
-  sourceType?.addEventListener("change", syncCustomSource);
-  box.querySelector("[data-review-form]")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      const media = form.get("media");
-      const body = Object.fromEntries(form);
-      if (body.sourceType === "custom") body.sourceType = body.customSourceType;
-      delete body.customSourceType;
-      delete body.media;
-      if (media?.size) body.mediaData = await fileToDataUrl(media, 3_600_000);
-      await api("/api/reviews", { method: "POST", body });
-      toast("Отзыв опубликован.");
-      await refresh();
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function reviewSourceHtml(item) {
-  return `<button type="button" class="card review-source" data-open-review-page="${esc(item.url)}"><div><b>${esc(item.url)}${sourceTypeBadge(item.sourceType)}</b><small>${item.count} ${reviewWord(item.count)}</small></div><div class="review-source__counts"><span class="positive">+${item.positive}</span><span class="negative">−${item.negative}</span></div></button>`;
-}
-
-function reviewItemHtml(review) {
-  const media = review.mediaData || review.media_data;
-  const mediaHtml = media?.startsWith("data:image/") ? `<button type="button" class="review-media" data-open-media="${esc(media)}"><img src="${esc(media)}" alt="Фото к отзыву"></button>` : media?.startsWith("data:video/") ? `<video class="review-video" controls preload="metadata" src="${esc(media)}"></video>` : "";
-  return `<article class="card review-item"><div class="review-item__head"><span class="review-item__rating ${review.rating > 0 ? "positive" : "negative"}">${review.rating > 0 ? "Положительный" : "Отрицательный"}</span><button class="review-more" type="button" data-review-menu="${esc(review.id)}" aria-label="Действия с отзывом">⋯</button></div><div class="review-item__source">${esc(normalizeReviewIdentifier(review.url))}${sourceTypeBadge(review.sourceType)}</div>${review.city ? `<small class="review-item__city">${esc(review.city)}</small>` : ""}${review.comment ? `<p>${esc(review.comment)}</p>` : ""}${mediaHtml}${review.links?.length ? `<div class="review-item__links">${review.links.map((link) => `<button type="button" data-open-review-page="${esc(link)}">${esc(link)}</button>`).join("")}</div>` : ""}</article>`;
-}
-
-const ACTIVITY_CRITERIA_LABELS = {
-  stars_balance: "звёзд на балансе", direct_chats: "личных диалогов", channels_joined: "подписок на каналы",
-  communities_joined: "бесед", channels_created: "созданных каналов",
-  communities_created: "созданных бесед", channel_subscribers: "подписчиков в одном канале",
-  community_subscribers: "участников в одной беседе", messages: "сообщений",
-  posts: "публикаций", stories: "сторис", reviews: "отзывов", donations_sent: "отправленных донатов",
-  stars_donated: "отправленных звёзд", donations_received: "полученных донатов", login_streak: "дней подряд в приложении",
-  completed_calls: "принятых звонков", call_partners: "уникальных собеседников в принятых звонках",
-  chat_pro_review_video: "видеообзоров Chat‑Pro в своём канале",
-};
-
-function activityCriteriaHtml(criteria = {}, progress = {}) {
-  return `<ul class="activity-reward__criteria">${Object.entries(criteria).map(([key, target]) => `<li><span>${esc(ACTIVITY_CRITERIA_LABELS[key] || key)}</span><b>${Math.min(Number(progress[key]) || 0, Number(target))} / ${target}</b></li>`).join("")}</ul>`;
-}
-
-function rewardBenefitsHtml(reward = {}) {
-  const parts = [];
-  if (Number(reward.stars)) parts.push(`★ ${Number(reward.stars)}`);
-  if (Number(reward.recurringStars)) parts.push(`★ ${Number(reward.recurringStars)} раз в ${Number(reward.recurringIntervalDays)} дн. в течение ${Number(reward.recurringDurationDays)} дн.`);
-  if (Number(reward.starPackageDiscountPercent)) parts.push(`Скидка ${Number(reward.starPackageDiscountPercent)}% на пакеты звёзд`);
-  const raisedLimits = Object.entries(reward.limits || {}).filter(([, value]) => Number(value) > 0);
-  if (raisedLimits.length) parts.push(`Личные лимиты: ${raisedLimits.map(([key, value]) => `${limitLabel(key)} — ${value}`).join(", ")}`);
-  if (reward.accountLevelId) parts.push(`Уровень: ${state.accountLevel?.levels?.find((level) => level.id === reward.accountLevelId)?.title || reward.accountLevelId}`);
-  if (reward.recommendOwnChannel) parts.push("Свой канал в рекомендациях");
-  return parts.join(" · ") || "Награда не предусмотрена";
-}
-
-function openActivityRewardChannelPicker(reward) {
-  const channels = state.chats.filter((chat) => chat.type === "channel" && chat.ownerId === state.me.id && !(state.recommended || []).some((item) => item.chat_id === chat.id));
-  if (!channels.length) {
-    toast("Создайте свой канал, который ещё не добавлен в рекомендации.", true);
-    return;
-  }
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Выбор канала для рекомендаций"><header><div><b>Добавить канал в рекомендации</b><small>Выберите один свой канал. После получения награды он станет виден в подборке рекомендаций.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="member-manager__list">${channels.map((channel) => `<button class="member-manager__user" type="button" data-reward-channel-id="${esc(channel.id)}">${chatAvatarHtml(channel)}<span><b>${esc(channel.title)}</b><small>${channel.subscriberCount} подписчиков</small></span><em>Выбрать</em></button>`).join("")}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-reward-channel-id]").forEach((button) => button.addEventListener("click", async () => {
-    try {
-      await api("/api/activity-rewards/claim", { method: "POST", body: { rewardId: reward.id, channelId: button.dataset.rewardChannelId } });
-      close();
-      toast("Награда начислена, канал добавлен в рекомендации.");
-      await refresh();
-    } catch (error) { toast(error.message, true); }
-  }));
-}
-
-function renderActivityRewardsPanel(box) {
-  const rewards = state.activityRewards || [];
-  const activeRewards = rewards.filter((reward) => !reward.claimed);
-  const completedRewards = rewards.filter((reward) => reward.claimed);
-  const rewardCard = (reward) => `<article class="card activity-reward${reward.available ? " activity-reward--available" : ""}${reward.claimed ? " activity-reward--claimed" : ""}"><div class="activity-reward__head"><div><h3>${esc(reward.title)}</h3>${reward.description ? `<p class="muted">${esc(reward.description)}</p>` : ""}</div></div><p class="muted"><b>Награда:</b> ${esc(rewardBenefitsHtml(reward.reward || { stars: reward.reward_stars }))}</p><b class="activity-reward__label">${reward.claimed ? "Условия выполнены" : reward.levelAvailable === false ? "Ваш уровень уже выше" : "Нужно выполнить"}</b>${activityCriteriaHtml(reward.criteria, reward.progress)}<button class="button primary small" data-claim-activity-reward="${esc(reward.id)}" ${reward.claimed || !reward.available ? "disabled" : ""}>${reward.claimed ? "Награда получена" : reward.available ? "Получить" : reward.levelAvailable === false ? "Уровень уже выше" : "Условия не выполнены"}</button></article>`;
-  box.innerHTML = `<div class="panel-title"><div><b>Актуальные акции</b><small>Условия проверяются сервером, каждую награду можно получить только один раз.</small></div></div>${activeRewards.map(rewardCard).join("") || '<div class="card"><p class="muted">Актуальных наград пока нет.</p></div>'}${completedRewards.length ? `<div class="activity-rewards-completed-title"><b>Полученные награды</b><span>${completedRewards.length}</span></div>${completedRewards.map(rewardCard).join("")}` : ""}`;
-  box.querySelectorAll("[data-claim-activity-reward]").forEach((button) => button.addEventListener("click", async (event) => {
-    const reward = rewards.find((item) => item.id === event.currentTarget.dataset.claimActivityReward);
-    if (reward?.reward?.recommendOwnChannel) return openActivityRewardChannelPicker(reward);
-    try { await api("/api/activity-rewards/claim", { method: "POST", body: { rewardId: event.currentTarget.dataset.claimActivityReward } }); toast("Награда начислена."); await refresh(); }
-    catch (error) { toast(error.message, true); }
-  }));
-}
-
-function renderStarsPanel(box) {
-  const transactions = state.starTransactions || [];
-  const yookassa = state.yookassa || { available: false, packages: [] };
-  const packagesHtml = yookassa.available
-    ? `<div class="star-packages">${(yookassa.packages || []).map((item) => starPackageButtonHtml(item)).join("")}</div>`
-    : '<p class="muted">Покупка звёзд через ЮKassa скоро будет доступна.</p>';
-  const transactionHtml = transactions.map((item) => {
-    const amount = Number(item.amount) || 0;
-    const sign = amount > 0 ? "+" : "−";
-    return `<div class="star-transaction ${amount > 0 ? "income" : "expense"}"><div><b>${esc(item.description)}</b><span>${starDateFmt(item.created_at)}</span></div><strong><span>${sign} ★</span><span>${Math.abs(amount)}</span></strong></div>`;
-  }).join("") || '<p class="muted">Операций пока нет. Здесь появятся полученные и отправленные звёзды, награды и покупки.</p>';
-  box.innerHTML = `<div class="panel-title"><b>Звёзды</b></div><div class="card stars-balance"><i class="stars-balance__spark stars-balance__spark--left" aria-hidden="true">✦</i><i class="stars-balance__spark stars-balance__spark--right" aria-hidden="true">★</i><div class="stars-balance__copy"><span>Ваш баланс</span><strong><i aria-hidden="true">★</i>${state.me.stars}</strong><p>Получайте звёзды за активность и награды, отправляйте их другим пользователям и тратьте на доступные функции.</p></div></div><div class="card"><b>Купить звёзды</b><p class="muted">Оплата проходит на защищённой странице ЮKassa. Звёзды начисляются только после проверки оплаты сервером.</p>${Number(yookassa.discountPercent) ? `<p class="star-package-discount">Ваша скидка на все пакеты: ${Number(yookassa.discountPercent)}%</p>` : ""}${packagesHtml}</div><div class="card"><b>История операций</b><div class="star-transactions">${transactionHtml}</div></div>`;
-  box.querySelectorAll("[data-buy-stars]").forEach((button) => {
-    const openPurchase = (event) => {
-      if (event.type === "pointerup" && event.button !== 0) return;
-      if (event.type === "click" && button.dataset.starPurchasePointerHandled === "true") return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.type === "pointerup") {
-        button.dataset.starPurchasePointerHandled = "true";
-        window.setTimeout(() => { delete button.dataset.starPurchasePointerHandled; }, 0);
-      }
-      try { openStarPurchaseConsent(button.dataset.buyStars); }
-      catch (error) { toast(error.message || "Не удалось открыть покупку.", true); }
-    };
-    button.addEventListener("pointerup", openPurchase);
-    button.addEventListener("click", openPurchase);
-  });
-}
-
-function starPackageButtonHtml(item, attribute = "data-buy-stars") {
-  const originalPrice = String(item.originalPrice || item.price);
-  const hasDiscount = originalPrice !== String(item.price);
-  const stars = Number(item.stars);
-  const price = `${esc(item.price)} ₽`;
-  return `<button class="button star-package" type="button" ${attribute}="${esc(item.id)}" aria-label="Купить ${stars} звёзд за ${price}"><b class="star-package__stars">★ ${stars} звёзд</b><span class="star-package__price">${hasDiscount ? `<s>${esc(originalPrice)} ₽</s>` : ""}<strong>Цена: ${price}</strong></span></button>`;
-}
-
-function openStarPurchaseConsent(packageId, channel = null) {
-  const termsUrl = state.settings?.public_legal?.purchaseTermsUrl || "/requisites#purchase-terms";
-  const bonus = channel ? channelStarBonus(channel) : null;
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Условия покупки"><header><div><b>Подтверждение покупки</b><small>Перед переходом к оплате ознакомьтесь с условиями.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header>${bonus ? `<div class="channel-purchase-note"><b>${esc(channel.title)} получит бонус</b><span>${esc(channelBonusDescription(bonus))}</span></div>` : ""}<form class="form" data-star-purchase-consent><label class="consent"><input name="purchaseTermsAccepted" type="checkbox" required> <span>Я принимаю <a href="${esc(termsUrl)}" target="_blank" rel="noopener">условия покупки</a>.</span></label><button class="button primary" type="submit" disabled>Перейти к оплате</button></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  const form = overlay.querySelector("[data-star-purchase-consent]");
-  const checkbox = form.elements.purchaseTermsAccepted;
-  const submitButton = form.querySelector("button[type=submit]");
-  checkbox.addEventListener("change", () => { submitButton.disabled = !checkbox.checked; });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    submitButton.disabled = true;
-    try {
-      const payment = await api("/api/yookassa/payments", { method: "POST", body: { packageId, channelId: channel?.id, purchaseTermsAccepted: true } });
-      window.location.assign(payment.confirmationUrl);
-    } catch (error) {
-      submitButton.disabled = false;
-      toast(error.message, true);
-    }
-  });
-}
-
-function channelStarBonus(channel) {
-  const type = channel?.settings?.starBonusType === "money" ? "money" : "stars";
-  const percent = Math.max(1, Math.min(100, Number(channel?.settings?.starBonusPercent) || 10));
-  return { type, percent };
-}
-
-function channelBuyerGift(channel) {
-  return Math.max(0, Number(channel?.settings?.buyerGiftStars) || 0);
-}
-
-function channelBonusDescription(bonus) {
-  return bonus.type === "money"
-    ? `Владелец получит ${bonus.percent}% от суммы покупки к выплате.`
-    : `Владелец получит ${bonus.percent}% от купленных звёзд на баланс.`;
-}
-
-function starButtonIcon() {
-  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.72 5.52 6.09.88-4.4 4.28 1.04 6.05L12 16.68l-5.45 2.85 1.04-6.05-4.4-4.28 6.09-.88L12 2.8Z"/><path d="m12 6.15 1.56 3.16 3.49.5-2.53 2.47.6 3.48L12 14.13l-3.12 1.63.6-3.48-2.53-2.47 3.49-.5L12 6.15Z"/></svg>';
-}
-
-function attachmentButtonIcon() {
-  return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.15 12.2 6.52-6.52a3.25 3.25 0 1 1 4.6 4.6l-8.06 8.06a5.35 5.35 0 0 1-7.57-7.57l7.43-7.43"/><path d="m8.1 15.1 7.02-7.02a1.78 1.78 0 1 1 2.52 2.52l-7.02 7.02a1.78 1.78 0 0 1-2.52-2.52Z"/><path d="m5.55 17.65 1.1 1.1"/></svg>';
-}
-
-function openChannelStarPurchase(channel) {
-  const packages = state.yookassa?.packages || [];
-  if (!state.yookassa?.available) {
-    toast("Оплата ЮKassa пока недоступна.", true);
-    return;
-  }
-  const bonus = channelStarBonus(channel);
-  const gift = channelBuyerGift(channel);
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Купить звёзды через канал"><header><div><b>Купить звёзды</b><small>${esc(channel.title)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-purchase-note"><b>Бонус каналу</b><span>${esc(channelBonusDescription(bonus))}</span>${gift ? `<span>После оплаты вы получите подарок: ★ ${gift} от владельца канала.</span>` : ""}${channel.settings?.buyerPurchaseMessage ? `<span>${esc(channel.settings.buyerPurchaseMessage)}</span>` : ""}</div><p class="muted">Оплата пройдёт на защищённой странице ЮKassa. Звёзды начислятся после проверки оплаты сервером.</p><div class="star-packages">${packages.map((item) => starPackageButtonHtml(item, "data-channel-star-package")).join("")}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-channel-star-package]").forEach((button) => button.addEventListener("click", () => {
-    close();
-    openStarPurchaseConsent(button.dataset.channelStarPackage, channel);
-  }));
-}
-
-function renderAccountLevelPanel(box) {
-  const level = state.accountLevel || { current: { title: "Обычный", description: "Стандартный аккаунт.", limits: {} }, activity: {} };
-  const current = level.current;
-  const next = level.next;
-  const names = { ...ACTIVITY_CRITERIA_LABELS, communities: "созданных бесед", channels: "созданных каналов" };
-  const requirement = (criteria = {}) => Object.entries(criteria).map(([key, value]) => `<li>${Math.min(level.activity[key] || 0, value)} / ${value} ${names[key] || key}</li>`).join("") || "<li>Все условия выполнены</li>";
-  const limitsHtml = (limits = {}) => `<ul class="level-limits__list">${Object.entries(limits).map(([key, value]) => `<li>${esc(limitLabel(key))}: <b>${esc(value)}</b></li>`).join("") || "<li>Без дополнительных ограничений</li>"}</ul>`;
-  const limitsButton = (limits, label) => `<button class="button small level-limits__toggle" type="button" data-toggle-level-limits aria-expanded="false">${label}</button><div class="level-limits" hidden>${limitsHtml(limits)}</div>`;
-  const limits = level.limits || current.limits || {};
-  const levelCards = (level.levels || [current]).map((item) => {
-    const reward = item.reward || {};
-    const isNext = item.id === next?.id;
-    const purchase = item.starsPrice > 0 && !item.unlocked ? `<button class="button small" data-buy-level="${esc(item.id)}" ${item.id !== next?.id ? "disabled" : ""}>Купить за ★ ${item.starsPrice}</button>` : "";
-    const hasReward = Number(reward.stars) || Number(reward.recurringStars) || Number(reward.starPackageDiscountPercent) || Object.values(reward.limits || {}).some((value) => Number(value) > 0);
-    const claim = hasReward && item.unlocked ? `<button class="button primary small" data-claim-level="${esc(item.id)}" ${item.rewardClaimed ? "disabled" : ""}>${item.rewardClaimed ? "Награда получена" : "Забрать награду"}</button>` : "";
-    return `<article class="card level-card${item.id === current.id ? " level-card--current" : ""}"><span class="badge">${item.id === current.id ? "Текущий" : item.unlocked ? "Открыт" : "Следующий уровень"}</span><h2>${esc(item.title)}</h2><p class="muted">${esc(item.description || "")}</p>${hasReward ? `<div class="level-next-reward"><b>Награда за уровень</b><span>${esc(rewardBenefitsHtml(reward))}</span></div>` : ""}${!item.unlocked ? `<b>Нужно выполнить</b><ul>${requirement(item.criteria)}</ul>` : ""}${limitsButton(item.limits, "Показать лимиты уровня")}${purchase}${claim}</article>`;
-  }).join("");
-  box.innerHTML = `<div class="panel-title"><b>Уровень аккаунта</b></div><div class="card level-current-limits"><span class="badge">Действующие лимиты</span><p class="muted">Ограничения, доступные вам сейчас. Если вы получили награду за активность или уровень выше лимита в уровне, ваш лимит будет персонально повышен как на текущем, так и на новом уровне.</p>${limitsButton(limits, "Показать действующие лимиты")}</div>${levelCards}`;
-  box.querySelectorAll("[data-claim-level]").forEach((button) => button.addEventListener("click", async (event) => { try { await api("/api/account-level/claim", { method: "POST", body: { levelId: event.currentTarget.dataset.claimLevel } }); toast("Награда за уровень получена."); await refresh(); } catch (error) { toast(error.message, true); } }));
-  box.querySelectorAll("[data-buy-level]").forEach((button) => button.addEventListener("click", async (event) => { try { await api("/api/account-level/buy", { method: "POST", body: { levelId: event.currentTarget.dataset.buyLevel } }); toast("Уровень куплен."); await refresh(); } catch (error) { toast(error.message, true); } }));
-  box.querySelectorAll("[data-toggle-level-limits]").forEach((button) => button.addEventListener("click", () => {
-    const details = button.nextElementSibling;
-    const expanded = button.getAttribute("aria-expanded") === "true";
-    button.setAttribute("aria-expanded", String(!expanded));
-    button.textContent = expanded ? button.textContent.replace("Скрыть", "Показать") : button.textContent.replace("Показать", "Скрыть");
-    details.hidden = expanded;
-  }));
-}
-
-function renderSettingsPanel(box, section = "general") {
-  if (section === "wallpapers") return renderWallpaperSettings(box);
-  if (section === "privacy") return renderPrivacySettings(box);
-  if (section === "reactions") return renderMyReactionsSettings(box);
-  if (section === "ringtone") return renderCallRingtoneSettings(box);
-  const hidden = new Set(state.me.hiddenStatusIds || []);
-  const hiddenStoryAuthors = new Set(state.me.hiddenStoryAuthorIds || []);
-  const storyHiddenFrom = new Set(state.me.storyHiddenFromIds || []);
-  const hiddenStoryAuthorUsers = state.users.filter((user) => hiddenStoryAuthors.has(user.id));
-  const storyHiddenFromUsers = state.users.filter((user) => storyHiddenFrom.has(user.id));
-  box.innerHTML = `
-    <div class="panel-title"><b>Настройки</b></div>
-    <form class="card form" id="accountSettingsForm"><label>Username<input name="username" value="${esc(state.me.username)}" maxlength="20" autocomplete="username"></label><p class="muted">Используйте от 3 до 20 латинских символов, цифр или подчёркиваний.</p><button class="button primary">Сохранить username</button><button class="button danger" type="button" data-logout>Выйти из аккаунта</button></form>
-    <section class="settings-cards" aria-label="Разделы настроек">
-      <button class="settings-card settings-card--archive" type="button" data-open-archive><span class="settings-card__art" aria-hidden="true"><i></i><i></i></span><span><b>Архив чатов</b><small>В архиве: ${visibleChats(true).length}</small></span><em>›</em></button>
-      <button class="settings-card settings-card--privacy" type="button" data-settings-section="privacy"><span class="settings-card__art" aria-hidden="true">⌁</span><span><b>Приватность</b><small>Приглашения в беседы и новые сообщения</small></span><em>›</em></button>
-      <button class="settings-card settings-card--reactions" type="button" data-settings-section="reactions"><span class="settings-card__art" aria-hidden="true">❤</span><span><b>Мои реакции</b><small>Сообщения, истории и публикации</small></span><em>›</em></button>
-      <button class="settings-card settings-card--ringtone" type="button" data-settings-section="ringtone"><span class="settings-card__art" aria-hidden="true">♪</span><span><b>Мелодия звонка</b><small>Её услышит собеседник при вашем звонке</small></span><em>›</em></button>
-    </section>
-    <form class="card form" id="statusSettingsForm"><b>Мои статусы</b>${myStatuses().map((status) => `<label><input type="checkbox" data-hide-status="${status.id}" ${hidden.has(status.id) ? "checked" : ""}> Скрыть ${esc(status.icon)} ${esc(status.title)}</label>`).join("") || '<p class="muted">Статусов пока нет.</p>'}<button class="button small" type="submit">Сохранить видимость статусов</button></form>
-    <section class="card story-privacy-card">
-      <b>Приватность сторис</b>
-      <p class="muted">Скрывайте чужие сторис из ленты или запретите выбранным людям смотреть ваши истории.</p>
-      <label>Найти пользователя<input data-story-privacy-search placeholder="Имя или username"></label>
-      <div class="story-privacy-results" data-story-privacy-results></div>
-      <div class="story-privacy-lists">
-        <div><b>Вы скрыли сторис</b>${hiddenStoryAuthorUsers.map((user) => `<button class="row" type="button" data-unhide-story-author="${user.id}">${avatarHtml(user)}<span>${esc(user.name)}<small>@${esc(user.username)}</small></span><em>Вернуть</em></button>`).join("") || '<p class="muted">Список пуст.</p>'}</div>
-        <div><b>Ваши сторис скрыты от</b>${storyHiddenFromUsers.map((user) => `<button class="row" type="button" data-unhide-story-from="${user.id}">${avatarHtml(user)}<span>${esc(user.name)}<small>@${esc(user.username)}</small></span><em>Разрешить</em></button>`).join("") || '<p class="muted">Список пуст.</p>'}</div>
-      </div>
-    </section>`;
-  box.querySelector("#accountSettingsForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await api("/api/username", { method: "POST", body: { username: form.get("username") } });
-    toast("Username изменён.");
-    await refresh();
-  });
-  box.querySelector("[data-logout]").addEventListener("click", logout);
-  box.querySelectorAll("[data-settings-section]").forEach((button) => button.addEventListener("click", (event) => { settingsSection = event.currentTarget.dataset.settingsSection; renderSettingsPanel(box, settingsSection); }));
-  box.querySelector("[data-open-archive]").addEventListener("click", () => { activeSection = "archive"; renderApp(); });
-  box.querySelector("#statusSettingsForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const hiddenStatusIds = [...box.querySelectorAll("[data-hide-status]:checked")].map((input) => input.dataset.hideStatus);
-    await api("/api/preferences", { method: "POST", body: preferencePayload({ hiddenStatusIds }) });
-    toast("Видимость статусов сохранена.");
-    await refresh();
-  });
-  const renderStoryPrivacyResults = () => {
-    const query = (box.querySelector("[data-story-privacy-search]")?.value || "").trim().toLowerCase().replace("@", "");
-    const results = query.length < 2 ? [] : state.users.filter((user) => user.id !== state.me.id && (`${user.name} ${user.username}`).toLowerCase().includes(query)).slice(0, 8);
-    box.querySelector("[data-story-privacy-results]").innerHTML = results.map((user) => `<div class="story-privacy-result">${avatarHtml(user)}<span><b>${esc(user.name)}</b><small>@${esc(user.username)}</small></span><button class="button small" type="button" data-hide-story-author="${user.id}">${hiddenStoryAuthors.has(user.id) ? "Скрыто" : "Не видеть"}</button><button class="button small" type="button" data-hide-story-from="${user.id}">${storyHiddenFrom.has(user.id) ? "Уже скрыт" : "Скрыть мои"}</button></div>`).join("") || (query.length >= 2 ? '<p class="muted">Пользователь не найден.</p>' : '<p class="muted">Введите минимум 2 символа.</p>');
-    box.querySelectorAll("[data-hide-story-author]").forEach((btn) => btn.addEventListener("click", () => setStoryAuthorHidden(btn.dataset.hideStoryAuthor, true)));
-    box.querySelectorAll("[data-hide-story-from]").forEach((btn) => btn.addEventListener("click", () => setStoryPrivacyHidden(btn.dataset.hideStoryFrom, true)));
-  };
-  box.querySelector("[data-story-privacy-search]").addEventListener("input", renderStoryPrivacyResults);
-  renderStoryPrivacyResults();
-  box.querySelectorAll("[data-unhide-story-author]").forEach((btn) => btn.addEventListener("click", () => setStoryAuthorHidden(btn.dataset.unhideStoryAuthor, false)));
-  box.querySelectorAll("[data-unhide-story-from]").forEach((btn) => btn.addEventListener("click", () => setStoryPrivacyHidden(btn.dataset.unhideStoryFrom, false)));
-}
-
-function renderPrivacySettings(box) {
-  const privacy = state.me;
-  const option = (name, value, checked, title, description) => `<label class="privacy-option"><input type="radio" name="${name}" value="${value}" ${checked === value ? "checked" : ""}><span><b>${title}</b><small>${description}</small></span></label>`;
-  box.innerHTML = `<div class="panel-title"><button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button><b>Приватность</b></div><form class="card form privacy-settings-form" id="privacySettingsForm"><fieldset><legend>Кто может приглашать меня в беседы и группы</legend>${option("groupInvitePrivacy", "everyone", privacy.groupInvitePrivacy || "contacts", "Все", "Любой пользователь может добавить вас.")}${option("groupInvitePrivacy", "contacts", privacy.groupInvitePrivacy || "contacts", "Только из личных диалогов", "Только люди, с которыми уже есть личный чат.")}${option("groupInvitePrivacy", "nobody", privacy.groupInvitePrivacy || "contacts", "Никто", "Добавление в беседы и группы запрещено.")}</fieldset><fieldset><legend>Кто может написать мне первым</legend>${option("directMessagePrivacy", "everyone", privacy.directMessagePrivacy || "everyone", "Все", "Любой пользователь может начать личный диалог.")}${option("directMessagePrivacy", "contacts", privacy.directMessagePrivacy || "everyone", "Только из личных диалогов", "Новые сообщения запрещены; в уже существующих диалогах писать можно.")}${option("directMessagePrivacy", "nobody", privacy.directMessagePrivacy || "everyone", "Никто", "Новый диалог можете начать только вы сами.")}</fieldset><button class="button primary">Сохранить приватность</button></form>`;
-  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box); });
-  box.querySelector("#privacySettingsForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const values = new FormData(event.currentTarget);
-    const groupInvitePrivacy = values.get("groupInvitePrivacy");
-    const directMessagePrivacy = values.get("directMessagePrivacy");
-    await api("/api/preferences", { method: "POST", body: preferencePayload({ groupInvitePrivacy, directMessagePrivacy }) });
-    Object.assign(state.me, { groupInvitePrivacy, directMessagePrivacy });
-    toast("Настройки приватности сохранены.");
-  });
-}
-
-async function renderMyReactionsSettings(box) {
-  box.innerHTML = `<div class="panel-title"><button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button><b>Мои реакции</b></div><div class="card reaction-history"><p class="muted">Загружаем реакции…</p></div>`;
-  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box); });
-  try {
-    const response = await api("/api/my-reactions");
-    if (!box.isConnected) return;
-    const labels = { message: "Сообщение", story: "История", post: "Публикация" };
-    const reactionBox = box.querySelector(".reaction-history");
-    const reactions = response.reactions || [];
-    const renderReactions = (query = "") => {
-      const normalized = query.trim().toLocaleLowerCase("ru-RU");
-      const filtered = reactions.filter((reaction) => !normalized || [reaction.emoji, labels[reaction.type], reaction.title, reaction.text].some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(normalized)));
-      reactionBox.innerHTML = `<label class="reaction-history__search"><span>⌕</span><input type="search" placeholder="Поиск по моим реакциям" value="${esc(query)}"></label>${filtered.length ? filtered.map((reaction) => `<article class="reaction-history__item"><span class="reaction-history__emoji">${esc(reaction.emoji)}</span><span><small>${highlightedText(`${labels[reaction.type] || "Реакция"} · ${reaction.title || "Без названия"}`, query)}</small><b>${highlightedText(reaction.text || "Без текста", query)}</b></span><time>${new Date(reaction.createdAt * 1000).toLocaleDateString("ru-RU")}</time></article>`).join("") : `<p class="muted">${reactions.length ? "По вашему запросу ничего не найдено." : "Вы ещё не оставляли реакций."}</p>`}`;
-      reactionBox.querySelector("input")?.addEventListener("input", (event) => renderReactions(event.target.value));
-    };
-    renderReactions();
-  } catch (error) {
-    if (box.isConnected) box.querySelector(".reaction-history").innerHTML = `<p class="muted">${esc(error.message || "Не удалось загрузить реакции.")}</p>`;
-  }
-}
-
-function renderCallRingtoneSettings(box) {
-  const currentRingtone = CALL_RINGTONES.some((ringtone) => ringtone.id === state.me.callRingtone) ? state.me.callRingtone : "classic";
-  const canChooseCustom = hasActiveAccountLevel();
-  box.innerHTML = `<div class="panel-title"><button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button><b>Мелодия звонка</b></div><form class="card form ringtone-settings-form" id="ringtoneSettingsForm"><p class="muted">Эту мелодию услышит собеседник, пока ожидает ваш звонок.</p>${CALL_RINGTONES.map((ringtone) => `<button class="ringtone-option${currentRingtone === ringtone.id ? " is-selected" : ""}${ringtone.id !== "classic" && !canChooseCustom ? " is-locked" : ""}" type="button" data-select-ringtone="${ringtone.id}"><span class="ringtone-option__icon" aria-hidden="true">${ringtone.id === "classic" ? "♪" : ringtone.id === "pulse" ? "♫" : "✦"}</span><span><b>${ringtone.title}</b><small>${ringtone.description}${ringtone.id !== "classic" ? " · Уровень «Активный»" : ""}</small></span><em>${ringtone.id !== "classic" && !canChooseCustom ? "🔒" : currentRingtone === ringtone.id ? "✓" : ""}</em></button>`).join("")}<button class="button primary" type="submit">Сохранить мелодию</button>${canChooseCustom ? "" : '<p class="muted">Дополнительные мелодии доступны с уровня «Активный».</p><button class="button small" type="button" data-open-account-level>Уровень аккаунта</button>'}</form>`;
-  let selectedRingtone = currentRingtone;
-  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box); });
-  box.querySelectorAll("[data-select-ringtone]").forEach((button) => button.addEventListener("click", () => {
-    const ringtone = button.dataset.selectRingtone;
-    if (ringtone !== "classic" && !canChooseCustom) {
-      toast("Эта функция доступна с уровня «Активный». Повысьте уровень аккаунта.", true);
-      return;
-    }
-    selectedRingtone = ringtone;
-    box.querySelectorAll("[data-select-ringtone]").forEach((option) => option.classList.toggle("is-selected", option.dataset.selectRingtone === ringtone));
-  }));
-  box.querySelector("[data-open-account-level]")?.addEventListener("click", () => openMenuSection("account-level"));
-  box.querySelector("#ringtoneSettingsForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await api("/api/preferences", { method: "POST", body: preferencePayload({ callRingtone: selectedRingtone }) });
-      state.me.callRingtone = selectedRingtone;
-      toast("Мелодия звонка сохранена.");
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function preferencePayload(overrides = {}) {
-  return {
-    theme: state.me.theme || "light",
-    siteColor: state.me.siteColor || "#2aabee",
-    siteBackground: state.me.siteBackground || "default",
-    siteBackgroundData: state.me.siteBackgroundData || "",
-    dialogColor: state.me.dialogColor || "#dff9f9",
-    otherDialogColor: state.me.otherDialogColor || "#ffffff",
-    dialogPanelColor: state.me.dialogPanelColor || "#f4f8fc",
-    dialogPanelStyle: state.me.dialogPanelStyle || "custom",
-    dialogBubbleStyle: "custom",
-    dialogFont: state.me.dialogFont || "business",
-    textScale: state.me.textScale || "system",
-    chatBackground: state.me.chatBackground || "default",
-    chatBackgroundData: state.me.chatBackgroundData || "",
-    sidebarBackgroundData: state.me.sidebarBackgroundData || "",
-    nightAppearanceCustom: Boolean(state.me.nightAppearanceCustom),
-    nightOutlineColor: state.me.nightOutlineColor || defaultNightAppearance().outlineColor,
-    nightGlowColor: state.me.nightGlowColor || defaultNightAppearance().glowColor,
-    nightGlowIntensity: state.me.nightGlowIntensity ?? defaultNightAppearance().glowIntensity,
-    hiddenStatusIds: state.me.hiddenStatusIds || [],
-    groupInvitePrivacy: state.me.groupInvitePrivacy || "contacts",
-    directMessagePrivacy: state.me.directMessagePrivacy || "everyone",
-    callRingtone: state.me.callRingtone || "classic",
-    ...overrides,
-  };
-}
-
-function renderWallpaperSettings(box) {
-  const currentWallpaper = ["whatsapp", "live"].includes(state.me.chatBackground) ? "default" : state.me.chatBackground || "default";
-  const currentFont = state.me.dialogFont || "business";
-  const currentTextScale = state.me.textScale || "system";
-  const bubbleColor = state.me.dialogColor || "#dff9f9";
-  const otherBubbleColor = state.me.otherDialogColor || "#ffffff";
-  const bubbleText = dialogBubbleTextColor(bubbleColor);
-  const otherBubbleText = dialogBubbleTextColor(otherBubbleColor);
-  const adminNightAppearance = defaultNightAppearance();
-  const personalNightAppearance = effectiveNightAppearance();
-  const usesPersonalNightAppearance = Boolean(state.me.nightAppearanceCustom);
-  box.innerHTML = `<div class="panel-title"><b>Оформление диалогов</b></div><form class="card form" id="wallpaperSettingsForm"><div class="dialog-color-controls"><label class="dialog-color-control">Цвет моих сообщений<input name="dialogColor" type="color" value="${esc(bubbleColor)}"><button class="dialog-color-control__button" type="button" data-open-dialog-color aria-label="Выбрать цвет моих сообщений"><span class="dialog-color-control__dot" data-dialog-color-dot style="--dialog-color: ${esc(bubbleColor)}"></span><span>Выбрать цвет</span></button></label><label class="dialog-color-control">Цвет сообщений собеседника<input name="otherDialogColor" type="color" value="${esc(otherBubbleColor)}"><button class="dialog-color-control__button" type="button" data-open-other-dialog-color aria-label="Выбрать цвет сообщений собеседника"><span class="dialog-color-control__dot" data-other-dialog-color-dot style="--dialog-color: ${esc(otherBubbleColor)}"></span><span>Выбрать цвет</span></button></label></div><label>Шрифт сообщений<select name="dialogFont">${DIALOG_FONTS.map((font) => `<option value="${font.id}" ${currentFont === font.id ? "selected" : ""}>${font.title}</option>`).join("")}</select></label><label>Размер текста<select name="textScale"><option value="system" ${currentTextScale === "system" ? "selected" : ""}>Системный</option><option value="110" ${currentTextScale === "110" ? "selected" : ""}>Крупнее · 110%</option><option value="120" ${currentTextScale === "120" ? "selected" : ""}>Большой · 120%</option><option value="130" ${currentTextScale === "130" ? "selected" : ""}>Очень большой · 130%</option></select></label><fieldset class="wallpaper-picker"><legend>Обои диалога</legend><p class="muted">Все варианты совпадают с палитрой оформления сайта. Нажмите на вариант — демо изменится сразу.</p><section class="wallpaper-chat-preview ${currentWallpaper === "custom" ? "chat-background-custom" : `chat-background-${currentWallpaper}`}" data-wallpaper-chat-preview style="--preview-text-scale: ${({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[currentTextScale] || 1}; --preview-own-bubble: ${bubbleColor}; --preview-own-text: ${bubbleText}; --preview-other-bubble: ${otherBubbleColor}; --preview-other-text: ${otherBubbleText}${currentWallpaper === "custom" && state.me.chatBackgroundData ? `; background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,.12)), url('${esc(state.me.chatBackgroundData)}')` : ""}"><header><span class="wallpaper-preview-avatar">А</span><span><b>Алексей</b><small>в сети</small></span></header><div class="wallpaper-preview-messages" data-dialog-font-preview style="font-family: ${dialogMessageFont(currentFont)}"><p class="wallpaper-preview-message">Привет! Как тебе новые обои?</p><p class="wallpaper-preview-message own">Очень красиво, выбираю этот вариант ✨</p><p class="wallpaper-preview-message">Так будет выглядеть ваш диалог.</p></div></section><div class="wallpaper-grid">${CHAT_WALLPAPERS.map((wallpaper) => `<label class="wallpaper-option${currentWallpaper === wallpaper.id ? " selected" : ""}"><input type="radio" name="chatBackground" value="${wallpaper.id}" ${currentWallpaper === wallpaper.id ? "checked" : ""}><span class="wallpaper-preview chat-background-${wallpaper.id}" aria-hidden="true"></span><span><b>${esc(wallpaper.title)}</b><small>${esc(wallpaper.description)}</small></span></label>`).join("")}</div></fieldset><label>Своя картинка<input name="chatBackgroundImage" type="file" accept="image/png,image/jpeg,image/webp"></label><p class="muted">Загруженная картинка заменит выбранный вариант. Для чёткости на большом экране выбирайте изображение от 1920 px по ширине.</p><button class="button primary">Сохранить оформление</button></form>`;
-  const form = box.querySelector("#wallpaperSettingsForm");
-  box.querySelector(".panel-title").insertAdjacentHTML("afterbegin", '<button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button>');
-  box.querySelector("[data-settings-back]").addEventListener("click", () => { activeSection = "chats"; renderApp(); });
-  form.insertAdjacentHTML("afterbegin", `<fieldset class="dialog-theme-picker"><legend>Режим</legend><div class="theme-mode-options"><label><input type="radio" name="theme" value="light" ${state.me.theme !== "dark" ? "checked" : ""}><span class="theme-mode-option theme-mode-option--light"><i>☀</i><b>Дневной</b><small>Светлый интерфейс</small></span></label><label><input type="radio" name="theme" value="dark" ${state.me.theme === "dark" ? "checked" : ""}><span class="theme-mode-option theme-mode-option--dark"><i>☾</i><b>Ночной</b><small>Мягкий тёмный интерфейс</small></span></label></div></fieldset>`);
-  form.querySelector(".dialog-theme-picker").insertAdjacentHTML("afterend", `<fieldset class="night-appearance-picker"><legend>Подсветка ночного режима</legend><p class="muted">Цвет обводок и мягкого свечения для кнопок, полей и меню. В дневном режиме не применяется.</p><label class="night-appearance-toggle"><input name="nightAppearanceCustom" type="checkbox" ${usesPersonalNightAppearance ? "checked" : ""}> Использовать мои цвета вместо настроек администратора</label><div class="dialog-color-controls"><label class="dialog-color-control">Цвет обводок<input name="nightOutlineColor" type="color" value="${esc(personalNightAppearance.outlineColor)}"><button class="dialog-color-control__button" type="button" data-open-night-outline-color aria-label="Выбрать цвет обводок"><span class="dialog-color-control__dot" data-night-outline-color-dot style="--dialog-color: ${esc(personalNightAppearance.outlineColor)}"></span><span>Выбрать цвет</span></button></label><label class="dialog-color-control">Цвет свечения<input name="nightGlowColor" type="color" value="${esc(personalNightAppearance.glowColor)}"><button class="dialog-color-control__button" type="button" data-open-night-glow-color aria-label="Выбрать цвет свечения"><span class="dialog-color-control__dot" data-night-glow-color-dot style="--dialog-color: ${esc(personalNightAppearance.glowColor)}"></span><span>Выбрать цвет</span></button></label></div><label class="night-glow-intensity">Яркость свечения <output data-night-glow-intensity-output>${personalNightAppearance.glowIntensity}%</output><input name="nightGlowIntensity" type="range" min="0" max="100" step="1" value="${personalNightAppearance.glowIntensity}"></label><small class="muted" data-night-appearance-defaults>По умолчанию администратора: обводки ${esc(adminNightAppearance.outlineColor)}, свечение ${esc(adminNightAppearance.glowColor)}, ${adminNightAppearance.glowIntensity}%.</small></fieldset>`);
-  const wallpaperPreview = box.querySelector("[data-wallpaper-chat-preview]");
-  const colorDot = box.querySelector("[data-dialog-color-dot]");
-  const otherColorDot = box.querySelector("[data-other-dialog-color-dot]");
-  const nightOutlineDot = box.querySelector("[data-night-outline-color-dot]");
-  const nightGlowDot = box.querySelector("[data-night-glow-color-dot]");
-  const nightGlowIntensityOutput = box.querySelector("[data-night-glow-intensity-output]");
-  const fontPreview = box.querySelector("[data-dialog-font-preview]");
-  const previewWallpaper = (background, image = "") => {
-    if (!wallpaperPreview) return;
-    wallpaperPreview.className = `wallpaper-chat-preview ${background === "custom" ? "chat-background-custom" : `chat-background-${background}`}`;
-    wallpaperPreview.style.backgroundImage = image ? `linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,.12)), url('${image}')` : "";
-    wallpaperPreview.classList.remove("is-wallpaper-preview-animating");
-    void wallpaperPreview.offsetWidth;
-    wallpaperPreview.classList.add("is-wallpaper-preview-animating");
-  };
-  form.querySelectorAll('[name="chatBackground"]').forEach((input) => input.addEventListener("change", () => {
-    form.querySelectorAll(".wallpaper-option").forEach((option) => option.classList.toggle("selected", option.querySelector("input").checked));
-    previewWallpaper(input.value);
-  }));
-  const updateBubblePreview = () => {
-    if (!wallpaperPreview) return;
-    wallpaperPreview.style.setProperty("--preview-own-bubble", form.elements.dialogColor.value);
-    wallpaperPreview.style.setProperty("--preview-own-text", dialogBubbleTextColor(form.elements.dialogColor.value));
-    wallpaperPreview.style.setProperty("--preview-other-bubble", form.elements.otherDialogColor.value);
-    wallpaperPreview.style.setProperty("--preview-other-text", dialogBubbleTextColor(form.elements.otherDialogColor.value));
-    colorDot?.style.setProperty("--dialog-color", form.elements.dialogColor.value);
-    otherColorDot?.style.setProperty("--dialog-color", form.elements.otherDialogColor.value);
-  };
-  form.elements.dialogColor.addEventListener("input", updateBubblePreview);
-  form.elements.otherDialogColor.addEventListener("input", updateBubblePreview);
-  box.querySelector("[data-open-dialog-color]")?.addEventListener("click", () => form.elements.dialogColor.click());
-  box.querySelector("[data-open-other-dialog-color]")?.addEventListener("click", () => form.elements.otherDialogColor.click());
-  const updateNightAppearancePreview = () => {
-    nightOutlineDot?.style.setProperty("--dialog-color", form.elements.nightOutlineColor.value);
-    nightGlowDot?.style.setProperty("--dialog-color", form.elements.nightGlowColor.value);
-    if (nightGlowIntensityOutput) nightGlowIntensityOutput.value = `${form.elements.nightGlowIntensity.value}%`;
-  };
-  const syncNightAppearanceControls = () => {
-    const disabled = !form.elements.nightAppearanceCustom.checked;
-    form.querySelectorAll("[data-open-night-outline-color], [data-open-night-glow-color]").forEach((button) => { button.disabled = disabled; });
-    form.elements.nightGlowIntensity.disabled = disabled;
-    form.querySelector(".night-appearance-picker").classList.toggle("uses-admin-defaults", disabled);
-  };
-  box.querySelector("[data-open-night-outline-color]")?.addEventListener("click", () => form.elements.nightOutlineColor.click());
-  box.querySelector("[data-open-night-glow-color]")?.addEventListener("click", () => form.elements.nightGlowColor.click());
-  form.elements.nightOutlineColor.addEventListener("input", updateNightAppearancePreview);
-  form.elements.nightGlowColor.addEventListener("input", updateNightAppearancePreview);
-  form.elements.nightGlowIntensity.addEventListener("input", updateNightAppearancePreview);
-  form.elements.nightAppearanceCustom.addEventListener("change", syncNightAppearanceControls);
-  updateBubblePreview();
-  updateNightAppearancePreview();
-  syncNightAppearanceControls();
-  form.elements.dialogFont?.addEventListener("change", () => { if (fontPreview) fontPreview.style.fontFamily = dialogMessageFont(form.elements.dialogFont.value); });
-  form.elements.textScale?.addEventListener("change", () => {
-    wallpaperPreview?.style.setProperty("--preview-text-scale", ({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[form.elements.textScale.value] || 1);
-  });
-  form.elements.chatBackgroundImage.addEventListener("change", (event) => {
-    const image = event.currentTarget.files?.[0];
-    if (!image) return;
-    const reader = new FileReader();
-    reader.onload = () => previewWallpaper("custom", reader.result);
-    reader.readAsDataURL(image);
-  });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const values = new FormData(form);
-    const theme = values.get("theme") === "dark" ? "dark" : "light";
-    const image = values.get("chatBackgroundImage");
-    const chatBackground = image?.size ? "custom" : values.get("chatBackground") || "default";
-    const chatBackgroundData = image?.size ? await fileToDataUrl(image, 2_500_000) : chatBackground === "custom" ? state.me.chatBackgroundData || "" : "";
-    const dialogColor = values.get("dialogColor");
-    const otherDialogColor = values.get("otherDialogColor");
-    const dialogFont = values.get("dialogFont");
-    const textScale = values.get("textScale");
-    await api("/api/preferences", { method: "POST", body: preferencePayload({ theme, dialogColor, otherDialogColor, dialogBubbleStyle: "custom", dialogFont, textScale, chatBackground, chatBackgroundData, nightAppearanceCustom: values.get("nightAppearanceCustom") === "on", nightOutlineColor: values.get("nightOutlineColor"), nightGlowColor: values.get("nightGlowColor"), nightGlowIntensity: Number(values.get("nightGlowIntensity")) }) });
-    Object.assign(state.me, { theme, dialogColor, otherDialogColor, dialogFont, textScale, chatBackground, chatBackgroundData });
-    document.body.classList.toggle("theme-dark", theme === "dark");
-    toast("Оформление диалогов сохранено.");
-    activeSection = "wallpapers";
-    await refresh();
-  });
-}
-
-function logout() {
-  if (!window.confirm("Выйти из аккаунта? Он останется в списке сохранённых аккаунтов.")) return;
-  finishCall();
-  token = "";
-  localStorage.removeItem(TOKEN_KEY);
-  clearInterval(callPollTimer);
-  renderAuth();
-}
-
-function colorToRgb(hex) {
-  const value = String(hex || "#2aabee").replace("#", "");
-  const number = Number.parseInt(value, 16);
-  return `${(number >> 16) & 255}, ${(number >> 8) & 255}, ${number & 255}`;
-}
-
-function defaultNightAppearance() {
-  const configured = state?.settings?.ui_appearance || {};
-  const validColor = (value, fallback) => /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : fallback;
-  const intensity = Number(configured.glowIntensity);
-  return {
-    outlineColor: validColor(configured.outlineColor, "#65ddf8"),
-    glowColor: validColor(configured.glowColor, "#21d5f0"),
-    glowIntensity: Number.isFinite(intensity) ? Math.max(0, Math.min(100, Math.round(intensity))) : 35,
-  };
-}
-
-function effectiveNightAppearance() {
-  const defaults = defaultNightAppearance();
-  if (!state?.me?.nightAppearanceCustom) return defaults;
-  const validColor = (value, fallback) => /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : fallback;
-  const intensity = Number(state.me.nightGlowIntensity);
-  return {
-    outlineColor: validColor(state.me.nightOutlineColor, defaults.outlineColor),
-    glowColor: validColor(state.me.nightGlowColor, defaults.glowColor),
-    glowIntensity: Number.isFinite(intensity) ? Math.max(0, Math.min(100, Math.round(intensity))) : defaults.glowIntensity,
-  };
-}
-
-function sameNightAppearance(first, second) {
-  return first.outlineColor.toLowerCase() === second.outlineColor
-    && first.glowColor.toLowerCase() === second.glowColor
-    && first.glowIntensity === second.glowIntensity;
-}
-
-function colorShade(hex, amount) {
-  const value = String(hex || "#2aabee").replace("#", "");
-  const channels = [0, 2, 4].map((offset) => Math.max(0, Math.min(255, Number.parseInt(value.slice(offset, offset + 2), 16) + amount)));
-  return `#${channels.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
-}
-
-function renderChat() {
-  const panel = app.querySelector("#chatPanel");
-  const previousMessages = panel.querySelector("#messages");
-  const previousScrollTop = previousMessages?.scrollTop || 0;
-  const previousDistanceToBottom = previousMessages
-    ? previousMessages.scrollHeight - previousMessages.scrollTop - previousMessages.clientHeight
-    : 0;
-  const shouldScrollToLatest = scrollChatToLatest || !previousMessages || previousDistanceToBottom < 8;
-  scrollChatToLatest = false;
-  if (activeChatId === "ai-agent") {
-    panel.className = "chat-panel";
-    panel.style.cssText = "";
-    panel.innerHTML = `<div class="chat-body"><div class="messages" id="messages">${aiAgentConversationHtml()}</div></div>`;
-    bindAiAgentConversation(panel);
-    return;
-  }
-  const chat = state.chats.find((item) => item.id === activeChatId);
-  if (!chat) {
-    const welcomeBrandLetters = ["C", "h", "a", "t", "‑", "P", "r", "o"].map((letter, index) => `<span aria-hidden="true" style="--letter-delay: ${index * 65}ms">${letter}</span>`).join("");
-    panel.innerHTML = `<div class="empty"><section class="empty__card"><span class="empty__icon empty__icon--welcome" aria-hidden="true"><svg viewBox="0 0 96 96" fill="none"><path d="M18 23.5c0-5.25 4.25-9.5 9.5-9.5h41C73.75 14 78 18.25 78 23.5v26C78 54.75 73.75 59 68.5 59H46L30 75V59h-2.5C22.25 59 18 54.75 18 49.5v-26Z" fill="currentColor" fill-opacity=".16" stroke="currentColor" stroke-width="5" stroke-linejoin="round"/><path d="M34 37h28M34 48h17" stroke="white" stroke-width="5" stroke-linecap="round"/><circle cx="72" cy="72" r="12" fill="#A9F1D6"/><path d="m72 64 2.25 5.75L80 72l-5.75 2.25L72 80l-2.25-5.75L64 72l5.75-2.25L72 64Z" fill="#167FAE"/></svg></span><div class="empty__content"><span class="empty__eyebrow welcome-brand-letters" aria-label="Chat-Pro">${welcomeBrandLetters}</span><h2 class="empty__title-gradient">Добро пожаловать в Чат‑Про!</h2><p class="empty__motivation">Проявляйте активность и получайте звёзды!</p><button class="button small empty__activity-button" type="button" data-open-activity-rewards>Подробнее</button></div></section></div>`;
-    panel.querySelector("[data-open-activity-rewards]")?.addEventListener("click", () => openMenuSection("activity-rewards"));
-    return;
-  }
-  const channelAppearance = chat.type === "channel" ? chat.settings?.appearance : null;
-  const appearanceStyle = channelAppearance ? channelAppearanceStyle(channelAppearance) : "";
-  panel.className = `chat-panel${channelAppearance ? ` ${chatBackgroundClass({ chatBackground: channelAppearance.wallpaper })} chat-panel--channel-themed` : ""}`;
-  panel.style.cssText = appearanceStyle;
-  const messages = state.messages.filter((msg) => msg.chatId === chat.id);
-  const pendingMessages = [...pendingOutgoingMessages.values()].filter((msg) => msg.chatId === chat.id);
-  messages.push(...pendingMessages);
-  messages.sort((first, second) => first.createdAt - second.createdAt);
-  const firstUnreadMessageId = messages.find((msg) => msg.unread)?.id;
-  selectedMessageIds = new Set([...selectedMessageIds].filter((id) => messages.some((message) => message.id === id)));
-  const pinnedMessages = messages.filter((msg) => msg.pinned && !msg.pinHidden);
-  pinnedMessageIndex = pinnedMessages.length ? pinnedMessageIndex % pinnedMessages.length : 0;
-  const activePinnedMessage = pinnedMessages[pinnedMessageIndex];
-  const meta = chatMeta(chat);
-  const emptyChatNotice = "";
-  const canPublish = chat.type !== "channel" || isChannelManagerRole(chatMemberRole(chat.id));
-  const channelNeedsMediaBar = chat.type === "channel" && !canPublish;
-  const mediaButton = '<button class="call-button" data-open-chat-media title="Вложения" aria-label="Вложения">▦</button>';
-  const searchButton = '<button class="call-button" type="button" data-toggle-chat-search title="Поиск в диалоге" aria-label="Поиск в диалоге">⌕</button>';
-  const callButtons = `${channelNeedsMediaBar ? "" : `${mediaButton}${searchButton}`}${chat.type === "secret" && chat.ownerId === state.me.id ? '<button class="call-button" data-add-secret-member title="Пригласить участника" aria-label="Пригласить участника">+</button>' : ""}${chat.type === "direct" ? '<button class="call-button" data-call="audio" title="Аудиозвонок" aria-label="Аудиозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.1 3.8 8.2 3l1.7 4.2-2 1.8a15.2 15.2 0 0 0 7.1 7.1l1.8-2 4.2 1.7-.8 3.1c-.2.8-1 1.3-1.8 1.2C10.5 19.1 4.9 13.5 3.9 5.6 3.8 4.8 4.3 4 5.1 3.8Z"/></svg></button><button class="call-button" data-call="video" title="Видеозвонок" aria-label="Видеозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3Z"/></svg></button>' : ""}`;
-  const chatIdentity = chat.type === "direct" && meta.user
-    ? `<div class="chat-identity"><button class="chat-profile-avatar" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}" aria-label="Открыть профиль ${esc(meta.title)}">${avatarHtml(meta.user)}</button><button class="chat-profile-name" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}"><div class="chat-head__body"><strong>${esc(meta.title)}</strong>${chatActivityHtml(chat, meta.subtitle)}</div></button></div>`
-    : `${meta.user ? avatarHtml(meta.user) : chatAvatarHtml(chat)}<div class="chat-head__body"><strong>${esc(meta.title)}</strong><span>${esc(meta.subtitle)}</span></div>`;
-  const showComposer = chat.type !== "channel" || canPublish;
-  const channelJoinButton = chat.type === "channel" && !isMember(chat.id) ? '<button class="button small" type="button" data-join-open-channel>Подписаться</button>' : "";
-  panel.innerHTML = `
-    <header class="chat-head${["group", "community", "channel"].includes(chat.type) ? " chat-head--group" : ""}${chat.type === "channel" ? " chat-head--channel" : ""}${activePinnedMessage && !selectedMessageIds.size ? " chat-head--with-pinned" : ""}"${["group", "community", "channel"].includes(chat.type) ? ` data-open-group-profile="${chat.id}"` : ""}><button class="chat-back-button chat-head-action" type="button" data-back-to-chats title="Вернуться к списку чатов" aria-label="Вернуться к списку чатов">←</button><button class="chat-mobile-menu-button chat-head-action" type="button" data-open-mobile-chat-menu title="Открыть меню" aria-label="Открыть меню"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>${chatIdentity}${callButtons}${channelJoinButton}${chat.type === "channel" && chat.ownerId !== state.me.id ? `<button class="call-button" type="button" data-report-channel="${chat.id}" aria-label="Пожаловаться на канал">${actionIcon("report")}</button>` : ""}</header>
-    ${selectedMessageIds.size ? `<div class="message-selection-toolbar"><b class="message-selection-toolbar__count">Выбрано: ${selectedMessageIds.size}</b><div class="message-selection-toolbar__actions"><button type="button" data-bulk-forward>${actionIcon("forward")}<span>Переслать</span></button><button type="button" data-bulk-confidential>${actionIcon("confidential")}<span>В скрытый чат</span></button><button type="button" data-bulk-delete>${actionIcon("delete")}<span>Удалить</span></button><button type="button" data-bulk-clear>${actionIcon("cancel")}<span>Отмена</span></button></div></div>` : ""}
-    ${activeChatSearchOpen ? `<div class="chat-search-panel"><input type="search" data-chat-search-input placeholder="Поиск в «${esc(meta.title)}»" value="${esc(activeChatSearchQuery)}" autofocus><span data-chat-search-count></span><button type="button" data-close-chat-search aria-label="Закрыть поиск">×</button><div class="chat-search-panel__results" data-chat-search-results></div></div>` : ""}
-    <div class="chat-body${activePinnedMessage && !selectedMessageIds.size ? " chat-body--with-pinned" : ""}${channelNeedsMediaBar ? " chat-body--channel-viewer" : ""}">
-      ${activePinnedMessage && !selectedMessageIds.size ? `<div class="pinned-messages"><button class="pinned-messages__content" type="button" data-scroll-pinned-message="${activePinnedMessage.id}" title="Перейти к закреплённому сообщению"><span class="pinned-messages__label">${pinIcon("pinned-messages__pin-icon")}<span>Закреплённое сообщение${pinnedMessages.length > 1 ? ` · ${pinnedMessageIndex + 1} из ${pinnedMessages.length}` : ""}</span></span><span class="pinned-messages__text">${esc(pinnedMessagePreview(activePinnedMessage))}</span></button>${pinnedMessages.length > 1 ? '<button type="button" class="pinned-messages__next" data-next-pinned-message title="Следующее закреплённое сообщение" aria-label="Следующее закреплённое сообщение">⌄</button>' : ""}<button type="button" class="pinned-messages__menu" data-toggle-pinned-actions title="Действия с закрепом" aria-label="Действия с закрепом">${actionIcon("more")}</button></div>` : ""}
-      <div class="scroll-date-bubble hidden" data-scroll-date></div><div class="messages ${channelAppearance ? "" : chatBackgroundClass(state.me)}" id="messages"${channelAppearance ? "" : chatBackgroundStyle(state.me)}>${messages.map((message) => `${message.id === firstUnreadMessageId ? '<div class="unread-divider"><span>Новые сообщения</span></div>' : ""}${messageHtml(message)}`).join("") || emptyChatNotice}</div>
-      <button class="jump-to-latest hidden" type="button" data-jump-to-latest title="К последним сообщениям" aria-label="К последним сообщениям">↓</button>
-    </div>
-    ${channelNeedsMediaBar ? `<div class="channel-viewer-bar" id="channelViewerBar"><button type="button" data-buy-stars-channel aria-label="Купить звёзды через канал">${starButtonIcon()}<span>Звёзды</span></button><button type="button" data-open-chat-media aria-label="Вложения канала">${attachmentButtonIcon()}<span>Вложения</span></button><button type="button" data-toggle-chat-search aria-label="Поиск в канале">⌕<span>Поиск</span></button></div>` : showComposer ? `<form class="composer" id="composer">
-      <label class="composer-icon attach-button" title="Прикрепить фото, видео или документ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.2 12 19.7a5.3 5.3 0 0 1-7.5-7.5l9-9a3.7 3.7 0 1 1 5.2 5.3l-9.1 9.1a2 2 0 0 1-2.8-2.8l8-8"/></svg><input name="attachment" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,application/pdf,text/plain,.doc,.docx" hidden></label>
-      <div class="composer-input"><textarea name="text" placeholder="${chat.type === "channel" ? "Новая публикация" : "Сообщение"}"></textarea><button class="composer-icon composer-icon--emoji" type="button" data-emoji-toggle title="Эмодзи" aria-label="Открыть эмодзи"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.75a8.25 8.25 0 1 0 8.25 8.25"/><path d="M7.8 13.65c1.12 1.44 2.5 2.1 4.2 2.1s3.08-.66 4.2-2.1M8.75 9.75h.01M14.5 9.75h.01"/><path d="m18.6 3.25.48 1.32 1.32.48-1.32.48-.48 1.32-.48-1.32-1.32-.48 1.32-.48.48-1.32Z"/></svg></button></div>
-      <div class="composer-tools">
-        <button class="composer-icon" type="button" data-record="circle" title="Записать видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/></svg></button>
-        <button class="composer-icon" type="button" data-record="voice" title="Записать голосовое сообщение"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v4M9 21h6"/></svg></button>
-        <button class="composer-icon composer-send" type="submit" title="Отправить" aria-label="Отправить сообщение"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3.6 10.2 16.3-6.5c.7-.3 1.4.4 1.1 1.1l-6.5 16.3c-.3.8-1.4.8-1.8 0l-2.4-6-6-2.4c-.8-.4-.8-1.5 0-1.8Z"/><path d="m10.3 13.7 4.5-4.5"/></svg></button>
-      </div>
-      <div class="composer-attachment hidden" data-composer-attachment><span>📎</span><b data-composer-attachment-name></b><button type="button" data-clear-composer-attachment aria-label="Убрать вложение">×</button></div>
-      <div class="emoji-panel hidden" data-emoji-panel><div class="emoji-panel__tabs"><button class="emoji-panel__tab active" type="button" data-emoji-tab="recent">Недавние</button><button class="emoji-panel__tab" type="button" data-emoji-tab="all">Все</button></div><div class="emoji-panel__content" data-emoji-content></div></div>
-    </form>` : ""}`;
-  panel.style.background = "";
-  const chatHead = panel.querySelector(".chat-head");
-  if (chatHead) {
-    const updateChatHeadSpace = () => panel.style.setProperty("--chat-head-height", `${chatHead.offsetHeight}px`);
-    updateChatHeadSpace();
-    new ResizeObserver(updateChatHeadSpace).observe(chatHead);
-  }
-  const composer = panel.querySelector("#composer");
-  if (composer) {
-  const updateComposerSpace = () => panel.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
-  updateComposerSpace();
-  new ResizeObserver(updateComposerSpace).observe(composer);
-  composer.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const composerForm = event.currentTarget;
-    const form = new FormData(composerForm);
-    const attachment = form.get("attachment");
-    const body = { chatId: chat.id, text: form.get("text") };
-    const temporaryId = `pending-${crypto.randomUUID()}`;
-    let previewUrl = null;
-    try {
-      stopTypingActivity(chat.id);
-      if (attachment?.size) {
-        if (state.mediaS3Enabled) {
-          setChatActivity(chat.id, "sending", true);
-          const uploaded = await uploadMessageAttachment(chat.id, attachment);
-          body.mediaType = uploaded.mediaType;
-          body.mediaKey = uploaded.mediaKey;
-          body.fileName = uploaded.fileName;
-          previewUrl = uploaded.previewUrl;
-        } else {
-          body.mediaType = attachment.type.startsWith("image/") ? "photo" : attachment.type.startsWith("video/") ? "video" : "document";
-          body.mediaData = await fileToDataUrl(attachment, 2_500_000);
-          body.fileName = attachment.name;
+
+
+def init_db() -> None:
+    with connect() as con:
+        con.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              username TEXT NOT NULL UNIQUE,
+              password TEXT NOT NULL,
+              email TEXT,
+              phone TEXT,
+              email_verified INTEGER NOT NULL DEFAULT 0,
+              phone_verified INTEGER NOT NULL DEFAULT 0,
+              stars INTEGER NOT NULL DEFAULT 0,
+              premium_until INTEGER,
+              theme TEXT NOT NULL DEFAULT 'light',
+              site_color TEXT NOT NULL DEFAULT '#2aabee',
+              site_background TEXT NOT NULL DEFAULT 'default',
+              site_background_data TEXT,
+              dialog_color TEXT NOT NULL DEFAULT '#dff9f9',
+              other_dialog_color TEXT NOT NULL DEFAULT '#dff9f9',
+              dialog_panel_color TEXT NOT NULL DEFAULT '#f4f8fc',
+              dialog_panel_style TEXT NOT NULL DEFAULT 'interactive-light',
+              dialog_bubble_style TEXT NOT NULL DEFAULT 'custom',
+              dialog_font TEXT NOT NULL DEFAULT 'business',
+              text_scale TEXT NOT NULL DEFAULT 'system',
+              chat_background TEXT NOT NULL DEFAULT 'cyan',
+              chat_background_data TEXT,
+              sidebar_background_data TEXT,
+              night_appearance_custom INTEGER NOT NULL DEFAULT 0,
+              night_outline_color TEXT,
+              night_glow_color TEXT,
+              night_glow_intensity INTEGER,
+              call_ringtone TEXT NOT NULL DEFAULT 'classic',
+              hidden_status_ids TEXT NOT NULL DEFAULT '[]',
+              group_invite_privacy TEXT NOT NULL DEFAULT 'contacts',
+              direct_message_privacy TEXT NOT NULL DEFAULT 'everyone',
+              avatar_data TEXT,
+              last_login_day TEXT,
+              login_streak INTEGER NOT NULL DEFAULT 0,
+              agreement_accepted_at INTEGER,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+              token TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS auth_challenges (
+              id TEXT PRIMARY KEY,
+              purpose TEXT NOT NULL,
+              email TEXT,
+              phone TEXT,
+              user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+              payload_json TEXT NOT NULL DEFAULT '{}',
+              email_code_hash TEXT,
+              phone_code_hash TEXT,
+              email_verified INTEGER NOT NULL DEFAULT 0,
+              phone_verified INTEGER NOT NULL DEFAULT 0,
+              attempts INTEGER NOT NULL DEFAULT 0,
+              expires_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS chats (
+              id TEXT PRIMARY KEY,
+              type TEXT NOT NULL,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              avatar_data TEXT,
+              invite_code TEXT UNIQUE,
+              owner_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+              settings_json TEXT NOT NULL DEFAULT '{}',
+              subscriber_count INTEGER NOT NULL DEFAULT 0,
+              subscriber_boost INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_members (
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              role TEXT NOT NULL DEFAULT 'member',
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS pinned_chats (
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              pinned_at INTEGER NOT NULL,
+              PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS archived_chats (
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              archived_at INTEGER NOT NULL,
+              PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS hidden_chats (
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS secret_chats (
+              chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+              password_hash TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS secret_chat_unlocks (
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              unlocked_at INTEGER NOT NULL,
+              PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS messages (
+              id TEXT PRIMARY KEY,
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              text TEXT NOT NULL,
+              media_type TEXT,
+              media_data TEXT,
+              voice_waveform_json TEXT,
+              profile_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+              views INTEGER NOT NULL DEFAULT 0,
+              views_boost INTEGER NOT NULL DEFAULT 0,
+              reactions_json TEXT NOT NULL DEFAULT '{}',
+              pinned INTEGER NOT NULL DEFAULT 0,
+              forwarded_from TEXT,
+              forwarded_from_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+              reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+              edited_at INTEGER,
+              ai_agent INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_settings (
+              user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+              instruction TEXT NOT NULL DEFAULT '',
+              style TEXT NOT NULL DEFAULT 'friendly',
+              autopilot_enabled INTEGER NOT NULL DEFAULT 0,
+              allowed_chat_ids_json TEXT NOT NULL DEFAULT '[]',
+              template_message_ids_json TEXT NOT NULL DEFAULT '[]',
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_processed_messages (
+              message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+              processed_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_channel_rules (
+              user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+              enabled INTEGER NOT NULL DEFAULT 0,
+              target_channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+              source_channel_ids_json TEXT NOT NULL DEFAULT '[]',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_channel_processed_posts (
+              rule_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              processed_at INTEGER NOT NULL,
+              PRIMARY KEY (rule_user_id, message_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS notifications (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              kind TEXT NOT NULL,
+              text TEXT NOT NULL,
+              target_id TEXT,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS scheduled_posts (
+              id TEXT PRIMARY KEY,
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              sender_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              text TEXT NOT NULL DEFAULT '',
+              media_type TEXT,
+              media_data TEXT,
+              publish_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_comments (
+              id TEXT PRIMARY KEY,
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              text TEXT NOT NULL,
+              media_data TEXT,
+              automated INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS automated_commenters (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS avatar_history (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              avatar_data TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS avatar_history_user_created_idx ON avatar_history(user_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS automated_comment_rules (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              target_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+              target_scope TEXT NOT NULL DEFAULT 'future',
+              commenter_ids_json TEXT NOT NULL DEFAULT '[]',
+              texts_json TEXT NOT NULL DEFAULT '[]',
+              comment_mode TEXT NOT NULL DEFAULT 'manual',
+              categories_json TEXT NOT NULL DEFAULT '[]',
+              min_delay_seconds INTEGER NOT NULL DEFAULT 300,
+              max_delay_seconds INTEGER NOT NULL DEFAULT 1800,
+              distribution_seconds INTEGER NOT NULL DEFAULT 43200,
+              starts_at INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS automated_comment_jobs (
+              id TEXT PRIMARY KEY,
+              rule_id TEXT NOT NULL REFERENCES automated_comment_rules(id) ON DELETE CASCADE,
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              commenter_id TEXT NOT NULL REFERENCES automated_commenters(id) ON DELETE CASCADE,
+              text TEXT NOT NULL,
+              publish_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              UNIQUE(rule_id, message_id, commenter_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS media_uploads (
+              key TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              media_type TEXT NOT NULL,
+              file_name TEXT NOT NULL DEFAULT '',
+              content_type TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              expires_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_links (
+              channel_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+              target_chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS chat_read_states (
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              read_at INTEGER NOT NULL DEFAULT 0,
+              read_rowid INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY (chat_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS message_reactions (
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              emoji TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (message_id, user_id, emoji)
+            );
+
+            CREATE TABLE IF NOT EXISTS hidden_pinned_messages (
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (message_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS reviews (
+              id TEXT PRIMARY KEY,
+              url TEXT NOT NULL,
+              source_type TEXT NOT NULL DEFAULT 'website',
+              rating INTEGER NOT NULL,
+              comment TEXT NOT NULL DEFAULT '',
+              city TEXT NOT NULL DEFAULT '',
+              links_json TEXT NOT NULL DEFAULT '[]',
+              media_data TEXT,
+              created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS reports (
+              id TEXT PRIMARY KEY,
+              target_type TEXT NOT NULL,
+              target_id TEXT NOT NULL,
+              reason TEXT NOT NULL DEFAULT '',
+              created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS promotions (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL,
+              action_type TEXT NOT NULL,
+              target_count INTEGER NOT NULL DEFAULT 1,
+              reward_type TEXT NOT NULL DEFAULT 'stars',
+              reward_amount INTEGER NOT NULL DEFAULT 0,
+              premium_days INTEGER NOT NULL DEFAULT 0,
+              daily_limit INTEGER NOT NULL DEFAULT 1,
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS promotion_claims (
+              promotion_id TEXT NOT NULL REFERENCES promotions(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              count INTEGER NOT NULL DEFAULT 0,
+              claimed_at INTEGER NOT NULL,
+              PRIMARY KEY (promotion_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS statuses (
+              id TEXT PRIMARY KEY,
+              icon TEXT NOT NULL,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL,
+              criteria_json TEXT NOT NULL DEFAULT '{}',
+              reward_json TEXT NOT NULL DEFAULT '{}',
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS user_statuses (
+              status_id TEXT NOT NULL REFERENCES statuses(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (status_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recommended_groups (
+              chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+              position INTEGER NOT NULL DEFAULT 100,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS boost_jobs (
+              id TEXT PRIMARY KEY,
+              target_type TEXT NOT NULL,
+              target_id TEXT NOT NULL,
+              metric TEXT NOT NULL,
+              amount_per_minute INTEGER NOT NULL,
+              remaining INTEGER NOT NULL,
+              active INTEGER NOT NULL DEFAULT 1,
+              last_tick INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_growth_jobs (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              subscribers_per_hour INTEGER NOT NULL DEFAULT 0,
+              views_per_hour INTEGER NOT NULL DEFAULT 0,
+              reactions_per_hour INTEGER NOT NULL DEFAULT 0,
+              comments_per_hour INTEGER NOT NULL DEFAULT 0,
+              starts_at INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              subscribers_added INTEGER NOT NULL DEFAULT 0,
+              views_added INTEGER NOT NULL DEFAULT 0,
+              reactions_added INTEGER NOT NULL DEFAULT 0,
+              comments_added INTEGER NOT NULL DEFAULT 0,
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS demo_activity_packages (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              subscribers_per_day INTEGER NOT NULL DEFAULT 0,
+              views_per_day INTEGER NOT NULL DEFAULT 0,
+              reactions_per_day INTEGER NOT NULL DEFAULT 0,
+              comments_per_day INTEGER NOT NULL DEFAULT 0,
+              post_limit INTEGER NOT NULL DEFAULT 1,
+              duration_days INTEGER NOT NULL DEFAULT 7,
+              fade_duration_days INTEGER NOT NULL DEFAULT 30,
+              indefinite INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS demo_activity_subscriptions (
+              id TEXT PRIMARY KEY,
+              package_id TEXT NOT NULL REFERENCES demo_activity_packages(id) ON DELETE CASCADE,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              starts_at INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              auto_renew INTEGER NOT NULL DEFAULT 0,
+              subscribers_added INTEGER NOT NULL DEFAULT 0,
+              views_added INTEGER NOT NULL DEFAULT 0,
+              reactions_added INTEGER NOT NULL DEFAULT 0,
+              comments_added INTEGER NOT NULL DEFAULT 0,
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS calls (
+              id TEXT PRIMARY KEY,
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              caller_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              receiver_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              call_type TEXT NOT NULL,
+              offer_sdp TEXT NOT NULL,
+              answer_sdp TEXT,
+              status TEXT NOT NULL DEFAULT 'ringing',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS profile_posts (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              text TEXT NOT NULL,
+              media_data TEXT,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS profile_post_reactions (
+              post_id TEXT NOT NULL REFERENCES profile_posts(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              emoji TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (post_id, user_id, emoji)
+            );
+
+            CREATE TABLE IF NOT EXISTS stories (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              media_data TEXT NOT NULL,
+              caption TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              expires_at INTEGER NOT NULL,
+              permanent INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS story_views (
+              story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              viewed_at INTEGER NOT NULL,
+              PRIMARY KEY (story_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS story_reactions (
+              story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              emoji TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (story_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS hidden_story_authors (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, author_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS story_privacy_blocks (
+              owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              blocked_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (owner_id, blocked_user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS account_level_rewards (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              level_id TEXT NOT NULL,
+              claimed_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, level_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS account_level_purchases (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              level_id TEXT NOT NULL,
+              purchased_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, level_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS account_level_reward_grants (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              level_id TEXT NOT NULL,
+              reward_id TEXT NOT NULL REFERENCES activity_rewards(id) ON DELETE CASCADE,
+              granted_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, reward_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS telegram_channel_links (
+              channel_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+              source_chat_ref TEXT NOT NULL,
+              source_chat_id TEXT,
+              bot_token TEXT NOT NULL,
+              last_update_id INTEGER NOT NULL DEFAULT 0,
+              next_poll_at INTEGER NOT NULL DEFAULT 0,
+              last_sync_at INTEGER,
+              last_error TEXT,
+              created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS telegram_imported_posts (
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              telegram_message_id INTEGER NOT NULL,
+              imported_at INTEGER NOT NULL,
+              PRIMARY KEY (channel_id, telegram_message_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS rss_channel_links (
+              channel_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+              feed_url TEXT NOT NULL,
+              feed_title TEXT NOT NULL DEFAULT '',
+              next_poll_at INTEGER NOT NULL DEFAULT 0,
+              last_sync_at INTEGER,
+              last_error TEXT,
+              created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS rss_imported_posts (
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              entry_id TEXT NOT NULL,
+              imported_at INTEGER NOT NULL,
+              PRIMARY KEY (channel_id, entry_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS rss_channel_sources (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              feed_url TEXT NOT NULL,
+              feed_title TEXT NOT NULL DEFAULT '',
+              next_poll_at INTEGER NOT NULL DEFAULT 0,
+              last_sync_at INTEGER,
+              last_error TEXT,
+              created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              UNIQUE(channel_id, feed_url)
+            );
+
+            CREATE TABLE IF NOT EXISTS rss_source_imported_posts (
+              source_id TEXT NOT NULL REFERENCES rss_channel_sources(id) ON DELETE CASCADE,
+              entry_id TEXT NOT NULL,
+              imported_at INTEGER NOT NULL,
+              PRIMARY KEY (source_id, entry_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS vk_channel_sources (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              source_url TEXT NOT NULL,
+              source_ref TEXT NOT NULL,
+              source_title TEXT NOT NULL DEFAULT '',
+              owner_id INTEGER NOT NULL,
+              access_token TEXT NOT NULL,
+              keywords_json TEXT NOT NULL DEFAULT '[]',
+              next_poll_at INTEGER NOT NULL DEFAULT 0,
+              last_sync_at INTEGER,
+              last_error TEXT,
+              created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              UNIQUE(channel_id, source_url)
+            );
+
+            CREATE TABLE IF NOT EXISTS vk_source_imported_posts (
+              source_id TEXT NOT NULL REFERENCES vk_channel_sources(id) ON DELETE CASCADE,
+              post_id INTEGER NOT NULL,
+              imported_at INTEGER NOT NULL,
+              PRIMARY KEY (source_id, post_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS star_transactions (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              amount INTEGER NOT NULL,
+              kind TEXT NOT NULL,
+              description TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS yookassa_payments (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              package_id TEXT NOT NULL,
+              stars INTEGER NOT NULL,
+              amount_value TEXT NOT NULL,
+              channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+              channel_bonus_type TEXT,
+              channel_bonus_amount TEXT,
+              yookassa_payment_id TEXT UNIQUE,
+              status TEXT NOT NULL DEFAULT 'created',
+              terms_accepted_at INTEGER,
+              credited_at INTEGER,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS yookassa_payments_user_idx ON yookassa_payments(user_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS channel_star_purchases (
+              id TEXT PRIMARY KEY,
+              payment_id TEXT NOT NULL UNIQUE REFERENCES yookassa_payments(id) ON DELETE CASCADE,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              buyer_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              stars INTEGER NOT NULL,
+              bonus_type TEXT NOT NULL,
+              bonus_amount TEXT NOT NULL,
+              buyer_gift_stars INTEGER NOT NULL DEFAULT 0,
+              buyer_message TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS channel_star_purchases_channel_idx ON channel_star_purchases(channel_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS activity_rewards (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              criteria_json TEXT NOT NULL DEFAULT '{}',
+              reward_stars INTEGER NOT NULL DEFAULT 0,
+              premium_days INTEGER NOT NULL DEFAULT 0,
+              reward_json TEXT NOT NULL DEFAULT '{}',
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS activity_reward_claims (
+              reward_id TEXT NOT NULL REFERENCES activity_rewards(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              claimed_at INTEGER NOT NULL,
+              PRIMARY KEY (reward_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS personal_limit_rewards (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              source_type TEXT NOT NULL,
+              source_id TEXT NOT NULL,
+              limits_json TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, source_type, source_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS personal_star_package_discounts (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              source_type TEXT NOT NULL,
+              source_id TEXT NOT NULL,
+              discount_percent INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, source_type, source_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recurring_star_rewards (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              source_type TEXT NOT NULL,
+              source_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              stars INTEGER NOT NULL,
+              interval_seconds INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              next_credit_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, source_type, source_id)
+            );
+            """
+        )
+        # Migrate the obsolete one-source RSS table only once. Afterwards the new
+        # source table is authoritative, including an intentionally empty list.
+        rss_migration_key = "rss_sources_migration_v1"
+        migrated = con.execute("SELECT 1 FROM settings WHERE key = ?", (rss_migration_key,)).fetchone()
+        if not migrated:
+            existing_sources = {row["channel_id"] for row in con.execute("SELECT channel_id FROM rss_channel_sources").fetchall()}
+            legacy_links = con.execute("SELECT * FROM rss_channel_links").fetchall()
+            for legacy in legacy_links:
+                if legacy["channel_id"] in existing_sources:
+                    continue
+                source_id = uid("rss")
+                con.execute(
+                    """INSERT INTO rss_channel_sources(id,channel_id,feed_url,feed_title,next_poll_at,last_sync_at,last_error,created_by,created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (source_id, legacy["channel_id"], legacy["feed_url"], legacy["feed_title"], legacy["next_poll_at"], legacy["last_sync_at"], legacy["last_error"], legacy["created_by"], legacy["created_at"]),
+                )
+                legacy_posts = con.execute("SELECT entry_id, imported_at FROM rss_imported_posts WHERE channel_id = ?", (legacy["channel_id"],)).fetchall()
+                con.executemany(
+                    "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
+                    [(source_id, post["entry_id"], post["imported_at"]) for post in legacy_posts],
+                )
+            con.execute("INSERT INTO settings(key,value) VALUES (?,?)", (rss_migration_key, dumps({"completedAt": now()})))
+        columns = {row["name"] for row in con.execute("PRAGMA table_info(users)").fetchall()}
+        if "email" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN email TEXT")
+        if "phone" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+        if "email_verified" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0")
+        if "phone_verified" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN phone_verified INTEGER NOT NULL DEFAULT 0")
+        if "avatar_data" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN avatar_data TEXT")
+        if "site_color" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN site_color TEXT NOT NULL DEFAULT '#2aabee'")
+        if "site_background" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN site_background TEXT NOT NULL DEFAULT 'default'")
+        if "site_background_data" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN site_background_data TEXT")
+        if "chat_background" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN chat_background TEXT NOT NULL DEFAULT 'cyan'")
+        if "dialog_bubble_style" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN dialog_bubble_style TEXT NOT NULL DEFAULT 'custom'")
+        if "dialog_font" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN dialog_font TEXT NOT NULL DEFAULT 'system'")
+        if "other_dialog_color" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN other_dialog_color TEXT NOT NULL DEFAULT '#dff9f9'")
+        if "dialog_panel_color" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN dialog_panel_color TEXT NOT NULL DEFAULT '#f4f8fc'")
+        if "dialog_panel_style" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN dialog_panel_style TEXT NOT NULL DEFAULT 'custom'")
+        if "chat_background_data" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN chat_background_data TEXT")
+        if "sidebar_background_data" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN sidebar_background_data TEXT")
+        if "group_invite_privacy" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN group_invite_privacy TEXT NOT NULL DEFAULT 'contacts'")
+        if "direct_message_privacy" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN direct_message_privacy TEXT NOT NULL DEFAULT 'everyone'")
+        channel_purchase_columns = {row["name"] for row in con.execute("PRAGMA table_info(channel_star_purchases)").fetchall()}
+        if "buyer_gift_stars" not in channel_purchase_columns:
+            con.execute("ALTER TABLE channel_star_purchases ADD COLUMN buyer_gift_stars INTEGER NOT NULL DEFAULT 0")
+        if "buyer_message" not in channel_purchase_columns:
+            con.execute("ALTER TABLE channel_star_purchases ADD COLUMN buyer_message TEXT NOT NULL DEFAULT ''")
+        automated_comment_rule_columns = {row["name"] for row in con.execute("PRAGMA table_info(automated_comment_rules)").fetchall()}
+        if "target_scope" not in automated_comment_rule_columns:
+            con.execute("ALTER TABLE automated_comment_rules ADD COLUMN target_scope TEXT NOT NULL DEFAULT 'future'")
+        if "distribution_seconds" not in automated_comment_rule_columns:
+            con.execute("ALTER TABLE automated_comment_rules ADD COLUMN distribution_seconds INTEGER NOT NULL DEFAULT 43200")
+        if "comment_mode" not in automated_comment_rule_columns:
+            con.execute("ALTER TABLE automated_comment_rules ADD COLUMN comment_mode TEXT NOT NULL DEFAULT 'manual'")
+        if "categories_json" not in automated_comment_rule_columns:
+            con.execute("ALTER TABLE automated_comment_rules ADD COLUMN categories_json TEXT NOT NULL DEFAULT '[]'")
+        if "night_appearance_custom" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN night_appearance_custom INTEGER NOT NULL DEFAULT 0")
+        if "night_outline_color" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN night_outline_color TEXT")
+        if "night_glow_color" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN night_glow_color TEXT")
+        if "night_glow_intensity" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN night_glow_intensity INTEGER")
+        if "call_ringtone" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN call_ringtone TEXT NOT NULL DEFAULT 'classic'")
+        message_columns = {row["name"] for row in con.execute("PRAGMA table_info(messages)").fetchall()}
+        if "ai_agent" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN ai_agent INTEGER NOT NULL DEFAULT 0")
+        chat_columns = {row["name"] for row in con.execute("PRAGMA table_info(chats)").fetchall()}
+        if "invite_code" not in chat_columns:
+            con.execute("ALTER TABLE chats ADD COLUMN invite_code TEXT")
+        for chat in con.execute("SELECT id FROM chats WHERE invite_code IS NULL OR invite_code = ''").fetchall():
+            con.execute("UPDATE chats SET invite_code = ? WHERE id = ?", (secrets.token_urlsafe(12), chat["id"]))
+        if "avatar_data" not in chat_columns:
+            con.execute("ALTER TABLE chats ADD COLUMN avatar_data TEXT")
+        demo_package_columns = {row["name"] for row in con.execute("PRAGMA table_info(demo_activity_packages)").fetchall()}
+        if "fade_duration_days" not in demo_package_columns:
+            con.execute("ALTER TABLE demo_activity_packages ADD COLUMN fade_duration_days INTEGER NOT NULL DEFAULT 30")
+        if "indefinite" not in demo_package_columns:
+            con.execute("ALTER TABLE demo_activity_packages ADD COLUMN indefinite INTEGER NOT NULL DEFAULT 0")
+        # «Автор» was the former channel-manager role. Keep its permissions as a
+        # compatibility fallback, but normalize stored rows to the current name.
+        con.execute(
+            """UPDATE chat_members SET role = 'admin'
+               WHERE role = 'author' AND chat_id IN (
+                   SELECT id FROM chats WHERE type = 'channel'
+               )"""
+        )
+        message_columns = {row["name"] for row in con.execute("PRAGMA table_info(messages)").fetchall()}
+        if "media_type" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN media_type TEXT")
+        if "media_data" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN media_data TEXT")
+        if "profile_user_id" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN profile_user_id TEXT REFERENCES users(id) ON DELETE SET NULL")
+        if "pinned" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        if "forwarded_from" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN forwarded_from TEXT")
+        if "forwarded_from_user_id" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN forwarded_from_user_id TEXT REFERENCES users(id) ON DELETE SET NULL")
+        if "reply_to_id" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL")
+        if "edited_at" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN edited_at INTEGER")
+        if "source_type" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN source_type TEXT")
+        if "source_id" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN source_id TEXT")
+        if "voice_waveform_json" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN voice_waveform_json TEXT")
+        if "deleted_by_admin" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN deleted_by_admin INTEGER NOT NULL DEFAULT 0")
+        comment_columns = {row["name"] for row in con.execute("PRAGMA table_info(channel_comments)").fetchall()}
+        if "media_data" not in comment_columns:
+            con.execute("ALTER TABLE channel_comments ADD COLUMN media_data TEXT")
+        if "automated" not in comment_columns:
+            con.execute("ALTER TABLE channel_comments ADD COLUMN automated INTEGER NOT NULL DEFAULT 0")
+        con.execute(
+            """INSERT OR IGNORE INTO chat_read_states(chat_id, user_id, read_at)
+               SELECT cm.chat_id, cm.user_id, COALESCE(MAX(m.created_at), 0)
+               FROM chat_members cm
+               LEFT JOIN messages m ON m.chat_id = cm.chat_id
+               GROUP BY cm.chat_id, cm.user_id"""
+        )
+        read_state_columns = {row["name"] for row in con.execute("PRAGMA table_info(chat_read_states)").fetchall()}
+        if "read_rowid" not in read_state_columns:
+            con.execute("ALTER TABLE chat_read_states ADD COLUMN read_rowid INTEGER NOT NULL DEFAULT 0")
+        con.execute(
+            """UPDATE chat_read_states
+               SET read_rowid = COALESCE((SELECT MAX(m.rowid) FROM messages m WHERE m.chat_id = chat_read_states.chat_id AND m.created_at <= chat_read_states.read_at), 0)
+               WHERE read_rowid = 0"""
+        )
+        review_columns = {row["name"] for row in con.execute("PRAGMA table_info(reviews)").fetchall()}
+        if "media_data" not in review_columns:
+            con.execute("ALTER TABLE reviews ADD COLUMN media_data TEXT")
+        if "source_type" not in review_columns:
+            con.execute("ALTER TABLE reviews ADD COLUMN source_type TEXT NOT NULL DEFAULT 'website'")
+        if "city" not in review_columns:
+            con.execute("ALTER TABLE reviews ADD COLUMN city TEXT NOT NULL DEFAULT ''")
+        user_columns = {row["name"] for row in con.execute("PRAGMA table_info(users)").fetchall()}
+        if "agreement_accepted_at" not in user_columns:
+            con.execute("ALTER TABLE users ADD COLUMN agreement_accepted_at INTEGER")
+        if "text_scale" not in user_columns:
+            con.execute("ALTER TABLE users ADD COLUMN text_scale TEXT NOT NULL DEFAULT 'system'")
+        yookassa_payment_columns = {row["name"] for row in con.execute("PRAGMA table_info(yookassa_payments)").fetchall()}
+        if "terms_accepted_at" not in yookassa_payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN terms_accepted_at INTEGER")
+        if "channel_id" not in yookassa_payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL")
+        if "channel_bonus_type" not in yookassa_payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN channel_bonus_type TEXT")
+        if "channel_bonus_amount" not in yookassa_payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN channel_bonus_amount TEXT")
+        activity_reward_columns = {row["name"] for row in con.execute("PRAGMA table_info(activity_rewards)").fetchall()}
+        if "reward_json" not in activity_reward_columns:
+            con.execute("ALTER TABLE activity_rewards ADD COLUMN reward_json TEXT NOT NULL DEFAULT '{}'")
+        story_columns = {row["name"] for row in con.execute("PRAGMA table_info(stories)").fetchall()}
+        if "permanent" not in story_columns:
+            con.execute("ALTER TABLE stories ADD COLUMN permanent INTEGER NOT NULL DEFAULT 0")
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS hidden_messages (
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (message_id, user_id)
+            )"""
+        )
+        post_columns = {row["name"] for row in con.execute("PRAGMA table_info(profile_posts)").fetchall()}
+        if "media_data" not in post_columns:
+            con.execute("ALTER TABLE profile_posts ADD COLUMN media_data TEXT")
+        con.execute("CREATE INDEX IF NOT EXISTS profile_post_reactions_post_id ON profile_post_reactions(post_id)")
+        duplicate_usernames = con.execute(
+            "SELECT 1 FROM users GROUP BY lower(username) HAVING count(*) > 1 LIMIT 1"
+        ).fetchone()
+        if not duplicate_usernames:
+            con.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_username_nocase_unique ON users(username COLLATE NOCASE)")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_email_nocase_unique ON users(email COLLATE NOCASE) WHERE email IS NOT NULL")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique ON users(phone) WHERE phone IS NOT NULL")
+
+        defaults = {
+            "account_levels": [
+                {"id": "starter", "title": "Начальный", "description": "Первый уровень после регистрации.", "criteria": {"messages": 0}, "limits": {"postsPerDay": 3, "storiesPerDay": 2, "communitiesCreated": 1, "channelsCreated": 1, "communitiesJoined": 10, "channelsJoined": 10}, "reward": {"stars": 0}, "starsPrice": 0, "purchaseReward": {"stars": 0}},
+                {"id": "active", "title": "Активный", "description": "Общайтесь и наполняйте свой профиль.", "criteria": {"messages": 20, "posts": 2, "stories": 1}, "limits": {"postsPerDay": 10, "storiesPerDay": 8, "communitiesCreated": 3, "channelsCreated": 3, "communitiesJoined": 50, "channelsJoined": 50}, "reward": {"stars": 50}, "starsPrice": 120, "purchaseReward": {"stars": 0}},
+                {"id": "pro", "title": "Профи", "description": "Для постоянных участников сообщества.", "criteria": {"messages": 100, "posts": 10, "reviews": 2}, "limits": {"postsPerDay": 30, "storiesPerDay": 20, "communitiesCreated": 10, "channelsCreated": 10, "communitiesJoined": 200, "channelsJoined": 200}, "reward": {"stars": 200}, "starsPrice": 300, "purchaseReward": {"stars": 0}},
+            ],
+            "features": {
+                "communities": True, "reviews": True, "donations": True,
+            },
+            "ui_appearance": DEFAULT_UI_APPEARANCE,
+            "channel_reactions": list(DEFAULT_CHANNEL_REACTIONS),
+            "public_branding": DEFAULT_PUBLIC_BRANDING,
+            "public_legal": DEFAULT_PUBLIC_LEGAL,
         }
-      }
-      const response = await api("/api/messages", { method: "POST", body });
-      const pendingStartedAt = Date.now();
-      pendingOutgoingMessages.set(temporaryId, {
-        id: temporaryId,
-        chatId: chat.id,
-        senderId: state.me.id,
-        text: body.text,
-        mediaType: body.mediaType || null,
-        mediaData: previewUrl || body.mediaData || null,
-        createdAt: Math.floor(pendingStartedAt / 1000),
-        deliveryState: "sending",
-      });
-      composerForm.reset();
-      attachmentNotice.classList.add("hidden");
-      composerForm.querySelector(".composer-tools")?.classList.remove("composer-tools--with-text");
-      updateComposerSpace();
-      confirmPendingMessage(temporaryId, response.messageId);
-      app.querySelector("#composer textarea")?.focus({ preventScroll: true });
-      return response;
-    } catch (error) {
-      const failed = pendingOutgoingMessages.get(temporaryId);
-      if (failed) {
-        failed.deliveryState = "failed";
-        pendingOutgoingMessages.set(temporaryId, failed);
-        replaceLiveMessage(temporaryId, failed);
-      }
-      stopChatActivity(chat.id);
-      toast(error.message, true);
-    }
-  });
-  const attachmentInput = composer.querySelector('input[name="attachment"]');
-  const attachmentNotice = composer.querySelector("[data-composer-attachment]");
-  const attachmentName = composer.querySelector("[data-composer-attachment-name]");
-  const composerTextarea = composer.querySelector("textarea");
-  const updateComposerActions = () => {
-    const hasContent = Boolean(composerTextarea.value.trim() || attachmentInput.files?.length);
-    composer.querySelector(".composer-tools")?.classList.toggle("composer-tools--with-text", hasContent);
-  };
-  attachmentInput.addEventListener("change", () => {
-    const file = attachmentInput.files?.[0];
-    attachmentNotice.classList.toggle("hidden", !file);
-    attachmentName.textContent = file ? `${file.name} · ${Math.ceil(file.size / 1024)} КБ` : "";
-    updateComposerActions();
-    updateComposerSpace();
-  });
-  composer.querySelector("[data-clear-composer-attachment]").addEventListener("click", () => { attachmentInput.value = ""; attachmentInput.dispatchEvent(new Event("change")); });
-  composerTextarea.addEventListener("input", () => {
-    updateComposerActions();
-    if (composerTextarea.value.trim()) startTypingActivity(chat.id, composerTextarea);
-    else stopTypingActivity(chat.id);
-  });
-  composerTextarea.addEventListener("blur", () => stopTypingActivity(chat.id));
-  composerTextarea.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); composer.requestSubmit(); }
-  });
-  updateComposerActions();
-  panel.querySelector("[data-add-secret-member]")?.addEventListener("click", () => openMemberManager(chat));
-  const emojiPanel = panel.querySelector("[data-emoji-panel]");
-  const renderEmojiPanel = (tab = "recent") => {
-    const emojis = tab === "recent" ? recentEmojis() : EMOJI_SET;
-    emojiPanel.querySelectorAll("[data-emoji-tab]").forEach((button) => button.classList.toggle("active", button.dataset.emojiTab === tab));
-    emojiPanel.querySelector("[data-emoji-content]").innerHTML = emojis.length
-      ? emojis.map((emoji) => `<button type="button" data-insert-emoji="${emoji}">${emoji}</button>`).join("")
-      : '<p class="emoji-panel__empty">Здесь появятся эмодзи, которые вы используете.</p>';
-    emojiPanel.querySelectorAll("[data-insert-emoji]").forEach((button) => button.addEventListener("click", () => {
-      rememberRecentEmoji(button.dataset.insertEmoji);
-      insertIntoComposer(button.dataset.insertEmoji);
-      if (tab === "recent") renderEmojiPanel("recent");
-    }));
-  };
-  panel.querySelector("[data-emoji-toggle]").addEventListener("click", () => {
-    emojiPanel.classList.toggle("hidden");
-    if (!emojiPanel.classList.contains("hidden")) renderEmojiPanel("recent");
-  });
-  emojiPanel.querySelectorAll("[data-emoji-tab]").forEach((button) => button.addEventListener("click", () => renderEmojiPanel(button.dataset.emojiTab)));
-  }
-  const channelViewerBar = panel.querySelector("#channelViewerBar");
-  if (channelViewerBar) {
-    const updateChannelViewerSpace = () => panel.style.setProperty("--channel-viewer-height", `${channelViewerBar.offsetHeight}px`);
-    updateChannelViewerSpace();
-    new ResizeObserver(updateChannelViewerSpace).observe(channelViewerBar);
-  }
-  panel.querySelector("[data-join-open-channel]")?.addEventListener("click", async (event) => {
-    event.stopPropagation();
-    try {
-      await api("/api/chats/join", { method: "POST", body: { chatId: chat.id } });
-      toast("Вы подписались на канал.");
-      await refresh();
-    } catch (error) { toast(error.message, true); }
-  });
-  panel.querySelector("[data-report-channel]")?.addEventListener("click", async (event) => {
-    event.stopPropagation();
-    try { await reportTarget("channel", event.currentTarget.dataset.reportChannel); } catch (error) { toast(error.message, true); }
-  });
-  panel.querySelectorAll("[data-open-reacts]").forEach((btn) => btn.addEventListener("click", () => toggleReactionPicker(btn.dataset.openReacts)));
-  panel.querySelectorAll("[data-close-reactions]").forEach((btn) => btn.addEventListener("click", () => closeReactionPickers()));
-  panel.querySelectorAll("[data-react]").forEach((btn) => btn.addEventListener("click", async () => {
-    showMessageReactionBurst(btn.dataset.emoji, btn);
-    await api("/api/react", { method: "POST", body: { messageId: btn.dataset.react, emoji: btn.dataset.emoji } });
-    await refresh(false);
-  }));
-  panel.querySelectorAll("[data-open-channel-comments]").forEach((button) => button.addEventListener("click", () => openChannelComments(button.dataset.openChannelComments)));
-  panel.querySelectorAll("[data-share-channel-post]").forEach((button) => button.addEventListener("click", () => openChannelPostShare(button, button.dataset.shareChannelPost)));
-  panel.querySelectorAll("[data-toggle-rss-post]").forEach((button) => button.addEventListener("click", () => {
-    const description = button.previousElementSibling;
-    if (!description?.classList.contains("message__rss-description")) return;
-    const collapsed = description.classList.toggle("is-collapsed");
-    if (collapsed) expandedRssPostIds.delete(button.dataset.toggleRssPost);
-    else expandedRssPostIds.add(button.dataset.toggleRssPost);
-    button.textContent = collapsed ? "Читать дальше" : "Свернуть";
-  }));
-  panel.querySelectorAll("[data-delete-source-repost]").forEach((button) => button.addEventListener("click", async () => {
-    if (!window.confirm("Удалить этот репост из группы?")) return;
-    try { await api("/api/messages/source-delete", { method: "POST", body: { messageId: button.dataset.deleteSourceRepost } }); await refresh(false); }
-    catch (error) { toast(error.message, true); }
-  }));
-  panel.querySelectorAll("[data-pin-message]").forEach((btn) => btn.addEventListener("click", async () => {
-    if (btn.dataset.pinned === "true" && !window.confirm("Открепить сообщение для всех участников?")) return;
-    try { await api("/api/messages/pin", { method: "POST", body: { messageId: btn.dataset.pinMessage } }); await refresh(false); }
-    catch (error) { toast(error.message, true); }
-  }));
-  panel.querySelectorAll("[data-hide-pinned-message]").forEach((btn) => btn.addEventListener("click", async () => {
-    if (!window.confirm("Убрать этот закреп только у вас? Само сообщение останется в переписке.")) return;
-    try {
-      await api("/api/messages/pin/hide", { method: "POST", body: { messageId: btn.dataset.hidePinnedMessage } });
-      toast("Закреп убран у вас.");
-      await refresh(false);
-    } catch (error) { toast(error.message, true); }
-  }));
-  panel.querySelectorAll("[data-unpin-pinned-message]").forEach((btn) => btn.addEventListener("click", async () => {
-    if (!window.confirm("Открепить это сообщение у всех участников?")) return;
-    try {
-      await api("/api/messages/pin", { method: "POST", body: { messageId: btn.dataset.unpinPinnedMessage } });
-      toast("Сообщение откреплено у всех.");
-      await refresh(false);
-    } catch (error) { toast(error.message, true); }
-  }));
-  panel.querySelector("[data-toggle-pinned-actions]")?.addEventListener("click", () => openPinnedActions(activePinnedMessage));
-  panel.querySelectorAll("[data-delete-message]").forEach((btn) => btn.addEventListener("click", async () => {
-    const scope = btn.dataset.deleteScope;
-    const label = scope === "everyone" ? "Удалить сообщение у всех?" : "Скрыть сообщение только у вас?";
-    if (!window.confirm(label)) return;
-    try {
-      await api("/api/messages/delete", { method: "POST", body: { messageId: btn.dataset.deleteMessage, scope } });
-      toast(scope === "everyone" ? "Сообщение удалено у всех." : "Сообщение скрыто у вас.");
-      await refresh(false);
-    } catch (error) { toast(error.message, true); }
-  }));
-  panel.querySelector("[data-bulk-forward]")?.addEventListener("click", () => openForwardPicker([...selectedMessageIds]));
-  panel.querySelector("[data-bulk-confidential]")?.addEventListener("click", () => openConfidentialForwardDialog([...selectedMessageIds]));
-  panel.querySelector("[data-bulk-delete]")?.addEventListener("click", () => openSelectedDeleteDialog([...selectedMessageIds]));
-  panel.querySelector("[data-bulk-clear]")?.addEventListener("click", () => {
-    selectedMessageIds.clear();
-    renderChat();
-  });
-  panel.querySelector("[data-scroll-pinned-message]")?.addEventListener("click", (event) => {
-    const pinnedButton = event.currentTarget;
-    const message = panel.querySelector(`#message-${pinnedButton.dataset.scrollPinnedMessage}`);
-    if (!message) return;
-    message.scrollIntoView({ behavior: "smooth", block: "center" });
-    message.classList.add("pinned-message-focus");
-    window.setTimeout(() => message.classList.remove("pinned-message-focus"), 1200);
-    if (pinnedMessages.length > 1) {
-      pinnedMessageIndex = (pinnedMessageIndex + 1) % pinnedMessages.length;
-      const nextPinnedMessage = pinnedMessages[pinnedMessageIndex];
-      pinnedButton.dataset.scrollPinnedMessage = nextPinnedMessage.id;
-      pinnedButton.querySelector(".pinned-messages__label span").textContent = `Закреплённое сообщение · ${pinnedMessageIndex + 1} из ${pinnedMessages.length}`;
-      pinnedButton.querySelector(".pinned-messages__text").textContent = pinnedMessagePreview(nextPinnedMessage);
-      panel.querySelectorAll("[data-hide-pinned-message]").forEach((button) => { button.dataset.hidePinnedMessage = nextPinnedMessage.id; });
-      panel.querySelectorAll("[data-unpin-pinned-message]").forEach((button) => { button.dataset.unpinPinnedMessage = nextPinnedMessage.id; });
-    }
-  });
-  panel.querySelector("[data-next-pinned-message]")?.addEventListener("click", () => {
-    pinnedMessageIndex = (pinnedMessageIndex + 1) % pinnedMessages.length;
-    renderChat();
-  });
-  panel.querySelectorAll("[data-open-profile]").forEach((btn) => btn.addEventListener("click", () => openProfile(btn.dataset.openProfile)));
-  panel.querySelectorAll("[data-remove-pending-message]").forEach((button) => button.addEventListener("click", () => removePendingMessage(button.dataset.removePendingMessage)));
-  panel.querySelectorAll("[data-open-message-media]").forEach((button) => button.addEventListener("click", () => {
-    const source = button.dataset.openMessageMediaSource;
-    if (source) {
-      openMedia(source, button.dataset.mediaType || "photo");
-      return;
-    }
-    const message = messages.find((item) => item.id === button.dataset.openMessageMedia);
-    if (message) openMedia(messageMediaUrl(message), message.mediaType);
-  }));
-  panel.querySelectorAll("[data-open-circle]").forEach((btn) => btn.addEventListener("click", () => openCircle(btn.dataset.openCircle)));
-  const toggleCirclePlayback = (video) => {
-    if (!video) return;
-    if (video.paused) video.play().catch(() => toast("Не удалось запустить видеокружок.", true));
-    else video.pause();
-  };
-  panel.querySelectorAll("[data-circle-playback]").forEach((btn) => btn.addEventListener("click", () => {
-    toggleCirclePlayback(btn.closest(".circle-message")?.querySelector(".message-circle"));
-  }));
-  const setCircleProgress = (input, value) => {
-    const progress = Math.min(100, Math.max(0, Number(value) || 0));
-    input.value = String(progress);
-    input.style.setProperty("--circle-progress", `${progress}%`);
-  };
-  panel.querySelectorAll("[data-circle-progress]").forEach((input) => input.addEventListener("input", () => {
-    const video = input.closest(".circle-message")?.querySelector(".message-circle");
-    setCircleProgress(input, input.value);
-    if (video?.duration) video.currentTime = (Number(input.value) / 100) * video.duration;
-  }));
-  panel.querySelectorAll(".message-circle").forEach((video) => {
-    const circle = video.closest(".circle-message");
-    const playButton = circle.querySelector("[data-circle-playback]");
-    const progress = circle.querySelector("[data-circle-progress]");
-    const updatePlayback = () => {
-      playButton.innerHTML = video.paused
-        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 8 6-8 6Z"/></svg>'
-        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12M15 6v12"/></svg>';
-      circle.classList.toggle("is-playing", !video.paused);
-    };
-    video.addEventListener("play", updatePlayback);
-    video.addEventListener("pause", updatePlayback);
-    video.addEventListener("loadeddata", async () => {
-      circle.classList.add("is-ready");
-      if (video.dataset.previewReady || !video.paused) return;
-      video.dataset.previewReady = "true";
-      video.muted = true;
-      try {
-        await video.play();
-        window.setTimeout(() => {
-          video.pause();
-          video.currentTime = Math.min(.08, Number.isFinite(video.duration) ? video.duration : .08);
-          video.muted = false;
-        }, 80);
-      } catch (_) { video.muted = false; }
-    }, { once: true });
-    video.addEventListener("click", () => toggleCirclePlayback(video));
-    video.addEventListener("timeupdate", () => { if (video.duration) setCircleProgress(progress, (video.currentTime / video.duration) * 100); });
-    video.addEventListener("ended", () => { setCircleProgress(progress, 0); updatePlayback(); });
-    video.addEventListener("touchstart", () => {
-      circle.classList.add("is-touched");
-      window.setTimeout(() => circle.classList.remove("is-touched"), 1800);
-    }, { passive: true });
-  });
-  panel.querySelectorAll("[data-voice-playback]").forEach((button) => button.addEventListener("click", async () => {
-    const voice = button.closest(".message-voice");
-    const audio = voice?.querySelector(".message-audio");
-    if (!audio) return;
-    if (!audio.paused) {
-      audio.pause();
-      audio.currentTime = 0;
-      return;
-    }
-    audio.dataset.playbackAttempted = "true";
-    audio.muted = false;
-    audio.volume = 1;
-    try {
-      await audio.play();
-    } catch (_) {
-      audio.load();
-      audio.addEventListener("canplay", () => audio.play().catch(() => toast("Не удалось запустить голосовое сообщение. Возможно, старый формат не поддерживается браузером.", true)), { once: true });
-    }
-  }));
-  panel.querySelectorAll(".message-voice").forEach((voice) => {
-    const audio = voice.querySelector(".message-audio");
-    const button = voice.querySelector("[data-voice-playback]");
-    const duration = voice.querySelector("[data-voice-duration]");
-    const wave = voice.querySelector("[data-voice-wave]");
-    const format = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-    const seek = (event) => {
-      if (!audio.duration || !wave) return;
-      const bounds = wave.getBoundingClientRect();
-      const progress = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
-      audio.currentTime = progress * audio.duration;
-    };
-    const updateProgress = () => {
-      const progress = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
-      wave?.setAttribute("aria-valuenow", String(Math.round(progress)));
-      const playedBars = Math.ceil((progress / 100) * (wave?.children.length || 0));
-      wave?.querySelectorAll("i").forEach((bar, index) => bar.classList.toggle("is-played", index < playedBars));
-      if (audio.duration) duration.textContent = `${format(audio.currentTime)} / ${format(audio.duration)}`;
-    };
-    const update = () => {
-      button.classList.toggle("is-playing", !audio.paused);
-      button.innerHTML = actionIcon(audio.paused ? "play" : "stop");
-      button.setAttribute("aria-label", audio.paused ? "Воспроизвести голосовое" : "Остановить голосовое");
-      voice.classList.toggle("is-playing", !audio.paused);
-    };
-    audio.addEventListener("loadedmetadata", updateProgress);
-    audio.addEventListener("timeupdate", updateProgress);
-    audio.addEventListener("play", update);
-    audio.addEventListener("pause", () => { update(); updateProgress(); });
-    audio.addEventListener("ended", () => { audio.currentTime = 0; updateProgress(); update(); });
-    wave?.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      seek(event);
-      wave.setPointerCapture?.(event.pointerId);
-      const move = (moveEvent) => seek(moveEvent);
-      const stop = () => {
-        wave.removeEventListener("pointermove", move);
-        wave.removeEventListener("pointerup", stop);
-        wave.removeEventListener("pointercancel", stop);
-      };
-      wave.addEventListener("pointermove", move);
-      wave.addEventListener("pointerup", stop);
-      wave.addEventListener("pointercancel", stop);
-    });
-    wave?.addEventListener("keydown", (event) => {
-      if (!audio.duration || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-      event.preventDefault();
-      if (event.key === "Home") audio.currentTime = 0;
-      else if (event.key === "End") audio.currentTime = audio.duration;
-      else audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + (event.key === "ArrowRight" ? 5 : -5)));
-      updateProgress();
-    });
-  });
-  panel.querySelectorAll("[data-record]").forEach((btn) => btn.addEventListener("click", () => recordMediaMessage(chat.id, btn.dataset.record)));
-  panel.querySelectorAll(".message").forEach((message) => message.addEventListener("click", (event) => {
-    if (event.target.closest("button, audio, video, input, label")) return;
-    const selectedMessage = messages.find((item) => item.id === message.id.replace("message-", ""));
-    if (!selectedMessage || selectedMessage.mediaType === "system") return;
-    if (selectedMessageIds.size) {
-      if (selectedMessageIds.has(selectedMessage.id)) selectedMessageIds.delete(selectedMessage.id);
-      else selectedMessageIds.add(selectedMessage.id);
-      renderChat();
-      return;
-    }
-    openMessageMenu(selectedMessage);
-  }));
-  panel.querySelectorAll("[data-call]").forEach((btn) => btn.addEventListener("click", () => startCall(chat, btn.dataset.call)));
-  panel.querySelector("[data-open-chat-media]")?.addEventListener("click", () => openChatMedia(chat));
-  panel.querySelectorAll("[data-toggle-chat-search]").forEach((button) => button.addEventListener("click", () => {
-    activeChatSearchOpen = true;
-    renderChat();
-  }));
-  panel.querySelector("[data-close-chat-search]")?.addEventListener("click", () => {
-    activeChatSearchOpen = false;
-    activeChatSearchQuery = "";
-    renderChat();
-  });
-  const chatSearchInput = panel.querySelector("[data-chat-search-input]");
-  if (chatSearchInput) {
-    const chatSearchResults = panel.querySelector("[data-chat-search-results]");
-    const chatSearchCount = panel.querySelector("[data-chat-search-count]");
-    const search = () => runChatMessageSearch(chat, activeChatSearchQuery, chatSearchResults, chatSearchCount);
-    chatSearchInput.addEventListener("input", (event) => {
-      activeChatSearchQuery = event.target.value;
-      clearTimeout(activeChatSearchTimer);
-      activeChatSearchTimer = setTimeout(search, 180);
-    });
-    if (activeChatSearchQuery) search();
-  }
-  panel.querySelector("[data-buy-stars-channel]")?.addEventListener("click", () => openChannelStarPurchase(chat));
-  panel.querySelector("[data-open-group-profile]")?.addEventListener("click", (event) => {
-    if (!event.target.closest("button, input, label")) openGroupProfile(chat);
-  });
-  panel.querySelectorAll("[data-media-message]").forEach((media) => media.addEventListener("error", () => {
-    if (media.dataset.mediaMessage === "voice" && media.dataset.playbackAttempted !== "true") return;
-    const message = media.closest(".message");
-    if (!message || message.querySelector(".media-error")) return;
-    const label = media.dataset.mediaMessage === "voice" ? "Голосовое сообщение" : "Видеокружок";
-    const code = media.error?.code;
-    const isLegacyWebmVoice = media.dataset.mediaMessage === "voice" && media.dataset.mediaFormat?.includes("webm");
-    const details = isLegacyWebmVoice
-      ? "Эта старая запись сделана в WebM/Opus, который текущий браузер не поддерживает. Откройте её в Chrome или Firefox."
-      : code === 2
-        ? "Не удалось получить файл с сервера. Обновите страницу и попробуйте ещё раз."
-        : code === 4
-          ? "Браузер не смог декодировать запись. Попробуйте открыть её в актуальном Chrome, Safari или Firefox."
-          : "Не удалось воспроизвести файл. Обновите страницу и попробуйте ещё раз.";
-    message.insertAdjacentHTML("afterbegin", `<p class="media-error">${esc(label)}: ${esc(details)}</p>`);
-  }, { once: true }));
-  const closeChat = (event) => { event?.stopPropagation(); stopChatActivity(chat.id); activeChatId = null; renderApp(); };
-  panel.querySelector("[data-close-chat]")?.addEventListener("click", closeChat);
-  panel.querySelector("[data-back-to-chats]").addEventListener("click", closeChat);
-  panel.querySelector("[data-open-mobile-chat-menu]").addEventListener("click", (event) => {
-    event.stopPropagation();
-    openMobileChatMenu();
-  });
-  const messagesBox = panel.querySelector("#messages");
-  const jumpToLatest = panel.querySelector("[data-jump-to-latest]");
-  const dateBubble = panel.querySelector("[data-scroll-date]");
-  const scrollToLatest = () => messagesBox.scrollTo({ top: Math.max(0, messagesBox.scrollHeight - messagesBox.clientHeight), behavior: "auto" });
-  const updateJumpButton = () => jumpToLatest.classList.toggle("hidden", messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 8);
-  const updateScrollDate = () => {
-    const visible = [...messagesBox.querySelectorAll(".message")].find((message) => message.offsetTop + message.offsetHeight >= messagesBox.scrollTop + 12);
-    const item = visible ? messages.find((message) => message.id === visible.id.replace("message-", "")) : messages[0];
-    if (!item || !dateBubble) return;
-    dateBubble.textContent = dateFmt(item.createdAt || item.created_at);
-    dateBubble.classList.remove("hidden");
-    clearTimeout(dateBubble._hideTimer);
-    dateBubble._hideTimer = setTimeout(() => dateBubble.classList.add("hidden"), 1200);
-  };
-  messagesBox.addEventListener("scroll", () => { updateJumpButton(); updateScrollDate(); }, { passive: true });
-  jumpToLatest.addEventListener("click", (event) => { event.preventDefault(); scrollToLatest(); jumpToLatest.blur(); updateJumpButton(); });
-  if (shouldScrollToLatest) {
-    scrollToLatest();
-    requestAnimationFrame(() => requestAnimationFrame(scrollToLatest));
-  }
-  else messagesBox.scrollTop = previousScrollTop;
-  updateJumpButton();
-}
+        for key, value in defaults.items():
+            con.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, dumps(value)))
+        levels_row = con.execute("SELECT value FROM settings WHERE key = 'account_levels'").fetchone()
+        try:
+            normalized_levels = normalize_account_levels(loads(levels_row["value"], []) if levels_row else defaults["account_levels"])
+        except ValueError:
+            normalized_levels = defaults["account_levels"]
+        if not levels_row or loads(levels_row["value"], []) != normalized_levels:
+            con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('account_levels', ?)", (dumps(normalized_levels),))
+        appearance_row = con.execute("SELECT value FROM settings WHERE key = 'ui_appearance'").fetchone()
+        try:
+            normalized_appearance = normalize_ui_appearance(loads(appearance_row["value"], {}) if appearance_row else DEFAULT_UI_APPEARANCE)
+        except ValueError:
+            normalized_appearance = DEFAULT_UI_APPEARANCE
+        if not appearance_row or loads(appearance_row["value"], {}) != normalized_appearance:
+            con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('ui_appearance', ?)", (dumps(normalized_appearance),))
+        branding_row = con.execute("SELECT value FROM settings WHERE key = 'public_branding'").fetchone()
+        try:
+            normalized_branding = normalize_public_branding(loads(branding_row["value"], {}) if branding_row else DEFAULT_PUBLIC_BRANDING)
+        except ValueError:
+            normalized_branding = DEFAULT_PUBLIC_BRANDING
+        if not branding_row or loads(branding_row["value"], {}) != normalized_branding:
+            con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('public_branding', ?)", (dumps(normalized_branding),))
+        legal_row = con.execute("SELECT value FROM settings WHERE key = 'public_legal'").fetchone()
+        try:
+            normalized_legal = normalize_public_legal(loads(legal_row["value"], {}) if legal_row else DEFAULT_PUBLIC_LEGAL)
+        except ValueError:
+            normalized_legal = DEFAULT_PUBLIC_LEGAL
+        if not legal_row or loads(legal_row["value"], {}) != normalized_legal:
+            con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('public_legal', ?)", (dumps(normalized_legal),))
 
-function renderRight() {
-  const box = app.querySelector("#rightContent");
-  if (!box) return;
-  const recommended = state.recommended.map((rec) => state.chats.find((chat) => chat.id === rec.chat_id)).filter(Boolean);
-  box.innerHTML = recommended.length
-    ? `<div class="card"><b>Рекомендованные группы</b>${recommended.map((chat) => `<button class="row" data-join="${chat.id}"><div class="avatar">${esc(chatIcon(chat))}</div><div class="row__body"><div class="row__title">${esc(chat.title)}</div><div class="row__sub">${chat.subscriberCount} подписчиков</div></div><span class="badge">Вступить</span></button>`).join("")}</div>`
-    : "";
-  box.querySelectorAll("[data-join]").forEach((btn) => btn.addEventListener("click", async () => { await api("/api/chats/join", { method: "POST", body: { chatId: btn.dataset.join } }); activeChatId = btn.dataset.join; await refresh(); }));
-  box.querySelectorAll("[data-open-profile]").forEach((btn) => btn.addEventListener("click", () => openProfile(btn.dataset.openProfile)));
-}
+        if not con.execute("SELECT 1 FROM promotions LIMIT 1").fetchone():
+            add_promotion(con, "Пригласить друга", "Откройте сайт по реферальной ссылке и получите звёзды.", "referral_open", 1, 25, 1)
+            add_promotion(con, "Написать отзыв", "Оставьте отзыв о странице ВК, ТГ или сайте.", "review_created", 1, 15, 3)
+            add_promotion(con, "Создать группу с 10 участниками", "Создайте группу и пригласите участников.", "group_members", 10, 100, 1)
+        if not con.execute("SELECT 1 FROM activity_rewards LIMIT 1").fetchone():
+            add_activity_reward(
+                con,
+                "Активный участник",
+                "Откройте новые возможности Chat-Pro и получите звёзды.",
+                {"direct_chats": 5, "channels_joined": 5, "communities_joined": 5},
+                {"stars": 100, "premiumDays": 0},
+            )
+        review_reward_key = "activity_reward_chat_pro_review_v1"
+        if not con.execute("SELECT 1 FROM settings WHERE key = ?", (review_reward_key,)).fetchone():
+            add_activity_reward(
+                con,
+                "Видеообзор Chat‑Pro",
+                "Опубликуйте видео в своём канале и добавьте в подпись «Chat-Pro обзор» или «Чат-Про обзор».",
+                {"chat_pro_review_video": 1},
+                {"stars": 100, "premiumDays": 0},
+            )
+            con.execute("INSERT INTO settings(key, value) VALUES (?, ?)", (review_reward_key, dumps({"createdAt": now()})))
 
-function chatRow(chat) {
-  const meta = chatMeta(chat);
-  const active = chat.id === activeChatId ? " active" : "";
-  const unread = Number(chat.unreadCount) || 0;
-  const latestMessage = latestChatMessage(chat.id);
-  const timestamp = latestMessage ? chatRowTimestamp(latestMessage.createdAt) : "";
-  return `<div class="chat-row${active}${unread ? " has-unread" : ""}"><button class="row chat-row__main" data-chat="${chat.id}">${meta.user ? avatarHtml(meta.user) : chatAvatarHtml(chat)}<div class="row__body"><div class="row__title">${chat.pinned ? pinIcon("chat-row__pin-icon") : ""}${esc(meta.title)}</div><div class="row__sub">${esc(chatRowPreview(chat, meta))}</div></div><span class="chat-row__aside">${timestamp ? `<time class="chat-row__time" datetime="${new Date(latestMessage.createdAt * 1000).toISOString()}">${esc(timestamp)}</time>` : ""}${unread ? `<span class="unread-badge" aria-label="${unread} новых сообщений">${unread > 99 ? "99+" : unread}</span>` : ""}</span></button><button class="chat-menu-button" data-chat-menu="${chat.id}" title="Действия с диалогом" aria-label="Действия с диалогом">⋮</button></div>`;
-}
 
-function latestChatMessage(chatId) {
-  return state.messages.reduce((latest, message) => {
-    if (message.chatId !== chatId) return latest;
-    return !latest || message.createdAt >= latest.createdAt ? message : latest;
-  }, null);
-}
+def uid(prefix: str) -> str:
+    return f"{prefix}_{secrets.token_urlsafe(10)}"
 
-function chatRowPreview(chat, meta) {
-  const message = latestChatMessage(chat.id);
-  if (!message) return meta.subtitle;
-  const preview = pinnedMessagePreview(message);
-  if (chat.type === "channel" || chat.type === "saved" || message.mediaType === "system") return preview;
-  if (chat.type === "direct") return message.senderId === state.me.id ? `Вы: ${preview}` : preview;
-  const sender = message.senderId === state.me.id ? "Вы" : userById(message.senderId)?.name || "Участник";
-  return `${sender}: ${preview}`;
-}
 
-function chatRowTimestamp(timestamp) {
-  const date = new Date(timestamp * 1000);
-  const today = new Date();
-  const dayStart = (value) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
-  const dayDifference = Math.round((dayStart(today) - dayStart(date)) / 86_400_000);
-  if (dayDifference === 0) return timeFmt(timestamp);
-  if (dayDifference === 1) return "Вчера";
-  if (date.getFullYear() === today.getFullYear()) return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit" }).format(date);
-  return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" }).format(date);
-}
+def secret_password_hash(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-function recommendedChannelRow(chat) {
-  return `<article class="recommended-channel"><button class="recommended-channel__info" type="button" data-open-recommended-channel="${esc(chat.id)}">${chatAvatarHtml(chat)}<span><b>${esc(chat.title)}</b><small>${chat.subscriberCount} подписчиков${chat.description ? ` · ${esc(chat.description)}` : ""}</small></span></button><button class="button primary small" type="button" data-join-recommended-channel="${esc(chat.id)}">Подписаться</button></article>`;
-}
 
-function secretChatRow(chat) {
-  const meta = chatMeta(chat);
-  return `<button class="row" data-chat="${chat.id}"><div class="avatar">🔒</div><div class="row__body"><div class="row__title">${esc(meta.title)}</div><div class="row__sub">Скрытый чат</div></div><span class="badge">Открыть</span></button>`;
-}
+def add_promotion(con, title, description, action_type, target_count, reward_amount, daily_limit):
+    con.execute(
+        """INSERT INTO promotions(id,title,description,action_type,target_count,reward_amount,daily_limit,created_at)
+           VALUES (?,?,?,?,?,?,?,?)""",
+        (uid("promo"), title, description, action_type, target_count, reward_amount, daily_limit, now()),
+    )
 
-function openSecretChatCreator() {
-  const contactIds = new Set(
-    state.chats
-      .filter((chat) => chat.type === "direct" && isMember(chat.id))
-      .flatMap((chat) => state.members.filter((member) => member.chat_id === chat.id && member.user_id !== state.me.id).map((member) => member.user_id)),
-  );
-  const contacts = state.users.filter((user) => contactIds.has(user.id));
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager secret-chat-creator" role="dialog" aria-modal="true" aria-label="Создание скрытого чата"><header><div><b>Скрытый чат</b><small>Он не появится в общем списке или поиске.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-secret-chat-form><label>Название<input name="title" maxlength="80" placeholder="Скрытый чат"></label><label>Пароль из 4 цифр<input name="password" inputmode="numeric" pattern="\\d{4}" minlength="4" maxlength="4" autocomplete="off" required placeholder="0000"></label><fieldset class="secret-chat-members"><legend>Участники</legend><div>${contacts.map((user) => `<label class="secret-chat-member"><input type="checkbox" name="memberIds" value="${user.id}">${avatarHtml(user)}<span><b>${esc(user.name)}</b><small>@${esc(user.username)}</small></span><i aria-hidden="true"></i></label>`).join("") || '<p class="muted">Сначала создайте личный диалог хотя бы с одним пользователем.</p>'}</div></fieldset><button class="button primary" ${contacts.length ? "" : "disabled"}>Создать скрытый чат</button></form></section>`;
-  document.body.append(overlay);
-  overlay.querySelector(".secret-chat-creator")?.setAttribute("aria-label", "Создание скрытого чата");
-  overlay.querySelector(".secret-chat-creator header b").textContent = "Скрытый чат";
-  overlay.querySelector(".secret-chat-creator header small").textContent = "Чтобы найти чат по коду, используйте поле ниже.";
-  overlay.querySelector('input[name="title"]').placeholder = "Скрытый чат";
-  overlay.querySelector('[data-secret-chat-form] .button.primary').textContent = "Создать скрытый чат";
-  const searchForm = document.createElement("form");
-  searchForm.className = "form secret-chat-search-form";
-  searchForm.innerHTML = '<label>Найти чат по коду<input name="password" inputmode="numeric" pattern="\\d{4}" minlength="4" maxlength="4" autocomplete="off" required placeholder="0000"></label><button class="button" type="submit">Найти</button>';
-  const searchResults = document.createElement("div");
-  searchResults.className = "secret-chat-search-results";
-  const divider = document.createElement("div");
-  divider.className = "secret-chat-divider";
-  divider.innerHTML = "<span>или создайте новый</span>";
-  const createForm = overlay.querySelector("[data-secret-chat-form]");
-  createForm.before(searchForm, searchResults, divider);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  searchForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const password = String(new FormData(searchForm).get("password") || "");
-    if (!/^\d{4}$/.test(password)) { searchResults.innerHTML = '<p class="muted">Введите код из 4 цифр.</p>'; return; }
-    try {
-      const data = await api("/api/secret-chats/unlock", { method: "POST", body: { password } });
-      await loadState();
-      const chats = state.chats.filter((chat) => chat.type === "secret" && data.chatIds.includes(chat.id));
-      if (chats.length === 1) {
-        activeChatId = chats[0].id;
-        scrollChatToLatest = true;
-        close();
-        renderApp();
-        return;
-      }
-      searchResults.innerHTML = chats.map(secretChatRow).join("");
-      bindChatRows(searchResults);
-    } catch (error) {
-      searchResults.innerHTML = `<p class="muted">${esc(error.message === "Скрытых чатов с таким паролем не найдено." ? "По данному запросу чатов нет." : error.message)}</p>`;
-    }
-  });
-  overlay.querySelector("[data-secret-chat-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const password = String(form.get("password") || "");
-    const memberIds = form.getAll("memberIds");
-    if (!/^\d{4}$/.test(password)) return toast("Пароль должен состоять ровно из 4 цифр.", true);
-    if (!memberIds.length) return toast("Выберите хотя бы одного собеседника.", true);
-    try {
-      await api("/api/chats", { method: "POST", body: { type: "secret", title: form.get("title"), password, memberIds } });
-      close();
-      toast("Скрытый чат создан. Найти его можно здесь же, по коду из 4 цифр.");
-      await refresh();
-    } catch (error) { toast(error.message, true); }
-  });
-  searchForm.elements.password.focus();
-}
 
-function directContacts() {
-  const contactIds = new Set(
-    state.chats
-      .filter((chat) => chat.type === "direct" && isMember(chat.id))
-      .flatMap((chat) => state.members.filter((member) => member.chat_id === chat.id && member.user_id !== state.me.id).map((member) => member.user_id)),
-  );
-  return state.users.filter((user) => contactIds.has(user.id));
-}
+def add_activity_reward(con, title, description, criteria, reward):
+    con.execute(
+        """INSERT INTO activity_rewards(id,title,description,criteria_json,reward_stars,premium_days,reward_json,active,created_at)
+           VALUES (?,?,?,?,?,?,?,1,?)""",
+        (
+            uid("activity_reward"),
+            title,
+            description,
+            dumps(criteria),
+            reward["stars"],
+            reward["premiumDays"],
+            dumps(reward),
+            now(),
+        ),
+    )
 
-function userStories(userId) { return (state?.stories || []).filter((story) => story.user_id === userId); }
-function hasUnseenStory(userId) { return userId !== state?.me?.id && userStories(userId).some((story) => !story.viewed); }
-function firstUserStory(userId) { return userStories(userId)[0]; }
-function directStoryStripHtml(className = "direct-stories") {
-  const contacts = directContacts().filter((user) => userStories(user.id).length);
-  if (!contacts.length) return "";
-  return `<section class="stories-strip ${className}${storiesCollapsed ? " is-collapsed" : ""}" aria-label="Истории контактов"><button type="button" class="stories-strip__toggle" data-toggle-stories aria-expanded="${!storiesCollapsed}" aria-label="${storiesCollapsed ? "Показать истории" : "Скрыть истории"}" title="${storiesCollapsed ? "Показать истории" : "Скрыть истории"}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 14 5-5 5 5"/></svg></button><div class="stories-strip__items">${contacts.map((user) => { const story = firstUserStory(user.id); return `<button type="button" class="story-avatar${hasUnseenStory(user.id) ? " has-story" : ""}" data-open-story="${story.id}">${avatarHtml(user)}<span>${esc(user.name)}</span></button>`; }).join("")}</div></section>`;
-}
 
-function bindStoriesStrip(root) {
-  root.querySelector("[data-toggle-stories]")?.addEventListener("click", () => {
-    storiesCollapsed = !storiesCollapsed;
-    renderChatsList(root);
-  });
-  root.querySelectorAll("[data-open-story]").forEach((button) => button.addEventListener("click", () => openStory(button.dataset.openStory)));
-}
+def get_user_by_token(con: sqlite3.Connection, headers) -> sqlite3.Row | None:
+    auth = headers.get("Authorization", "")
+    token = auth.replace("Bearer ", "", 1).strip() if auth.startswith("Bearer ") else ""
+    if not token:
+        return None
+    return con.execute(
+        "SELECT users.* FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = ?",
+        (token,),
+    ).fetchone()
 
-function openSimpleActions(anchor, actions) {
-  document.querySelector(".simple-actions-overlay")?.remove();
-  const overlay = document.createElement("div");
-  overlay.className = "simple-actions-overlay";
-  overlay.innerHTML = `<section class="simple-actions">${actions.map((item, index) => `<button type="button" data-action-index="${index}">${esc(item.label)}</button>`).join("")}</section>`;
-  document.body.append(overlay);
-  const rect = anchor.getBoundingClientRect();
-  const menu = overlay.querySelector(".simple-actions");
-  menu.style.top = `${Math.min(window.innerHeight - 120, rect.bottom + 8)}px`;
-  menu.style.left = `${Math.max(12, Math.min(window.innerWidth - 230, rect.left - 170))}px`;
-  const close = () => overlay.remove();
-  const closeIfOutside = (event) => { if (!menu.contains(event.target)) close(); };
-  document.addEventListener("pointerdown", closeIfOutside, { capture: true, once: true });
-  document.addEventListener("keydown", (event) => { if (event.key === "Escape") close(); }, { once: true });
-  overlay.querySelectorAll("[data-action-index]").forEach((button) => button.addEventListener("click", async () => {
-    close();
-    try { await actions[Number(button.dataset.actionIndex)]?.action(); }
-    catch (error) { toast(error.message, true); }
-  }));
-}
 
-async function reportTarget(targetType, targetId) {
-  const reason = window.prompt("Опишите причину жалобы", "");
-  if (reason === null) return;
-  await api("/api/reports", { method: "POST", body: { targetType, targetId, reason } });
-  toast("Отправлено на рассмотрение.");
-}
+def username_taken(con: sqlite3.Connection, username: str, exclude_user_id: str | None = None) -> bool:
+    query = "SELECT 1 FROM users WHERE username = ? COLLATE NOCASE"
+    params = [username]
+    if exclude_user_id:
+        query += " AND id != ?"
+        params.append(exclude_user_id)
+    return bool(con.execute(query, params).fetchone())
 
-function profileMenuActions(profileUser) {
-  const actions = [];
-  if (profileUser.id !== state.me.id) actions.push({ label: "Пожаловаться на страницу", action: () => reportTarget("profile", profileUser.id) });
-  actions.push(
-    { label: "Скопировать username", action: () => copyText(`@${profileUser.username}`, "Username скопирован.") },
-    { label: "Отправить профиль в чат", action: () => openProfileShareDialog(profileUser) },
-  );
-  return actions;
-}
 
-async function copyText(text, successMessage = "Текст скопирован.") {
-  try {
-    if (!navigator.clipboard?.writeText) throw new Error("Clipboard API недоступен");
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.cssText = "position:fixed;opacity:0;pointer-events:none";
-    document.body.append(textarea);
-    textarea.select();
-    const copied = document.execCommand("copy");
-    textarea.remove();
-    if (!copied) throw new Error("Не удалось скопировать username.");
-  }
-  toast(successMessage);
-}
+def tick_boosts(con: sqlite3.Connection) -> None:
+    current = now()
+    jobs = con.execute("SELECT * FROM boost_jobs WHERE active = 1 AND remaining > 0").fetchall()
+    for job in jobs:
+        minutes = max(0, (current - job["last_tick"]) // 60)
+        if minutes <= 0:
+            continue
+        add_count = min(job["remaining"], minutes * job["amount_per_minute"])
+        if add_count <= 0:
+            continue
+        if job["target_type"] == "chat" and job["metric"] == "subscribers":
+            con.execute("UPDATE chats SET subscriber_boost = subscriber_boost + ? WHERE id = ?", (add_count, job["target_id"]))
+        elif job["target_type"] == "message" and job["metric"] == "views":
+            con.execute("UPDATE messages SET views_boost = views_boost + ? WHERE id = ?", (add_count, job["target_id"]))
+        elif job["target_type"] == "message" and job["metric"] == "reactions":
+            row = con.execute("SELECT reactions_json FROM messages WHERE id = ?", (job["target_id"],)).fetchone()
+            if row:
+                reactions = loads(row["reactions_json"], {}) or {}
+                reactions["⭐"] = int(reactions.get("⭐", 0)) + add_count
+                con.execute("UPDATE messages SET reactions_json = ? WHERE id = ?", (dumps(reactions), job["target_id"]))
+        remaining = job["remaining"] - add_count
+        con.execute(
+            "UPDATE boost_jobs SET remaining = ?, active = ?, last_tick = ? WHERE id = ?",
+            (remaining, 1 if remaining > 0 else 0, current, job["id"]),
+        )
 
-function openProfileShareDialog(profileUser) {
-  const targets = visibleChats(false).filter((chat) => chat.type !== "secret" && (chat.type !== "channel" || isChannelManagerRole(chatMemberRole(chat.id))));
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Отправка профиля"><header><div><b>Отправить профиль</b><small>Выберите чат, в который будет отправлен @${esc(profileUser.username)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="member-manager__list">${targets.map((chat) => { const meta = chatMeta(chat); return `<button class="member-manager__user" type="button" data-share-profile-to="${chat.id}">${meta.user ? avatarHtml(meta.user) : `<div class="avatar">${esc(meta.icon)}</div>`}<span><b>${esc(meta.title)}</b><small>${esc(meta.subtitle)}</small></span><em>Отправить</em></button>`; }).join("") || '<p class="muted">Нет доступных чатов для отправки профиля.</p>'}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-share-profile-to]").forEach((button) => button.addEventListener("click", async () => {
-    try {
-      const chatId = button.dataset.shareProfileTo;
-      await api("/api/messages", { method: "POST", body: { chatId, profileUserId: profileUser.id } });
-      activeSection = "chats";
-      activeChatId = chatId;
-      scrollChatToLatest = true;
-      close();
-      await refresh();
-      toast("Профиль отправлен.");
-    } catch (error) { toast(error.message, true); }
-  }));
-}
 
-async function shareText(text) {
-  if (navigator.share) {
-    try { await navigator.share({ text }); return; } catch {}
-  }
-  await navigator.clipboard?.writeText(text);
-  toast("Ссылка/текст скопированы.");
-}
+def weighted_channel_post(con: sqlite3.Connection, channel_id: str) -> sqlite3.Row | None:
+    posts = con.execute(
+        """SELECT id, text, media_type, reactions_json FROM messages
+           WHERE chat_id = ? AND media_type != 'system' AND deleted_by_admin = 0
+           ORDER BY created_at DESC, rowid DESC LIMIT 500""",
+        (channel_id,),
+    ).fetchall()
+    if not posts:
+        return None
+    total_weight = sum((len(posts) - index) ** 2 for index in range(len(posts)))
+    selected = secrets.randbelow(total_weight)
+    for index, post in enumerate(posts):
+        selected -= (len(posts) - index) ** 2
+        if selected < 0:
+            return post
+    return posts[0]
 
-async function setStoryAuthorHidden(authorId, hidden) {
-  await api("/api/stories/hide-author", { method: "POST", body: { authorId, hidden } });
-  toast(hidden ? "Сторис пользователя скрыты." : "Сторис снова будут показываться.");
-  await refresh(false);
-}
 
-async function setStoryPrivacyHidden(userId, hidden) {
-  await api("/api/stories/privacy", { method: "POST", body: { userId, hidden } });
-  toast(hidden ? "Пользователь больше не увидит ваши сторис." : "Пользователь снова увидит ваши сторис.");
-  await refresh(false);
-}
+def tick_channel_growth(con: sqlite3.Connection) -> None:
+    current = now()
+    jobs = con.execute("SELECT * FROM channel_growth_jobs WHERE active = 1").fetchall()
+    reaction_icons = channel_reaction_emojis(con)
+    commenters = con.execute("SELECT user_id FROM automated_commenters ORDER BY created_at").fetchall()
+    for job in jobs:
+        elapsed = max(0, min(current, job["ends_at"]) - job["starts_at"])
+        targets = {metric: elapsed * job[f"{metric}_per_hour"] // 3600 for metric in ("subscribers", "views", "reactions", "comments")}
+        additions = {metric: targets[metric] - job[f"{metric}_added"] for metric in targets}
+        if additions["subscribers"] > 0:
+            con.execute("UPDATE chats SET subscriber_boost = subscriber_boost + ? WHERE id = ?", (additions["subscribers"], job["channel_id"]))
+        for _ in range(max(0, additions["views"])):
+            post = weighted_channel_post(con, job["channel_id"])
+            if post:
+                con.execute("UPDATE messages SET views_boost = views_boost + 1 WHERE id = ?", (post["id"],))
+        for _ in range(max(0, additions["reactions"])):
+            post = weighted_channel_post(con, job["channel_id"])
+            if post:
+                reactions = loads(post["reactions_json"], {}) or {}
+                icon = reaction_icons[secrets.randbelow(len(reaction_icons))]
+                reactions[icon] = int(reactions.get(icon, 0)) + 1
+                con.execute("UPDATE messages SET reactions_json = ? WHERE id = ?", (dumps(reactions), post["id"]))
+        if additions["comments"] > 0 and commenters:
+            for _ in range(additions["comments"]):
+                post = weighted_channel_post(con, job["channel_id"])
+                if post:
+                    commenter = commenters[secrets.randbelow(len(commenters))]
+                    text = local_automated_comment(post["text"], post["media_type"] == "photo", ["support", "opinion", "question"])
+                    con.execute("INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)", (uid("comment"), post["id"], commenter["user_id"], text, None, 1, current))
+        con.execute("UPDATE channel_growth_jobs SET subscribers_added = ?, views_added = ?, reactions_added = ?, comments_added = ?, active = ? WHERE id = ?", (targets["subscribers"], targets["views"], targets["reactions"], targets["comments"], 1 if current < job["ends_at"] else 0, job["id"]))
 
-function openChatMedia(chat) {
-  const media = state.messages.filter((message) => message.chatId === chat.id && ["photo", "voice", "circle", "document"].includes(message.mediaType));
-  const photos = media.filter((message) => message.mediaType === "photo");
-  const voices = media.filter((message) => message.mediaType === "voice");
-  const circles = media.filter((message) => message.mediaType === "circle");
-  const documents = media.filter((message) => message.mediaType === "document");
-  const overlay = document.createElement("div");
-  overlay.className = "group-card-overlay";
-  overlay.innerHTML = `<section class="group-card chat-media-card" role="dialog" aria-modal="true" aria-label="Вложения диалога"><header class="group-card__header"><div><b>Вложения</b><small>Фото, документы, голосовые и кружки</small></div><button type="button" data-close-chat-media aria-label="Закрыть">×</button></header><section class="group-card__section">${photos.length ? `<div class="group-card__photos">${photos.map((message) => `<button type="button" data-chat-photo="${message.id}"><img src="${esc(messageMediaUrl(message))}" alt="Фото"></button>`).join("")}</div>` : ""}${documents.length ? `<div class="group-card__media-list"><b>Документы · ${documents.length}</b>${documents.map((message) => `<a class="document-link" href="${esc(messageMediaUrl(message))}" target="_blank" rel="noopener">📄 ${esc(message.text?.replace(/^Документ:\s*/, "") || "Документ")}</a>`).join("")}</div>` : ""}${voices.length ? `<div class="group-card__media-list"><b>Голосовые · ${voices.length}</b>${voices.map((message) => `<audio controls preload="metadata" src="${esc(messageMediaUrl(message))}"></audio>`).join("")}</div>` : ""}${circles.length ? `<div class="group-card__circles"><b>Кружки · ${circles.length}</b><div>${circles.map((message) => `<button type="button" data-chat-circle="${message.id}"><video muted preload="metadata" src="${esc(messageMediaUrl(message))}"></video><span>▶</span></button>`).join("")}</div></div>` : ""}${!media.length ? '<p class="muted">В этом диалоге пока нет вложений.</p>' : ""}</section></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector("[data-close-chat-media]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-chat-photo]").forEach((button) => button.addEventListener("click", () => openMedia(messageMediaUrl(state.messages.find((message) => message.id === button.dataset.chatPhoto)))));
-  overlay.querySelectorAll("[data-chat-circle]").forEach((button) => button.addEventListener("click", () => { close(); openCircle(button.dataset.chatCircle); }));
-}
 
-function openForwardPicker(messageIds) {
-  const targets = visibleChats(false).filter((chat) => chat.type !== "secret" && chat.id !== activeChatId);
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Пересылка сообщений"><header><div><b>Переслать сообщения</b><small>Выберите диалог, группу или беседу</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="member-manager__list">${targets.map((chat) => { const meta = chatMeta(chat); return `<button class="member-manager__user" type="button" data-forward-target="${chat.id}">${meta.user ? avatarHtml(meta.user) : `<div class="avatar">${esc(meta.icon)}</div>`}<span><b>${esc(meta.title)}</b><small>${esc(meta.subtitle)}</small></span><em>Переслать</em></button>`; }).join("") || '<p class="muted">Нет другого доступного чата для пересылки.</p>'}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-forward-target]").forEach((button) => button.addEventListener("click", async () => {
-    const result = await runBulkMessageAction({ action: "forward", messageIds, targetChatId: button.dataset.forwardTarget }, "Сообщения пересланы.");
-    if (result) close();
-  }));
-}
+def demo_activity_post(con: sqlite3.Connection, channel_id: str, post_limit: int) -> sqlite3.Row | None:
+    posts = con.execute(
+        """SELECT id, text, media_type, reactions_json FROM messages
+           WHERE chat_id = ? AND media_type != 'system' AND deleted_by_admin = 0
+           ORDER BY created_at DESC, rowid DESC LIMIT ?""",
+        (channel_id, post_limit),
+    ).fetchall()
+    return posts[secrets.randbelow(len(posts))] if posts else None
 
-function openConfidentialForwardDialog(messageIds) {
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager secret-chat-creator" role="dialog" aria-modal="true" aria-label="Пересылка в скрытый чат"><header><div><b>В скрытый чат</b><small>Введите код существующего чата. Исходные сообщения останутся в этом диалоге.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-confidential-forward-form><label>Код чата<input name="password" inputmode="numeric" pattern="\\d{4}" minlength="4" maxlength="4" autocomplete="off" required placeholder="0000"></label><button class="button primary">Переслать</button></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-confidential-forward-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const password = String(form.get("password") || "");
-    if (!/^\d{4}$/.test(password)) return toast("Пароль должен состоять ровно из 4 цифр.", true);
-    const result = await runBulkMessageAction({ action: "forward_confidential", messageIds, password }, "Сообщения пересланы в скрытый чат.");
-    if (result) {
-      close();
-      activeChatId = result.targetChatId;
-      scrollChatToLatest = true;
-      renderApp();
-    }
-  });
-  overlay.querySelector("input[name=password]").focus();
-}
 
-async function runBulkMessageAction(body, successMessage) {
-  try {
-    const result = await api("/api/messages/bulk", { method: "POST", body });
-    selectedMessageIds.clear();
-    toast(successMessage);
-    await refresh(false);
-    return result;
-  } catch (error) {
-    toast(error.message, true);
-    return null;
-  }
-}
-
-function openPinnedActions(msg) {
-  if (!msg) return;
-  const canPinForEveryone = canPinMessageForEveryone(msg);
-  const overlay = document.createElement("div");
-  overlay.className = "message-menu-overlay";
-  overlay.innerHTML = `<section class="message-menu message-menu--compact" role="dialog" aria-modal="true" aria-label="Действия с закрепом"><header><div><b>Закреплённое сообщение</b></div><button type="button" data-close-menu aria-label="Закрыть">×</button></header><div class="message-menu__actions"><button type="button" data-pinned-action="hide">${actionIcon("cancel", "message-menu__icon")}<span>Открепить у себя</span></button>${canPinForEveryone ? `<button type="button" class="danger" data-pinned-action="unpin">${pinIcon("message-menu__icon")}<span>Открепить у всех</span></button>` : ""}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector("[data-close-menu]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-pinned-action]").forEach((button) => button.addEventListener("click", async () => {
-    try {
-      if (button.dataset.pinnedAction === "hide") {
-        if (!window.confirm("Убрать этот закреп только у вас? Само сообщение останется в переписке.")) return;
-        await api("/api/messages/pin/hide", { method: "POST", body: { messageId: msg.id } });
-        toast("Закреп убран у вас.");
-      } else if (canPinForEveryone) {
-        if (!window.confirm("Открепить это сообщение у всех участников?")) return;
-        await api("/api/messages/pin", { method: "POST", body: { messageId: msg.id } });
-        toast("Сообщение откреплено у всех.");
-      }
-      close();
-      await refresh(false);
-    } catch (error) { toast(error.message, true); }
-  }));
-}
-
-function openSelectedDeleteDialog(messageIds) {
-  const selected = state.messages.filter((msg) => messageIds.includes(msg.id));
-  const ownOnly = selected.length > 0 && selected.every((msg) => canDeleteMessageForEveryone(msg));
-  const overlay = document.createElement("div");
-  overlay.className = "message-menu-overlay";
-  overlay.innerHTML = `<section class="message-menu message-menu--compact" role="dialog" aria-modal="true" aria-label="Удаление выбранных сообщений"><header><div><b>Удалить сообщения</b><small>Выбрано: ${selected.length}</small></div><button type="button" data-close-menu aria-label="Закрыть">×</button></header><div class="message-menu__actions"><button type="button" data-selected-delete="me">${actionIcon("delete", "message-menu__icon")}<span>Удалить у себя</span></button>${ownOnly ? `<button type="button" class="danger" data-selected-delete="everyone">${actionIcon("delete", "message-menu__icon")}<span>Удалить у всех</span></button>` : ""}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector("[data-close-menu]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-selected-delete]").forEach((button) => button.addEventListener("click", async () => {
-    const scope = button.dataset.selectedDelete;
-    const label = scope === "everyone" ? "Удалить выбранные сообщения у всех?" : "Скрыть выбранные сообщения только у вас?";
-    if (!window.confirm(label)) return;
-    const result = await runBulkMessageAction({ action: "delete", messageIds, scope }, scope === "everyone" ? "Сообщения удалены у всех." : "Сообщения скрыты у вас.");
-    if (result) close();
-  }));
-}
-
-function openChatMenu(chatId) {
-  const chat = state.chats.find((item) => item.id === chatId);
-  if (!chat) return;
-  const meta = chatMeta(chat);
-  const overlay = document.createElement("div");
-  overlay.className = "chat-menu-overlay";
-  overlay.innerHTML = `<section class="chat-menu" role="dialog" aria-modal="true" aria-label="Действия с диалогом"><header><div><b>${esc(meta.title)}</b><small>Управление диалогом</small></div><button type="button" data-close-chat-menu aria-label="Закрыть">×</button></header><div class="chat-menu__actions"><button type="button" data-chat-action="pin">${chat.pinned ? "Открепить" : "Закрепить"}</button><button type="button" data-chat-action="archive">${chat.archived ? "Вернуть из архива" : "Архивировать"}</button><button type="button" data-chat-action="delete-me">Удалить у себя</button>${chat.ownerId === state.me.id ? '<button type="button" class="danger" data-chat-action="delete-everyone">Удалить у всех</button>' : ""}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector("[data-close-chat-menu]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-chat-action]").forEach((button) => button.addEventListener("click", async () => {
-    const action = button.dataset.chatAction;
-    try {
-      if (action === "pin") await api("/api/chats/pin", { method: "POST", body: { chatId } });
-      if (action === "archive") await api("/api/chats/archive", { method: "POST", body: { chatId, archived: !chat.archived } });
-      if (action === "delete-me") {
-        if (!window.confirm(`Удалить «${meta.title}» только у вас?`)) return;
-        await api("/api/chats/delete", { method: "POST", body: { chatId, scope: "me" } });
-      }
-      if (action === "delete-everyone") {
-        if (!window.confirm(`Удалить «${meta.title}» у всех участников без возможности восстановления?`)) return;
-        await api("/api/chats/delete", { method: "POST", body: { chatId, scope: "everyone" } });
-      }
-      if (["archive", "delete-me", "delete-everyone"].includes(action) && activeChatId === chatId) activeChatId = null;
-      close();
-      await refresh();
-    } catch (error) { toast(error.message, true); }
-  }));
-}
-
-function removePendingMessage(messageId) {
-  const message = pendingOutgoingMessages.get(messageId);
-  if (!message || message.deliveryState !== "failed") return;
-  pendingOutgoingMessages.delete(messageId);
-  renderChat();
-  toast("Неотправленное сообщение удалено.");
-}
-
-function messageHtml(msg) {
-  const chat = state.chats.find((item) => item.id === msg.chatId);
-  const settings = chat.settings || {};
-  if (msg.mediaType === "system") return `<div class="message message--system" id="message-${msg.id}"><span>${esc(msg.text)}</span></div>`;
-  const reactions = Object.entries(msg.reactions || {}).filter(([, count]) => Number(count) > 0);
-  const reactionHtml = reactions.length ? `<div class="reacts visible-reacts">${reactions.map(([emoji, count]) => `<button data-react="${msg.id}" data-emoji="${esc(emoji)}">${esc(emoji)} ${count}</button>`).join("")}</div>` : "";
-  const isCircle = msg.mediaType === "circle";
-  const isVoice = msg.mediaType === "voice";
-  const isGroup = ["group", "community", "channel"].includes(chat?.type);
-  const author = userById(msg.senderId);
-  const sharedProfile = msg.profileUserId ? userById(msg.profileUserId) : null;
-  const forwardedFromUser = msg.forwardedFromUserId ? userById(msg.forwardedFromUserId) : null;
-  const showAuthor = isGroup && msg.senderId !== state.me.id;
-  const showInlineDelivery = !msg.mediaType
-    && !msg.forwardedFrom
-    && !sharedProfile
-    && !msg.profileUserId
-    && !String(msg.text || "").includes("\n")
-    && String(msg.text || "").length <= 52;
-  const canDeleteRssPost = ["rss", "vk"].includes(msg.sourceType) && chat?.type === "channel" && isChannelManagerRole(chatMemberRole(msg.chatId));
-  const sourcePostActions = canDeleteRssPost
-    ? `<div class="group-post-actions"><button type="button" data-delete-message="${msg.id}" data-delete-scope="everyone">Удалить публикацию</button></div>`
-    : msg.sourceType && !["telegram", "rss"].includes(msg.sourceType)
-      ? `<div class="group-post-actions"><button type="button" data-delete-source-repost="${msg.id}">Удалить репост</button></div>`
-      : "";
-  const commentableChat = ["channel", "group", "community"].includes(chat?.type);
-  const comments = commentableChat ? state.channelComments.filter((comment) => comment.message_id === msg.id) : [];
-  const channelReactionPickerHtml = chat?.type === "channel" && settings.showReactions !== false ? `<div class="reaction-picker hidden" data-reaction-picker="${msg.id}"><div class="reaction-picker__head"><b>Выберите реакцию</b><button class="reaction-picker__close" type="button" data-close-reactions aria-label="Закрыть">×</button></div><div class="reaction-picker__emojis">${availableMessageReactions(chat).map((emoji) => `<button type="button" data-react="${msg.id}" data-emoji="${esc(emoji)}" aria-label="Реакция ${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div></div>` : "";
-  const commentsHtml = commentableChat && settings.commentsEnabled !== false ? `<div class="channel-comments"><button type="button" data-open-channel-comments="${msg.id}" aria-label="Комментарии${comments.length ? `: ${comments.length}` : ""}" title="Комментарии"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.75A2.75 2.75 0 0 1 6.75 3h7.5A2.75 2.75 0 0 1 17 5.75v4.5A2.75 2.75 0 0 1 14.25 13H10l-3.75 2.5V13A2.75 2.75 0 0 1 4 10.25v-4.5Z"/><path d="M8 17h6.25A2.75 2.75 0 0 0 17 14.25V13M7.5 7.75h6M7.5 10h3.75"/></svg>${comments.length ? `<span>${comments.length}</span>` : ""}</button>${chat?.type === "channel" && settings.showReactions !== false ? `<button type="button" data-open-reacts="${msg.id}" aria-label="Выбрать реакцию" title="Выбрать реакцию">${actionIcon("reaction")}</button>` : ""}${chat?.type === "channel" ? `<button type="button" data-share-channel-post="${msg.id}" aria-label="Поделиться публикацией" title="Поделиться">${actionIcon("forward")}</button>` : ""}</div>` : "";
-  return `<div class="message ${msg.senderId === state.me.id ? "own" : ""}${showAuthor ? " message--with-author" : ""}${msg.pinned ? " pinned" : ""}${isCircle ? " message--circle" : ""}${isVoice ? " message--audio" : ""}${String(msg.id).startsWith("pending-") ? " message--pending" : ""}${msg.deliveryState === "failed" ? " message--failed" : ""}${selectedMessageIds.has(msg.id) ? " selected" : ""}" id="message-${msg.id}">
-    ${showAuthor ? `<button class="message__author" type="button" data-open-profile="${msg.senderId}" title="Открыть профиль ${esc(author?.name || "участника")}">${avatarHtml(author, "message__author-avatar")}</button>` : ""}
-    <div class="message__content">
-      <div class="message__bubble${showInlineDelivery ? " message__bubble--inline-meta" : " message__bubble--with-meta"}">
-        ${msg.forwardedFrom ? forwardedFromUser ? `<button type="button" class="message__forwarded message__forwarded--link" data-open-profile="${forwardedFromUser.id}" title="Открыть профиль автора источника"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 3 12l6 7M4 12h10a6 6 0 0 1 6 6v1"/></svg>Переслано от ${esc(msg.forwardedFrom)}</button>` : `<div class="message__forwarded"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 3 12l6 7M4 12h10a6 6 0 0 1 6 6v1"/></svg>Переслано от ${esc(msg.forwardedFrom)}</div>` : ""}
-        ${messageMediaHtml(msg)}
-        ${sharedProfile ? `<button type="button" class="shared-profile-card" data-open-profile="${sharedProfile.id}" title="Открыть профиль ${esc(sharedProfile.name)}">${avatarHtml(sharedProfile, "shared-profile-card__avatar")}<span><b>${esc(sharedProfile.name)}</b><small>@${esc(sharedProfile.username)}</small></span><em>Профиль</em></button>` : msg.profileUserId ? '<div class="shared-profile-card shared-profile-card--missing"><span><b>Профиль недоступен</b><small>Пользователь больше не найден</small></span></div>' : ""}
-        ${["rss", "vk"].includes(msg.sourceType) ? rssPostHtml(msg) : msg.text ? `<div class="message__text">${highlightedMessageSearch.chatId === msg.chatId ? highlightedText(msg.text, highlightedMessageSearch.query) : esc(msg.text)}</div>` : ""}
-        ${selectedMessageIds.has(msg.id) ? `<span class="message__selected-marker" aria-label="Сообщение выбрано">${actionIcon("select")}</span>` : ""}
-        ${messageDeliveryHtml(msg, showInlineDelivery ? "inline" : "inside")}
-        ${msg.deliveryState === "failed" ? `<button class="message__pending-delete" type="button" data-remove-pending-message="${msg.id}" title="Удалить неотправленное сообщение" aria-label="Удалить неотправленное сообщение">${actionIcon("delete")}</button>` : ""}
-      </div>
-      ${settings.showReactions !== false ? reactionHtml : ""}
-      ${commentsHtml}
-      ${channelReactionPickerHtml}
-      ${sourcePostActions}
-    </div>
-  </div>`;
-}
-
-function messageDeliveryHtml(msg, placement = "inside") {
-  if (msg.mediaType === "system") return "";
-  const dateTime = `${dateFmt(msg.createdAt)} · ${timeFmt(msg.createdAt)}`;
-  if (msg.senderId !== state.me.id) {
-    return `<span class="message__meta${placement === "side" ? " message__meta--side" : ""}" title="${esc(dateTime)}"><time datetime="${new Date(msg.createdAt * 1000).toISOString()}">${timeFmt(msg.createdAt)}</time></span>`;
-  }
-  const delivery = msg.deliveryState || (msg.readByRecipient ? "read" : "sent");
-  const labels = {
-    sending: "Отправляется",
-    failed: "Не отправлено",
-    sent: "Отправлено",
-    read: "Прочитано",
-  };
-  const icons = {
-    sending: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7.5"/><path d="M12 4.5v3"/></svg>',
-    failed: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="m9 9 6 6m0-6-6 6"/></svg>',
-    sent: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.1 4L19 7"/></svg>',
-    read: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 12.5 4.1 4L15 8.5M9 12.5l4.1 4L21 7"/></svg>',
-  };
-  const deliveryLabel = labels[delivery] || labels.sent;
-  return `<span class="message__meta${placement === "side" ? " message__meta--side" : ""} message__delivery message__delivery--${delivery}" title="${esc(`${dateTime} · ${deliveryLabel}`)}" aria-label="${deliveryLabel}"><time datetime="${new Date(msg.createdAt * 1000).toISOString()}">${timeFmt(msg.createdAt)}</time><span class="message__delivery-icon">${icons[delivery] || icons.sent}</span></span>`;
-}
-
-function externalHttpUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
-  } catch {
-    return "";
-  }
-}
-
-function rssPostHtml(msg) {
-  const parts = String(msg.text || "").split(/\n\s*\n/);
-  const trailingUrl = externalHttpUrl(parts[parts.length - 1]);
-  if (trailingUrl) parts.pop();
-  const title = (parts.shift() || "").trim();
-  const description = parts.join("\n\n").trim();
-  const articleUrl = externalHttpUrl(msg.sourceId) || trailingUrl;
-  const sourceName = articleUrl ? new URL(articleUrl).hostname.replace(/^www\./, "") : "";
-  const canCollapse = description.length > 380;
-  const collapsed = canCollapse && !expandedRssPostIds.has(msg.id);
-  return `<div class="message__text message__rss-text">${title ? `<b class="message__rss-title">${esc(title)}</b>` : ""}${description ? `<div class="message__rss-description${collapsed ? " is-collapsed" : ""}">${esc(description)}</div>${canCollapse ? `<button type="button" class="message__rss-toggle" data-toggle-rss-post="${msg.id}">${collapsed ? "Читать дальше" : "Свернуть"}</button>` : ""}` : ""}${articleUrl ? `<a class="message__rss-link" href="${esc(articleUrl)}" target="_blank" rel="noopener noreferrer">Источник: ${esc(sourceName)}</a>` : ""}</div>`;
-}
-
-function openMessageMenu(msg) {
-  const chat = state.chats.find((item) => item.id === msg.chatId);
-  const user = userById(msg.senderId);
-  const settings = chat?.settings || {};
-  const canDeleteForEveryone = canDeleteMessageForEveryone(msg);
-  const canPinForEveryone = canPinMessageForEveryone(msg);
-  const reactions = availableMessageReactions(chat);
-  const downloadLabel = msg.mediaType === "voice" ? "Скачать голосовое" : msg.mediaType === "circle" ? "Скачать видеокружок" : "";
-  const overlay = document.createElement("div");
-  overlay.className = "message-menu-overlay";
-  overlay.innerHTML = `<section class="message-menu" role="dialog" aria-modal="true" aria-label="Действия с сообщением"><header><div><b>Сообщение</b><small>${esc(user?.name || "Пользователь")} · ${esc(dateFmt(msg.createdAt))} · ${timeFmt(msg.createdAt)}</small></div><button type="button" data-close-message-menu aria-label="Закрыть">×</button></header><p class="message-menu__preview">${esc(pinnedMessagePreview(msg))}</p><div class="message-menu__actions">${settings.showReactions !== false ? `<button type="button" data-toggle-message-reactions>${actionIcon("reaction", "message-menu__icon")}<span>Реакция</span></button><div class="message-menu__reactions hidden" data-message-reactions>${reactions.map((emoji) => `<button type="button" data-message-menu-react="${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div>` : ""}${msg.senderId === state.me.id && msg.mediaType !== "system" ? `<button type="button" data-message-menu-action="edit">${actionIcon("edit", "message-menu__icon")}<span>Редактировать</span></button>` : ""}<button type="button" data-message-menu-action="forward">${actionIcon("forward", "message-menu__icon")}<span>Переслать</span></button><button type="button" data-message-menu-action="select">${actionIcon("select", "message-menu__icon")}<span>${selectedMessageIds.has(msg.id) ? "Убрать из выбора" : "Выбрать"}</span></button><button type="button" data-message-menu-action="profile">${actionIcon("profile", "message-menu__icon")}<span>Открыть профиль</span></button>${chat?.type === "channel" && msg.mediaType !== "system" ? `<button type="button" data-message-menu-action="report">${actionIcon("report", "message-menu__icon")}<span>Пожаловаться</span></button><button type="button" data-message-menu-action="donate">${actionIcon("donate", "message-menu__icon")}<span>Подарить звёзды</span></button>` : ""}${downloadLabel ? `<button type="button" data-message-menu-action="download-media">${actionIcon("download", "message-menu__icon")}<span>${downloadLabel}</span></button>` : ""}${canPinForEveryone ? `<button type="button" data-message-menu-action="pin">${pinIcon("message-menu__icon")}<span>${msg.pinned ? "Открепить у всех" : "Закрепить у всех"}</span></button>` : ""}<button type="button" data-toggle-message-delete>${actionIcon("delete", "message-menu__icon")}<span>Удалить</span></button><div class="message-menu__nested hidden" data-message-delete-options><button type="button" data-message-menu-action="delete-me">Удалить у себя</button>${canDeleteForEveryone ? '<button type="button" class="danger" data-message-menu-action="delete-everyone">Удалить у всех</button>' : ""}</div></div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector("[data-close-message-menu]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-toggle-message-reactions]")?.addEventListener("click", () => overlay.querySelector("[data-message-reactions]").classList.toggle("hidden"));
-  overlay.querySelector("[data-toggle-message-delete]").addEventListener("click", () => overlay.querySelector("[data-message-delete-options]").classList.toggle("hidden"));
-  overlay.querySelectorAll("[data-message-menu-react]").forEach((button) => button.addEventListener("click", async () => {
-    try {
-      showMessageReactionBurst(button.dataset.messageMenuReact, button);
-      await api("/api/react", { method: "POST", body: { messageId: msg.id, emoji: button.dataset.messageMenuReact } });
-      close();
-      await refresh(false);
-    } catch (error) { toast(error.message, true); }
-  }));
-  overlay.querySelectorAll("[data-message-menu-action]").forEach((button) => button.addEventListener("click", async () => {
-    const action = button.dataset.messageMenuAction;
-    try {
-      if (action === "select") {
-        if (selectedMessageIds.has(msg.id)) selectedMessageIds.delete(msg.id);
-        else selectedMessageIds.add(msg.id);
-        close();
-        renderChat();
-        return;
-      }
-      if (action === "forward") { close(); openForwardPicker([msg.id]); return; }
-      if (action === "edit") { close(); openMessageEditor(msg); return; }
-      if (action === "profile") { close(); openProfile(msg.senderId); return; }
-      if (action === "report") { close(); await reportTarget("group-post", msg.id); return; }
-      if (action === "download-media") { close(); await downloadMessageMedia(msg); return; }
-      if (action === "pin" && canPinForEveryone) {
-        if (msg.pinned && !window.confirm("Открепить сообщение у всех участников?")) return;
-        await api("/api/messages/pin", { method: "POST", body: { messageId: msg.id } });
-      }
-      if (action === "donate") { close(); await donateToChannelMessage(msg); return; }
-      if (action === "delete-me") {
-        if (!window.confirm("Скрыть сообщение только у вас?")) return;
-        await api("/api/messages/delete", { method: "POST", body: { messageId: msg.id, scope: "me" } });
-      }
-      if (action === "delete-everyone") {
-        if (!window.confirm("Удалить сообщение у всех?")) return;
-        await api("/api/messages/delete", { method: "POST", body: { messageId: msg.id, scope: "everyone" } });
-      }
-      close();
-      await refresh(false);
-    } catch (error) { toast(error.message, true); }
-  }));
-}
-
-function openMessageEditor(msg) {
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Редактирование публикации"><header><div><b>Редактировать публикацию</b><small>Изменения увидят все участники чата.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-message-edit-form><label>Текст<textarea name="text" required maxlength="3000">${esc(msg.text || "")}</textarea></label><button class="button primary">Сохранить</button></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-message-edit-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await api("/api/messages/edit", { method: "POST", body: { messageId: msg.id, text: new FormData(event.currentTarget).get("text") } });
-      close();
-      toast("Публикация обновлена.");
-      await refresh(false);
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelector("textarea").focus();
-}
-
-function pinnedMessagePreview(msg) {
-  if (msg.text) return msg.text;
-  if (msg.mediaType === "photo") return "Фото";
-  if (msg.mediaType === "voice") return "Голосовое сообщение";
-  if (msg.mediaType === "circle") return "Видеокружок";
-  return "Сообщение";
-}
-
-function openMemberManager(chat) {
-  const memberIds = new Set(state.members.filter((member) => member.chat_id === chat.id).map((member) => member.user_id));
-  const directContactIds = new Set(
-    state.chats
-      .filter((item) => item.type === "direct" && isMember(item.id))
-      .flatMap((item) => state.members.filter((member) => member.chat_id === item.id && member.user_id !== state.me.id).map((member) => member.user_id)),
-  );
-  const candidates = state.users.filter((user) => directContactIds.has(user.id) && !memberIds.has(user.id));
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Добавление участников"><header><div><b>Добавить участников</b><small>${esc(chat.title)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><label>Поиск<input type="search" placeholder="Имя или username" data-member-search></label><div class="member-manager__list" data-member-list></div></section>`;
-  document.body.append(overlay);
-  const list = overlay.querySelector("[data-member-list]");
-  const renderCandidates = (query = "") => {
-    const normalized = query.trim().toLowerCase().replace("@", "");
-    const filtered = candidates.filter((user) => `${user.name} ${user.username}`.toLowerCase().includes(normalized));
-    list.innerHTML = filtered.length ? filtered.map((user) => `<button class="member-manager__user" type="button" data-add-user="${user.id}">${avatarHtml(user)}<span><b>${esc(user.name)}</b><small>@${esc(user.username)}</small></span><em>Добавить</em></button>`).join("") : '<p class="muted">Можно добавить только пользователей из ваших личных диалогов.</p>';
-    list.querySelectorAll("[data-add-user]").forEach((button) => button.addEventListener("click", async () => {
-      try {
-        await api("/api/chats/members", { method: "POST", body: { chatId: chat.id, userId: button.dataset.addUser } });
-        toast("Участник добавлен.");
-        overlay.remove();
-        await refresh();
-      } catch (error) { toast(error.message, true); }
-    }));
-  };
-  overlay.querySelector("[data-member-search]").addEventListener("input", (event) => renderCandidates(event.currentTarget.value));
-  overlay.querySelector(".member-manager__close").addEventListener("click", () => overlay.remove());
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) overlay.remove(); });
-  renderCandidates();
-  overlay.querySelector("[data-member-search]").focus();
-}
-
-function openGroupProfile(chat) {
-  const roleOrder = { owner: 0, admin: 1, author: 1, member: 2 };
-  const members = state.members
-    .filter((member) => member.chat_id === chat.id)
-    .map((member) => ({ ...member, user: userById(member.user_id) }))
-    .sort((a, b) => (roleOrder[a.role] ?? 99) - (roleOrder[b.role] ?? 99) || (a.user?.name || "").localeCompare(b.user?.name || "", "ru"));
-  const myRole = chatMemberRole(chat.id);
-  const isChannel = chat.type === "channel";
-  const canManageChannel = isChannel && isChannelManagerRole(myRole);
-  const canModerate = isChannel ? canManageChannel : ["owner", "admin"].includes(myRole);
-  const canEditProfile = myRole === "owner";
-  const canAuthorChannel = canManageChannel;
-  const subscriberCount = Number(chat.subscriberCount) || 0;
-  const media = state.messages.filter((message) => message.chatId === chat.id && ["photo", "voice", "circle", "document"].includes(message.mediaType));
-  const photos = media.filter((message) => message.mediaType === "photo");
-  const audio = media.filter((message) => message.mediaType === "voice");
-  const circles = media.filter((message) => message.mediaType === "circle");
-  const inviteLink = `${window.location.origin}/invite/${encodeURIComponent(chat.inviteCode || "")}`;
-  const channelLink = `${window.location.origin}/channel/${encodeURIComponent(chat.inviteCode || "")}`;
-  const inviteEnabled = chat.settings?.inviteLinkEnabled !== false;
-  const roleLabel = { owner: "Создатель", admin: "Администратор", author: "Администратор", member: "Подписчик" };
-  const memberHtml = members.map((member) => {
-    const isCreator = member.user_id === chat.ownerId;
-    const canRemove = canModerate && !isCreator && (myRole === "owner" || member.role === "member");
-    const canChangeRole = myRole === "owner" && !isCreator;
-    const privilegedRole = "admin";
-    const isPrivileged = ["admin", "author"].includes(member.role);
-    return `<article class="group-card__member">${avatarHtml(member.user, "group-card__member-avatar")}<button type="button" class="group-card__member-info" data-group-member-profile="${member.user_id}"><b>${esc(member.user?.name || "Участник")}</b><small>@${esc(member.user?.username || "")}</small></button><span class="group-card__role group-card__role--${esc(member.role)}">${roleLabel[member.role] || "Участник"}</span>${canChangeRole ? `<button class="group-card__member-action" type="button" data-member-role="${member.user_id}" data-next-role="${isPrivileged ? "member" : privilegedRole}">${isPrivileged ? "Снять права" : "Сделать админом"}</button>` : ""}${canRemove ? `<button class="group-card__member-action danger" type="button" data-remove-member="${member.user_id}">Удалить</button>` : ""}</article>`;
-  }).join("");
-  const overlay = document.createElement("div");
-  overlay.className = `group-card-overlay${isChannel ? " group-card-overlay--channel" : ""}`;
-  const bonus = channelStarBonus(chat);
-  const channelPurchases = state.channelStarPurchases.filter((purchase) => purchase.channel_id === chat.id);
-  const channelSettings = isChannel && canEditProfile ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Настройки канала</b><small>Видимость и взаимодействия</small></div></div><div class="channel-settings">${[["showSubscribers", "Подписчики", "Показывать число подписчиков"], ["showReactions", "Реакции", "Показывать реакции под публикациями"], ["commentsEnabled", "Комментарии", "Разрешить комментарии к постам"], ["isPublic", "Публичный канал", "Показывать канал в общем поиске"]].map(([key, title, hint]) => `<label class="channel-setting"><span><b>${title}</b><small>${hint}</small></span><input type="checkbox" name="${key}" ${chat.settings?.[key] !== false ? "checked" : ""}></label>`).join("")}<label class="channel-setting"><span><b>Бонус владельцу за покупку</b><small>Звёзды начисляются на баланс. Деньги фиксируются к выплате и требуют отдельного подключения выплат.</small></span><select name="starBonusType"><option value="stars" ${bonus.type === "stars" ? "selected" : ""}>Звёзды владельцу</option><option value="money" ${bonus.type === "money" ? "selected" : ""}>Деньги к выплате</option></select></label><label class="channel-setting"><span><b>Размер бонуса владельцу</b><small>Процент от купленных звёзд или суммы оплаты.</small></span><input name="starBonusPercent" type="number" min="1" max="100" value="${bonus.percent}"></label><label class="channel-setting"><span><b>Подарок покупателю</b><small>Будет списан с вашего баланса после успешной оплаты.</small></span><input name="buyerGiftStars" type="number" min="0" max="100000" value="${channelBuyerGift(chat)}"></label><label>Сообщение покупателю / промокод<textarea name="buyerPurchaseMessage" maxlength="500" placeholder="Например: промокод CHANNEL10 на следующую покупку">${esc(chat.settings?.buyerPurchaseMessage || "")}</textarea></label><div class="channel-settings__actions"><button class="button small" type="button" data-link-telegram>Импорт из Telegram</button><button class="button small" type="button" data-link-rss>Автопостинг из RSS</button><button class="button small" type="button" data-link-vk>Автопостинг из VK</button></div></div></section>` : "";
-  const channelPurchaseHistory = isChannel && canEditProfile ? `<section class="group-card__section channel-purchase-history"><div class="group-card__section-head"><div><b>Покупки через канал</b><small>${channelPurchases.length ? "Покупатели и начисленные бонусы" : "Покупок пока не было"}</small></div></div>${channelPurchases.length ? `<div class="channel-purchase-list">${channelPurchases.map((purchase) => `<article><span><b>${esc(purchase.buyer_name)}</b><small>@${esc(purchase.buyer_username)} · ${timeFmt(purchase.created_at)}</small></span><strong>★ ${purchase.stars}<small>${purchase.bonus_type === "money" ? `${esc(purchase.bonus_amount)} ₽ к выплате` : `+ ★ ${esc(purchase.bonus_amount)}`}</small></strong></article>`).join("")}</div>` : ""}</section>` : "";
-  const channelAdminTools = canAuthorChannel ? `<section class="group-card__section group-card__section--tools"><div class="group-card__section-head"><div><b>Инструменты администратора</b><small>Публикации, оформление и связь с группой</small></div></div><div class="channel-settings__actions"><button class="button small" type="button" data-schedule-channel-post>Запланировать пост</button><button class="button small" type="button" data-link-channel>Привязать группу / беседу</button><button class="button small" type="button" data-channel-appearance>Оформление канала</button></div></section>` : "";
-  const channelPublicLink = isChannel ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Ссылка на канал</b><small>По ней пользователь откроет канал и сможет подписаться.</small></div></div><div class="invite-link"><code>${esc(channelLink)}</code><button class="button small" type="button" data-copy-channel-link>Копировать</button></div></section>` : "";
-  const channelMedia = isChannel ? `<section class="group-card__section group-card__section--media"><div class="group-card__section-head"><div><b>Вложения</b><small>${media.length ? `${media.length} ${media.length === 1 ? "файл" : "файлов"}` : "Фото, документы, голосовые и кружки"}</small></div><button class="button small" type="button" data-open-group-media>Открыть</button></div></section>` : "";
-  const groupTools = !isChannel ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Вложения</b><small>${media.length ? `${media.length} ${media.length === 1 ? "файл" : "файлов"}` : "Пока нет файлов"}</small></div><button class="button small" type="button" data-open-group-media>Открыть</button></div></section><section class="group-card__section"><div class="group-card__section-head"><div><b>Ссылка-приглашение</b><small>${inviteEnabled ? "Доступна всем, у кого есть ссылка" : "Выдавать ссылку могут только администраторы"}</small></div></div>${canModerate ? `<div class="invite-link"><code>${esc(inviteLink)}</code><button class="button small" type="button" data-copy-invite-link>Копировать</button></div><label class="channel-setting"><span><b>Публичная ссылка</b><small>Разрешить вступление по ссылке без приглашения администратора</small></span><input type="checkbox" name="inviteLinkEnabled" ${inviteEnabled ? "checked" : ""}></label>` : '<p class="muted">Ссылка доступна у владельца и администраторов группы.</p>'}</section>` : "";
-  const profileEditor = canEditProfile
-    ? `<form class="group-card__form" data-group-profile-form><label>Название<input name="title" maxlength="120" required value="${esc(chat.title)}"></label><label>Описание<textarea name="description" maxlength="1000" placeholder="Расскажите о ${isChannel ? "канале" : "беседе"}">${esc(chat.description || "")}</textarea></label><label>Аватар<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp"></label><div class="group-card__form-actions"><button class="button small" type="submit">Сохранить профиль</button>${chat.avatarData ? '<button class="button small" type="button" data-clear-group-avatar>Убрать аватар</button>' : ""}</div></form>`
-    : `<section class="group-card__section"><b>О канале</b><p class="muted">Название, описание и аватар меняет только создатель.</p></section>`;
-  const memberSection = isChannel && !canManageChannel
-    ? `<section class="group-card__section group-card__section--subscriber-count"><div class="group-card__section-head"><div><b>Подписчики</b><small>Список подписчиков скрыт создателем канала</small></div><strong>${subscriberCount}</strong></div></section>`
-    : `<section class="group-card__section"><div class="group-card__section-head"><div><b>${isChannel ? "Подписчики и администраторы" : "Участники"}</b><small>${isChannel ? `${subscriberCount} ${subscriberWord(subscriberCount)}` : `${members.length} ${memberWord(members.length)}`}</small></div>${myRole === "owner" ? '<button class="button small" type="button" data-add-group-member>Добавить</button>' : ""}</div><div class="group-card__members">${memberHtml}</div></section>`;
-  const profileCount = isChannel ? subscriberCount : members.length;
-  overlay.innerHTML = `<section class="group-card${isChannel ? " group-card--channel" : ""}" role="dialog" aria-modal="true" aria-label="Профиль ${isChannel ? "канала" : "группы"}"><header class="group-card__header"><div class="group-card__identity">${chatAvatarHtml(chat, "group-card__avatar")}<div><b>${esc(chat.title)}</b><small>${profileCount} ${isChannel ? subscriberWord(profileCount) : memberWord(profileCount)} · ${isChannel ? "канал" : chat.type === "group" ? "группа" : "комьюнити"}</small></div></div><button type="button" data-close-group-card aria-label="Закрыть">×</button></header>${profileEditor}${channelSettings}${channelPurchaseHistory}${channelAdminTools}${channelPublicLink}${channelMedia}${groupTools}${memberSection}<footer class="group-card__footer${isChannel ? " group-card__footer--channel" : ""}">${isChannel ? `<button class="button primary group-card__buy-stars" type="button" data-buy-stars-through-channel>${starButtonIcon()} Купить звёзды</button>` : ""}${isChannel && chat.ownerId !== state.me.id ? `<button class="button small" type="button" data-report-channel-profile="${chat.id}">Пожаловаться на канал</button>` : ""}<button class="button danger" type="button" data-group-leave>Выйти из ${isChannel ? "канала" : "беседы"}</button></footer></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector("[data-close-group-card]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-group-profile-form]")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      const avatar = form.get("avatar");
-      const avatarData = avatar?.size ? await fileToDataUrl(avatar, 1_800_000) : (chat.avatarData || "");
-      const body = { chatId: chat.id, title: form.get("title"), description: form.get("description"), avatarData };
-      if (isChannel) {
-        ["showSubscribers", "showReactions", "commentsEnabled", "isPublic"].forEach((key) => { body[key] = overlay.querySelector(`[name="${key}"]`)?.checked; });
-        body.starBonusType = form.get("starBonusType");
-        body.starBonusPercent = form.get("starBonusPercent");
-        body.buyerGiftStars = form.get("buyerGiftStars");
-        body.buyerPurchaseMessage = form.get("buyerPurchaseMessage");
-      }
-      if (!isChannel && canModerate) body.inviteLinkEnabled = overlay.querySelector('[name="inviteLinkEnabled"]')?.checked;
-      await api("/api/chats/update", { method: "POST", body });
-      await refresh();
-      close();
-      openGroupProfile(state.chats.find((item) => item.id === chat.id));
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelector("[data-clear-group-avatar]")?.addEventListener("click", async () => {
-    try {
-      await api("/api/chats/update", { method: "POST", body: { chatId: chat.id, title: chat.title, description: chat.description, avatarData: "" } });
-      await refresh(); close(); openGroupProfile(state.chats.find((item) => item.id === chat.id));
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelector("[data-add-group-member]")?.addEventListener("click", () => { close(); openMemberManager(chat); });
-  overlay.querySelector("[data-open-group-media]")?.addEventListener("click", () => openChatMedia(chat));
-  overlay.querySelector("[data-copy-invite-link]")?.addEventListener("click", async () => {
-    try { await navigator.clipboard.writeText(inviteLink); toast("Ссылка-приглашение скопирована."); }
-    catch { window.prompt("Скопируйте ссылку:", inviteLink); }
-  });
-  overlay.querySelector("[data-copy-channel-link]")?.addEventListener("click", () => copyText(channelLink, "Ссылка на канал скопирована.").catch((error) => toast(error.message, true)));
-  overlay.querySelector("[data-schedule-channel-post]")?.addEventListener("click", () => openChannelScheduleDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
-  overlay.querySelector("[data-link-channel]")?.addEventListener("click", () => openChannelLinkDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
-  overlay.querySelector("[data-link-telegram]")?.addEventListener("click", () => openChannelTelegramDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
-  overlay.querySelector("[data-link-rss]")?.addEventListener("click", () => openChannelRssDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
-  overlay.querySelector("[data-link-vk]")?.addEventListener("click", () => openChannelVkDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
-  overlay.querySelector("[data-channel-appearance]")?.addEventListener("click", () => openChannelAppearanceDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
-  overlay.querySelector("[data-buy-stars-through-channel]")?.addEventListener("click", () => { close(); openChannelStarPurchase(chat); });
-  overlay.querySelector("[data-report-channel-profile]")?.addEventListener("click", async (event) => {
-    try { await reportTarget("channel", event.currentTarget.dataset.reportChannelProfile); } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelectorAll("[data-group-member-profile]").forEach((button) => button.addEventListener("click", () => { close(); openProfile(button.dataset.groupMemberProfile); }));
-  overlay.querySelectorAll("[data-member-role]").forEach((button) => button.addEventListener("click", async () => {
-    try { await api("/api/chats/members/role", { method: "POST", body: { chatId: chat.id, userId: button.dataset.memberRole, role: button.dataset.nextRole } }); await refresh(); close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }
-    catch (error) { toast(error.message, true); }
-  }));
-  overlay.querySelectorAll("[data-remove-member]").forEach((button) => button.addEventListener("click", async () => {
-    const member = members.find((item) => item.user_id === button.dataset.removeMember);
-    if (!window.confirm(`Удалить ${member?.user?.name || "участника"} из беседы?`)) return;
-    try { await api("/api/chats/members/remove", { method: "POST", body: { chatId: chat.id, userId: button.dataset.removeMember } }); await refresh(); close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }
-    catch (error) { toast(error.message, true); }
-  }));
-  overlay.querySelectorAll("[data-group-photo]").forEach((button) => button.addEventListener("click", () => openMedia(messageMediaUrl(state.messages.find((message) => message.id === button.dataset.groupPhoto)))));
-  overlay.querySelectorAll("[data-group-circle]").forEach((button) => button.addEventListener("click", () => { close(); openCircle(button.dataset.groupCircle); }));
-  overlay.querySelector("[data-group-leave]").addEventListener("click", async () => {
-    if (!window.confirm(`Выйти из «${chat.title}»?`)) return;
-    try { await api("/api/chats/leave", { method: "POST", body: { chatId: chat.id } }); activeChatId = null; close(); toast("Вы вышли из беседы."); await refresh(); }
-    catch (error) { toast(error.message, true); }
-  });
-}
-
-function openChannelScheduleDialog(chat, afterSave) {
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Отложенная публикация"><header><div><b>Запланировать пост</b><small>${esc(chat.title)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-channel-schedule-form><label>Текст публикации<textarea name="text" maxlength="3000" placeholder="Что нового?"></textarea></label><label>Фото<input name="photo" type="file" accept="image/png,image/jpeg,image/webp"></label><label>Дата и время<input name="publishAt" type="datetime-local" required></label><button class="button primary">Запланировать</button></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-channel-schedule-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      const photo = form.get("photo");
-      const body = { chatId: chat.id, text: form.get("text"), publishAt: Math.floor(new Date(form.get("publishAt")).getTime() / 1000) };
-      if (photo?.size) { body.mediaType = "photo"; body.mediaData = await fileToDataUrl(photo, 2_500_000); }
-      await api("/api/channels/schedule", { method: "POST", body });
-      await refresh(false);
-      close();
-      toast("Пост запланирован.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function openChannelLinkDialog(chat, afterSave) {
-  const targets = state.chats.filter((item) => ["group", "community"].includes(item.type) && ["owner", "admin"].includes(chatMemberRole(item.id)));
-  const currentLink = state.channelLinks.find((link) => link.channel_id === chat.id)?.target_chat_id || "";
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Связанная группа"><header><div><b>Связать с группой</b><small>Новые посты будут автоматически дублироваться в выбранную беседу.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-channel-link-form><label>Группа или беседа<select name="targetChatId"><option value="">Не привязывать</option>${targets.map((target) => `<option value="${target.id}" ${target.id === currentLink ? "selected" : ""}>${esc(target.title)}</option>`).join("")}</select></label>${targets.length ? "" : '<p class="muted">Сначала создайте свою группу или беседу.</p>'}<button class="button primary">Сохранить связь</button></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-channel-link-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const targetChatId = new FormData(event.currentTarget).get("targetChatId");
-      await api("/api/channels/link", { method: "POST", body: { channelId: chat.id, targetChatId } });
-      await refresh(false);
-      close();
-      toast(targetChatId ? "Группа связана с каналом." : "Связь с группой удалена.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function openChannelTelegramDialog(chat, afterSave) {
-  const link = state.telegramChannelLinks.find((item) => item.channel_id === chat.id);
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  const syncStatus = !link
-    ? "Импорт ещё не подключён."
-    : link.last_error
-      ? `Последняя ошибка: ${link.last_error}`
-      : link.last_sync_at
-        ? `Последняя проверка: ${dateFmt(link.last_sync_at)} ${timeFmt(link.last_sync_at)}`
-        : "Источник подключён, ожидается первая проверка.";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Импорт из Telegram"><header><div><b>Импорт публикаций из Telegram</b><small>Новые посты из внешнего канала будут появляться в «${esc(chat.title)}».</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-telegram-link-form><label>Исходный канал<input name="sourceChat" required placeholder="@channel_name или -100..." value="${esc(link?.source_chat_ref || "")}" autocomplete="off"></label><label>Токен Telegram Bot API<input name="botToken" required type="password" placeholder="123456:ABC..." autocomplete="new-password"></label><p class="muted">Добавьте бота администратором исходного канала. Импортируются только новые <code>channel_post</code>; история не загружается. Для <code>getUpdates</code> у бота не должен быть включён webhook. Токен хранится только локально на сервере и не показывается после сохранения.</p><p class="telegram-link-status">${esc(syncStatus)}</p><div class="group-card__form-actions"><button class="button primary">${link ? "Обновить подключение" : "Подключить Telegram"}</button>${link ? '<button class="button danger" type="button" data-disconnect-telegram>Отключить</button>' : ""}</div></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-telegram-link-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      await api("/api/channels/telegram", { method: "POST", body: { channelId: chat.id, sourceChat: form.get("sourceChat"), botToken: form.get("botToken") } });
-      await refresh(false);
-      close();
-      toast("Telegram подключён. Ожидаются новые публикации.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelector("[data-disconnect-telegram]")?.addEventListener("click", async () => {
-    if (!window.confirm("Отключить импорт из Telegram? Уже импортированные публикации останутся в канале.")) return;
-    try {
-      await api("/api/channels/telegram", { method: "POST", body: { channelId: chat.id, disconnect: true } });
-      await refresh(false);
-      close();
-      toast("Импорт из Telegram отключён.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function openChannelRssDialog(chat, afterSave) {
-  const sources = state.rssChannelLinks.filter((item) => item.channel_id === chat.id);
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  const sourceList = sources.length
-    ? `<div class="rss-source-list">${sources.map((source) => {
-      const status = source.last_error
-        ? `Ошибка: ${source.last_error}`
-        : source.last_sync_at
-          ? `Проверено: ${dateFmt(source.last_sync_at)} ${timeFmt(source.last_sync_at)}`
-          : "Ожидается первая проверка";
-      return `<article class="rss-source"><div><b>${esc(source.feed_title || "RSS-источник")}</b><small title="${esc(source.feed_url)}">${esc(source.feed_url)}</small><em class="${source.last_error ? "rss-source__error" : ""}">${esc(status)}</em></div><button class="button small danger" type="button" data-disconnect-rss="${source.id}">Отключить</button></article>`;
-    }).join("")}</div>`
-    : '<p class="telegram-link-status">Источники ещё не подключены.</p>';
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Автопостинг из RSS"><header><div><b>Автопостинг из RSS</b><small>Новые публикации из лент будут появляться в «${esc(chat.title)}».</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-rss-link-form><label>Добавить URL RSS-ленты<input name="feedUrl" required type="url" placeholder="https://example.com/feed.xml" autocomplete="url"></label><p class="muted">Можно подключить до 10 публичных RSS или Atom-лент. Каждая проверяется примерно раз в 5 минут. Текущие публикации при подключении не переносятся: в канал попадут только новые записи.</p><div class="group-card__form-actions"><button class="button primary">Добавить источник</button></div></form><section class="rss-sources"><div class="panel-title"><div><b>Подключённые источники</b><small>${sources.length} из 10</small></div></div>${sourceList}</section></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-rss-link-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      const result = await api("/api/channels/rss", { method: "POST", body: { channelId: chat.id, feedUrl: form.get("feedUrl") } });
-      await refresh(false);
-      close();
-      toast(`RSS «${result.feedTitle}» подключён. Ожидаются новые публикации.`);
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelectorAll("[data-disconnect-rss]").forEach((button) => button.addEventListener("click", async () => {
-    if (!window.confirm("Отключить автопостинг RSS? Уже импортированные публикации останутся в канале.")) return;
-    try {
-      await api("/api/channels/rss", { method: "POST", body: { channelId: chat.id, sourceId: button.dataset.disconnectRss, disconnect: true } });
-      await refresh(false);
-      close();
-      toast("RSS-источник отключён.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  }));
-}
-
-function openChannelVkDialog(chat, afterSave) {
-  const sources = state.vkChannelLinks.filter((item) => item.channel_id === chat.id);
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  const sourceList = sources.length
-    ? `<div class="rss-source-list">${sources.map((source) => {
-      const status = source.last_error ? `Ошибка: ${source.last_error}` : source.last_sync_at ? `Проверено: ${dateFmt(source.last_sync_at)} ${timeFmt(source.last_sync_at)}` : "Ожидается первая проверка";
-      const keywords = Array.isArray(source.keywords) && source.keywords.length ? `Фильтр: ${source.keywords.join(", ")}` : "Без фильтра по словам";
-      return `<article class="rss-source"><div><b>${esc(source.source_title || "VK-группа")}</b><small title="${esc(source.source_url)}">${esc(source.source_url)}</small><small>${esc(keywords)}</small><em class="${source.last_error ? "rss-source__error" : ""}">${esc(status)}</em></div><button class="button small danger" type="button" data-disconnect-vk="${source.id}">Отключить</button></article>`;
-    }).join("")}</div>`
-    : '<p class="telegram-link-status">VK-группы ещё не подключены.</p>';
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Автопостинг из VK"><header><div><b>Автопостинг из VK</b><small>Новые публикации публичных групп будут появляться в «${esc(chat.title)}» со ссылкой на оригинал.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-vk-link-form><label>Ссылка на публичную группу VK<input name="sourceUrl" required type="url" placeholder="https://vk.com/имя_группы" autocomplete="url"></label><label>Токен доступа VK API<input name="accessToken" required type="password" placeholder="vk1.a..." autocomplete="new-password"></label><label>Ключевые слова — необязательно<textarea name="keywords" maxlength="3600" placeholder="Одно слово или фраза на строку"></textarea></label><p class="muted">Можно подключить до 10 групп. Проверка идёт примерно раз в 5 минут. Пустой список ключевых слов импортирует все новые посты; иначе импортируется пост, содержащий хотя бы одно указанное слово. История публикаций при подключении не переносится. Токен хранится только на локальном сервере и не показывается после сохранения.</p><div class="group-card__form-actions"><button class="button primary">Подключить VK-группу</button></div></form><section class="rss-sources"><div class="panel-title"><div><b>Подключённые VK-группы</b><small>${sources.length} из 10</small></div></div>${sourceList}</section></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-vk-link-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      const result = await api("/api/channels/vk", { method: "POST", body: { channelId: chat.id, sourceUrl: form.get("sourceUrl"), accessToken: form.get("accessToken"), keywords: form.get("keywords") } });
-      await refresh(false);
-      close();
-      toast(`VK-группа «${result.sourceTitle}» подключена. Ожидаются новые публикации.`);
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelectorAll("[data-disconnect-vk]").forEach((button) => button.addEventListener("click", async () => {
-    if (!window.confirm("Отключить автопостинг VK? Уже импортированные публикации останутся в канале.")) return;
-    try {
-      await api("/api/channels/vk", { method: "POST", body: { channelId: chat.id, sourceId: button.dataset.disconnectVk, disconnect: true } });
-      await refresh(false);
-      close();
-      toast("VK-группа отключена.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  }));
-}
-
-function openChannelAppearanceDialog(chat, afterSave) {
-  const current = chat.settings?.appearance || {};
-  const wallpaper = CHAT_WALLPAPERS.some((item) => item.id === current.wallpaper) || current.wallpaper === "custom" ? current.wallpaper : "default";
-  const ownBubble = /^#[\da-f]{6}$/i.test(current.ownBubble || "") ? current.ownBubble : state.me.dialogColor || "#dff9f9";
-  const otherBubble = /^#[\da-f]{6}$/i.test(current.otherBubble || "") ? current.otherBubble : state.me.otherDialogColor || "#ffffff";
-  const panelColor = /^#[\da-f]{6}$/i.test(current.panelColor || "") ? current.panelColor : state.me.dialogPanelColor || "#f4f8fc";
-  const font = DIALOG_FONTS.some((item) => item.id === current.font) ? current.font : state.me.dialogFont || "business";
-  let backgroundData = current.backgroundData || "";
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager channel-appearance-dialog" role="dialog" aria-modal="true" aria-label="Оформление канала"><header><div><b>Оформление канала</b><small>Его увидят все подписчики. Если сбросить настройку, останется личная тема каждого пользователя.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-channel-appearance-form><fieldset class="wallpaper-picker"><legend>Фон</legend><div class="wallpaper-grid">${CHAT_WALLPAPERS.map((item) => `<label class="wallpaper-option${wallpaper === item.id ? " selected" : ""}"><input type="radio" name="wallpaper" value="${item.id}" ${wallpaper === item.id ? "checked" : ""}><span class="wallpaper-preview chat-background-${item.id}" aria-hidden="true"></span><span><b>${esc(item.title)}</b><small>${esc(item.description)}</small></span></label>`).join("")}<label class="wallpaper-option${wallpaper === "custom" ? " selected" : ""}"><input type="radio" name="wallpaper" value="custom" ${wallpaper === "custom" ? "checked" : ""}><span class="wallpaper-preview chat-background-custom" data-channel-custom-preview aria-hidden="true"></span><span><b>Своя картинка</b><small>PNG, JPG или WebP</small></span></label></div></fieldset><label>Изображение фона<input name="background" type="file" accept="image/png,image/jpeg,image/webp"></label><div class="dialog-color-controls"><label class="dialog-color-control">Мои публикации<input name="ownBubble" type="color" value="${esc(ownBubble)}"></label><label class="dialog-color-control">Публикации других<input name="otherBubble" type="color" value="${esc(otherBubble)}"></label><label class="dialog-color-control">Панели канала<input name="panelColor" type="color" value="${esc(panelColor)}"></label></div><label>Шрифт публикаций<select name="font">${DIALOG_FONTS.map((item) => `<option value="${item.id}" ${font === item.id ? "selected" : ""}>${esc(item.title)}</option>`).join("")}</select></label><div class="group-card__form-actions"><button class="button primary">Сохранить оформление</button>${chat.settings?.appearance ? '<button class="button danger" type="button" data-reset-channel-appearance>Сбросить оформление</button>' : ""}</div></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  const form = overlay.querySelector("[data-channel-appearance-form]");
-  const customPreview = overlay.querySelector("[data-channel-custom-preview]");
-  const setCustomPreview = () => {
-    customPreview.style.backgroundImage = backgroundData ? `url("${backgroundData}")` : "";
-  };
-  setCustomPreview();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  form.querySelectorAll('[name="wallpaper"]').forEach((input) => input.addEventListener("change", () => {
-    form.querySelectorAll(".wallpaper-option").forEach((item) => item.classList.toggle("selected", item.querySelector("input").checked));
-  }));
-  form.elements.background.addEventListener("change", async (event) => {
-    try {
-      const file = event.currentTarget.files?.[0];
-      if (!file) return;
-      backgroundData = await fileToDataUrl(file, 2_500_000);
-      form.elements.wallpaper.value = "custom";
-      form.querySelectorAll(".wallpaper-option").forEach((item) => item.classList.toggle("selected", item.querySelector("input").checked));
-      setCustomPreview();
-    } catch (error) { toast(error.message, true); event.currentTarget.value = ""; }
-  });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const data = new FormData(form);
-      await api("/api/channels/appearance", { method: "POST", body: { channelId: chat.id, appearance: { wallpaper: data.get("wallpaper"), backgroundData, ownBubble: data.get("ownBubble"), otherBubble: data.get("otherBubble"), panelColor: data.get("panelColor"), font: data.get("font") } } });
-      await refresh(false);
-      close();
-      toast("Оформление канала сохранено.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelector("[data-reset-channel-appearance]")?.addEventListener("click", async () => {
-    if (!window.confirm("Сбросить единое оформление? Подписчики снова увидят свою личную тему.")) return;
-    try {
-      await api("/api/channels/appearance", { method: "POST", body: { channelId: chat.id, reset: true } });
-      await refresh(false);
-      close();
-      toast("Единое оформление канала сброшено.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function openChannelComments(messageId) {
-  const message = state.messages.find((item) => item.id === messageId);
-  if (!message) return;
-  const channel = state.chats.find((chat) => chat.id === message.chatId);
-  const canComment = isMember(message.chatId);
-  const comments = state.channelComments.filter((comment) => comment.message_id === messageId);
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  const commentForm = canComment
-    ? `<form class="form" data-channel-comment-form><label>Ваш комментарий<textarea name="text" maxlength="1000" placeholder="Напишите комментарий"></textarea></label><label>Фото<input name="photo" type="file" accept="image/png,image/jpeg,image/webp"></label><button class="button primary">Отправить</button></form>`
-    : `<section class="channel-comment-join"><p class="muted">Подпишитесь на канал, чтобы оставить комментарий.</p>${channel?.type === "channel" ? '<button class="button primary small" type="button" data-join-comment-channel>Подписаться</button>' : ""}</section>`;
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Комментарии"><header><div><b>Комментарии</b><small>${esc(pinnedMessagePreview(message))}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-comment-list">${comments.map((comment) => { const author = userById(comment.user_id); return `<article><div class="channel-comment__author">${avatarHtml(author, "channel-comment__avatar")}<b>${esc(author?.name || "Пользователь")}</b>${comment.automated ? '<span class="channel-comment__automated">Автокомментарий</span>' : ""}</div>${comment.media_data ? `<button class="channel-comment-photo" type="button" data-open-comment-media="${esc(comment.media_data)}"><img src="${esc(comment.media_data)}" alt="Фото в комментарии"></button>` : ""}${comment.text ? `<p>${esc(comment.text)}</p>` : ""}<small>${timeFmt(comment.created_at)}</small></article>`; }).join("") || '<p class="muted">Комментариев пока нет.</p>'}</div>${commentForm}</section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-open-comment-media]").forEach((button) => button.addEventListener("click", () => openMedia(button.dataset.openCommentMedia)));
-  overlay.querySelector("[data-join-comment-channel]")?.addEventListener("click", async () => {
-    try {
-      await api("/api/chats/join", { method: "POST", body: { chatId: message.chatId } });
-      close();
-      await refresh(false);
-      openChannelComments(messageId);
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelector("[data-channel-comment-form]")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      const photo = form.get("photo");
-      const mediaData = photo?.size ? await fileToDataUrl(photo, 1_800_000) : "";
-      await api("/api/channels/comments", { method: "POST", body: { messageId, text: form.get("text"), mediaData } });
-      await refresh(false);
-      close();
-      openChannelComments(messageId);
-    } catch (error) { toast(error.message, true); }
-  });
-}
-
-function channelPostLink(message) {
-  const channel = state.chats.find((chat) => chat.id === message.chatId);
-  if (!channel?.inviteCode) throw new Error("Не удалось сформировать ссылку на публикацию.");
-  return `${window.location.origin}/channel/${encodeURIComponent(channel.inviteCode)}/post/${encodeURIComponent(message.id)}`;
-}
-
-function openChannelPostShare(anchor, messageId) {
-  const message = state.messages.find((item) => item.id === messageId);
-  if (!message) return;
-  const link = channelPostLink(message);
-  openSimpleActions(anchor, [
-    { label: "Переслать в Chat‑Pro", action: () => openForwardPicker([messageId]) },
-    { label: "Скопировать ссылку", action: () => copyText(link, "Ссылка на публикацию скопирована.") },
-    { label: "Поделиться в другом приложении", action: () => shareText(link) },
-  ]);
-}
-
-function openGroupContentShare(sourceType, sourceId) {
-  const targets = state.chats.filter((chat) => ["direct", "group", "community", "channel"].includes(chat.type) && isMember(chat.id) && (chat.type !== "channel" || isChannelManagerRole(chatMemberRole(chat.id))));
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Поделиться публикацией"><header><div><b>Поделиться публикацией</b><small>Автор и исходный материал будут указаны в сообщении.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><label class="share-comment">Сообщение к репосту <span class="muted">(необязательно)</span><textarea data-share-comment maxlength="1000" placeholder="Добавьте комментарий"></textarea></label><div class="member-manager__list">${targets.map((chat) => `<button class="member-manager__user" type="button" data-share-to-group="${chat.id}">${chatAvatarHtml(chat)}<span><b>${esc(chatMeta(chat).title)}</b><small>${chat.type === "direct" ? "Диалог" : chat.type === "channel" ? "Канал" : "Группа"}</small></span><em>Поделиться</em></button>`).join("") || '<p class="muted">Нет диалогов, групп или каналов, в которые можно поделиться публикацией.</p>'}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-share-to-group]").forEach((button) => button.addEventListener("click", async () => {
-    try {
-      const comment = overlay.querySelector("[data-share-comment]")?.value || "";
-      const result = await api("/api/group-content/share", { method: "POST", body: { targetChatId: button.dataset.shareToGroup, sourceType, sourceId, comment } });
-      activeSection = "chats";
-      activeChatId = result.messageId ? button.dataset.shareToGroup : activeChatId;
-      close();
-      await refresh();
-      toast("Публикация отправлена.");
-    } catch (error) { toast(error.message, true); }
-  }));
-}
-
-function messageMediaHtml(msg) {
-  if (!msg.mediaType) return "";
-  if (msg.mediaType === "photo") {
-    const source = messageMediaUrl(msg);
-    return `<button class="message-photo-button${["rss", "vk"].includes(msg.sourceType) ? " message-photo-button--rss" : ""}" type="button" data-open-message-media="${msg.id}" data-open-message-media-source="${esc(source)}" data-media-type="photo" title="Открыть фото на весь экран" aria-label="Открыть фото на весь экран"><img class="message-photo" src="${esc(source)}" alt="Фото"></button>`;
-  }
-  if (msg.mediaType === "document") return `<a class="message-document" href="${esc(messageMediaUrl(msg))}" target="_blank" rel="noopener"><span>📄</span><b>${esc(msg.text?.replace(/^Документ:\s*/, "") || "Документ")}</b><small>Открыть документ</small></a>`;
-  const source = messageMediaUrl(msg);
-  if (msg.mediaType === "video") return `<div class="message-video"><video controls playsinline preload="metadata" src="${esc(source)}"></video><button type="button" data-open-message-media="${msg.id}" title="Открыть видео на весь экран" aria-label="Открыть видео на весь экран"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg></button></div>`;
-  if (msg.mediaType === "voice") {
-    const waveform = Array.isArray(msg.voiceWaveform) && msg.voiceWaveform.length ? msg.voiceWaveform : voiceWaveformFallback(msg.id);
-    return `<div class="message-voice"><audio class="message-audio" preload="metadata" data-media-message="voice" src="${esc(source)}"></audio><button class="message-voice__play" type="button" data-voice-playback aria-label="Воспроизвести голосовое">${actionIcon("play")}</button><div class="message-voice__wave" data-voice-wave role="slider" tabindex="0" aria-label="Перемотать голосовое" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">${waveform.map((value) => `<i style="--voice-level:${Math.max(8, Number(value) || 8)}%"></i>`).join("")}</div><span class="message-voice__duration" data-voice-duration>0:00</span></div>`;
-  }
-  if (msg.mediaType === "circle") return `<div class="circle-message"><div class="circle-message__mask"><video class="message-circle" playsinline preload="auto" data-media-message="circle" src="${esc(source)}"></video></div><button class="circle-expand" type="button" data-open-circle="${msg.id}" title="Открыть видеокружок" aria-label="Открыть видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg></button><div class="circle-player" aria-label="Управление видеокружком"><button type="button" data-circle-playback aria-label="Воспроизвести видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 8 6-8 6Z"/></svg></button><input type="range" min="0" max="100" value="0" step="0.1" data-circle-progress aria-label="Прогресс видеокружка"></div></div>`;
-  return "";
-}
-
-function messageMediaUrl(msg) {
-  return msg.mediaData || `/media/messages/${encodeURIComponent(msg.id)}?token=${encodeURIComponent(token)}`;
-}
-
-function voiceWaveformFallback(messageId) {
-  let seed = [...String(messageId)].reduce((total, char) => (total * 31 + char.charCodeAt(0)) >>> 0, 17);
-  return Array.from({ length: 40 }, () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return 18 + (seed % 68);
-  });
-}
-
-function mediaDownloadExtension(mimeType, mediaType) {
-  const extensions = {
-    "audio/mp4": "m4a",
-    "video/mp4": "mp4",
-    "audio/webm": "webm",
-    "video/webm": "webm",
-    "audio/ogg": "ogg",
-    "audio/wav": "wav",
-    "video/quicktime": "mov",
-  };
-  return extensions[mimeType.split(";", 1)[0].toLowerCase()] || (mediaType === "voice" ? "m4a" : "mp4");
-}
-
-async function downloadMessageMedia(msg) {
-  if (!["voice", "circle"].includes(msg.mediaType)) return;
-  const response = await fetch(messageMediaUrl(msg));
-  if (!response.ok) throw new Error("Не удалось скачать медиафайл.");
-  const blob = await response.blob();
-  if (!blob.size) throw new Error("Медиафайл пуст.");
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  const prefix = msg.mediaType === "voice" ? "голосовое" : "видеокружок";
-  link.href = url;
-  link.download = `${prefix}-${msg.id}.${mediaDownloadExtension(blob.type, msg.mediaType)}`;
-  link.style.display = "none";
-  document.body.append(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  toast("Скачивание началось.");
-}
-
-function insertIntoComposer(value) {
-  const input = app.querySelector("#composer textarea");
-  if (!input) return;
-  const start = input.selectionStart || input.value.length;
-  input.value = `${input.value.slice(0, start)}${value}${input.value.slice(input.selectionEnd || start)}`;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.focus();
-  input.selectionStart = input.selectionEnd = start + value.length;
-}
-
-function toggleReactionPicker(messageId) {
-  const picker = app.querySelector(`[data-reaction-picker="${messageId}"]`);
-  const shouldOpen = picker?.classList.contains("hidden");
-  closeReactionPickers();
-  if (shouldOpen) picker.classList.remove("hidden");
-}
-
-function closeReactionPickers() { app.querySelectorAll("[data-reaction-picker]").forEach((box) => box.classList.add("hidden")); }
-
-function showMessageReactionBurst(emoji, source) {
-  const rect = source.getBoundingClientRect();
-  const burst = document.createElement("span");
-  burst.className = "message-reaction-burst";
-  burst.textContent = emoji;
-  burst.style.left = `${rect.left + rect.width / 2}px`;
-  burst.style.top = `${rect.top + rect.height / 2}px`;
-  document.body.append(burst);
-  burst.addEventListener("animationend", () => burst.remove());
-}
-
-function showStoryReactionBurst(emoji, source) {
-  const rect = source.getBoundingClientRect();
-  const burst = document.createElement("span");
-  burst.className = "story-reaction-burst";
-  burst.textContent = emoji;
-  burst.style.left = `${rect.left + rect.width / 2}px`;
-  burst.style.top = `${rect.top - 12}px`;
-  document.body.append(burst);
-  burst.addEventListener("animationend", () => burst.remove());
-}
-
-function openStoryShareDialog(story, closeStory) {
-  const recipients = state.users.filter((user) => user.id !== state.me.id);
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay story-share-overlay";
-  overlay.innerHTML = `<section class="member-manager story-share-dialog" role="dialog" aria-modal="true" aria-label="Отправка сторис"><header><div><b>Поделиться сторис</b><small>Выберите получателя</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="member-manager__list">${recipients.map((user) => `<button class="member-manager__user" type="button" data-share-story-to="${user.id}">${avatarHtml(user)}<span><b>${esc(user.name)}</b><small>@${esc(user.username)}</small></span><em>Отправить</em></button>`).join("") || '<p class="muted">Нет доступных получателей.</p>'}</div></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelectorAll("[data-share-story-to]").forEach((button) => button.addEventListener("click", async () => {
-    try {
-      const result = await api("/api/stories/share", { method: "POST", body: { storyId: story.id, recipientId: button.dataset.shareStoryTo } });
-      activeChatId = result.chatId;
-      activeSection = "chats";
-      close();
-      closeStory();
-      await refresh();
-      toast("Сторис отправлена.");
-    } catch (error) { toast(error.message, true); }
-  }));
-}
-
-function openProfile(userId) {
-  profileReturnSection = activeSection === "profile" ? "chats" : activeSection;
-  openedProfileId = userId;
-  activeSection = "profile";
-  renderApp();
-}
-
-function closeProfile() { openedProfileId = null; activeSection = profileReturnSection || "chats"; renderApp(); }
-
-async function openDirectChat(userId) {
-  const data = await api("/api/chats", { method: "POST", body: { type: "direct", userId } });
-  activeChatId = data.chat.id;
-  scrollChatToLatest = true;
-  activeSection = "chats";
-  await refresh();
-}
-
-function pickRecordingMimeType(type) {
-  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-  const candidates = type === "voice"
-    ? (isSafari ? ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm;codecs=opus", "audio/webm"] : ["audio/webm;codecs=opus", "audio/webm", "audio/mp4;codecs=mp4a.40.2", "audio/mp4"])
-    : ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "video/mp4", "video/webm;codecs=vp8,opus", "video/webm"];
-  const supported = candidates.filter((mimeType) => MediaRecorder.isTypeSupported(mimeType));
-  return supported[0] || "";
-}
-
-async function recordMediaMessage(chatId, type) {
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast("Браузер не поддерживает запись.", true);
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === "circle" ? cameraVideoConstraints("user") : false });
-    setChatActivity(chatId, "recording", true);
-    const circleRecorderStream = type === "circle" ? createCircleRecorderStream(stream) : null;
-    const recordingStream = circleRecorderStream?.stream || stream;
-    const mimeType = pickRecordingMimeType(type);
-    const recorder = mimeType ? new MediaRecorder(recordingStream, { mimeType }) : new MediaRecorder(recordingStream);
-    const chunks = [];
-    const recordingUi = showRecordingOverlay(type, stream);
-    let cameraFacing = "user";
-    let cancelled = false;
-    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-    recorder.onerror = () => {
-      cancelled = true;
-      circleRecorderStream?.stop();
-      stream.getTracks().forEach((track) => track.stop());
-      recordingUi.close();
-      stopChatActivity(chatId);
-      toast("Не удалось записать медиа. Проверьте разрешения камеры и микрофона.", true);
-    };
-    recorder.onstop = async () => {
-      circleRecorderStream?.stop();
-      stream.getTracks().forEach((track) => track.stop());
-      recordingUi.close();
-      if (cancelled) {
-        stopChatActivity(chatId);
-        return;
-      }
-      try {
-        setChatActivity(chatId, "sending", true);
-        const recordedMimeType = recorder.mimeType || chunks.find((chunk) => chunk.type)?.type || mimeType;
-        if (!chunks.length || !recordedMimeType.startsWith(type === "voice" ? "audio/" : "video/")) return toast("Запись не была создана. Попробуйте ещё раз.", true);
-        const blob = new Blob(chunks, { type: recordedMimeType });
-        if (blob.size > 3_600_000) return toast("Запись получилась слишком большой. Запишите более короткое сообщение.", true);
-        const mediaData = await blobToDataUrl(blob);
-        if (mediaData.length > 5_000_000) return toast("Запись получилась слишком большой. Запишите более короткое сообщение.", true);
-        const temporaryId = `pending-${crypto.randomUUID()}`;
-        const pendingStartedAt = Date.now();
-        pendingOutgoingMessages.set(temporaryId, {
-          id: temporaryId,
-          chatId,
-          senderId: state.me.id,
-          text: "",
-          mediaType: type,
-          mediaData,
-          createdAt: Math.floor(pendingStartedAt / 1000),
-          deliveryState: "sending",
-        });
-        appendLiveMessage(pendingOutgoingMessages.get(temporaryId));
-        const response = await api("/api/messages", { method: "POST", body: { chatId, text: "", mediaType: type, mediaData, voiceWaveform: type === "voice" ? recordingUi.waveform() : [] } });
-        const remainingAnimation = 360 - (Date.now() - pendingStartedAt);
-        if (remainingAnimation > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingAnimation));
-        confirmPendingMessage(temporaryId, response.messageId);
-      } catch (error) {
-        const pending = [...pendingOutgoingMessages.entries()].find(([, message]) => message.chatId === chatId && message.mediaType === type && message.deliveryState === "sending");
-        if (pending) {
-          pending[1].deliveryState = "failed";
-          pendingOutgoingMessages.set(pending[0], pending[1]);
-          replaceLiveMessage(pending[0], pending[1]);
+def tick_demo_activity(con: sqlite3.Connection) -> None:
+    current = now()
+    reaction_icons = channel_reaction_emojis(con)
+    commenters = con.execute("SELECT user_id FROM automated_commenters ORDER BY created_at").fetchall()
+    rows = con.execute(
+        """SELECT subscription.*, package.subscribers_per_day, package.views_per_day, package.reactions_per_day,
+                  package.comments_per_day, package.post_limit, package.duration_days, package.fade_duration_days,
+                  package.indefinite
+           FROM demo_activity_subscriptions subscription
+           JOIN demo_activity_packages package ON package.id = subscription.package_id
+           WHERE subscription.active = 1"""
+        ).fetchall()
+    for row in rows:
+        in_fade = False
+        if not row["indefinite"] and current >= row["ends_at"]:
+            if row["auto_renew"]:
+                duration = row["duration_days"] * 86400
+                con.execute(
+                    "UPDATE demo_activity_subscriptions SET starts_at=?, ends_at=?, subscribers_added=0, views_added=0, reactions_added=0, comments_added=0 WHERE id=?",
+                    (current, current + duration, row["id"]),
+                )
+                continue
+            fade_duration = row["fade_duration_days"] * 86400
+            if not fade_duration or current >= row["ends_at"] + fade_duration:
+                con.execute("UPDATE demo_activity_subscriptions SET active = 0 WHERE id = ?", (row["id"],))
+                continue
+            in_fade = True
+        elapsed = max(0, current - row["starts_at"])
+        # Uneven but bounded progress: short pauses and bursts while preserving the daily total.
+        wave = 1 if in_fade else .55 + (secrets.randbelow(91) / 100)
+        fade_elapsed_days = max(0, current - row["ends_at"]) / 86400
+        fade_days = max(1, row["fade_duration_days"])
+        fade_progress_days = min(fade_elapsed_days, fade_days)
+        effective_days = elapsed / 86400 if row["indefinite"] or not in_fade else row["duration_days"] + (fade_progress_days / 3) * (1 - fade_progress_days / (2 * fade_days))
+        targets = {
+            metric: max(row[f"{metric}_added"], int(row[f"{metric}_per_day"] * effective_days * wave))
+            for metric in ("subscribers", "views", "reactions", "comments")
         }
-        stopChatActivity(chatId);
-        toast(error.message || "Не удалось подготовить запись к отправке.", true);
-      } finally {
-        stopChatActivity(chatId);
-      }
-    };
-    recordingUi.onCancel(() => { cancelled = true; if (recorder.state !== "inactive") recorder.stop(); });
-    recordingUi.onStop(() => { if (recorder.state !== "inactive") recorder.stop(); });
-    recordingUi.onSwitchCamera(async () => {
-      const nextFacing = cameraFacing === "user" ? "environment" : "user";
-      await switchMediaStreamCamera(stream, nextFacing, recordingUi.preview(), cameraFacing);
-      circleRecorderStream?.refresh();
-      cameraFacing = nextFacing;
-    });
-    recorder.start(250);
-  } catch (error) {
-    toast(error.name === "NotAllowedError" ? "Разрешите доступ к микрофону/камере." : error.message, true);
-  }
-}
+        additions = {metric: max(0, targets[metric] - row[f"{metric}_added"]) for metric in targets}
+        if additions["subscribers"]:
+            con.execute("UPDATE chats SET subscriber_boost = subscriber_boost + ? WHERE id = ?", (additions["subscribers"], row["channel_id"]))
+        for metric in ("views", "reactions", "comments"):
+            for _ in range(additions[metric]):
+                post = demo_activity_post(con, row["channel_id"], row["post_limit"])
+                if not post:
+                    break
+                if metric == "views":
+                    con.execute("UPDATE messages SET views_boost = views_boost + 1 WHERE id = ?", (post["id"],))
+                elif metric == "reactions":
+                    reactions = loads(post["reactions_json"], {}) or {}
+                    icon = reaction_icons[secrets.randbelow(len(reaction_icons))]
+                    reactions[icon] = int(reactions.get(icon, 0)) + 1
+                    con.execute("UPDATE messages SET reactions_json = ? WHERE id = ?", (dumps(reactions), post["id"]))
+                elif commenters:
+                    author = commenters[secrets.randbelow(len(commenters))]
+                    text = local_automated_comment(post["text"], post["media_type"] == "photo", ["support", "opinion", "question"])
+                    con.execute("INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)", (uid("comment"), post["id"], author["user_id"], text, None, 1, current))
+        con.execute(
+            "UPDATE demo_activity_subscriptions SET subscribers_added=?, views_added=?, reactions_added=?, comments_added=? WHERE id=?",
+            (targets["subscribers"], targets["views"], targets["reactions"], targets["comments"], row["id"]),
+        )
 
-function createCircleRecorderStream(sourceStream) {
-  const canvas = document.createElement("canvas");
-  if (typeof canvas.captureStream !== "function") return null;
-  const sourceVideo = document.createElement("video");
-  sourceVideo.autoplay = true;
-  sourceVideo.muted = true;
-  sourceVideo.playsInline = true;
-  sourceVideo.srcObject = sourceStream;
-  sourceVideo.play().catch(() => {});
-  canvas.width = 720;
-  canvas.height = 720;
-  const context = canvas.getContext("2d");
-  let frame = 0;
-  const draw = () => {
-    if (sourceVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      const sourceWidth = sourceVideo.videoWidth || 720;
-      const sourceHeight = sourceVideo.videoHeight || 720;
-      const side = Math.min(sourceWidth, sourceHeight);
-      context.drawImage(sourceVideo, (sourceWidth - side) / 2, (sourceHeight - side) / 2, side, side, 0, 0, canvas.width, canvas.height);
+
+def publish_scheduled_posts(con: sqlite3.Connection) -> None:
+    due_posts = con.execute("SELECT * FROM scheduled_posts WHERE publish_at <= ? ORDER BY publish_at, created_at", (now(),)).fetchall()
+    for post in due_posts:
+        message_id = uid("msg")
+        con.execute(
+            "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (message_id, post["chat_id"], post["sender_id"], post["text"], post["media_type"], post["media_data"], 1, post["publish_at"]),
+        )
+        schedule_automated_comments(con, message_id, post["chat_id"], post["publish_at"])
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (post["publish_at"], post["chat_id"]))
+        link = con.execute("SELECT target_chat_id FROM channel_links WHERE channel_id = ?", (post["chat_id"],)).fetchone()
+        if link:
+            channel = con.execute("SELECT title FROM chats WHERE id = ?", (post["chat_id"],)).fetchone()
+            con.execute(
+                "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (uid("msg"), link["target_chat_id"], post["sender_id"], post["text"], post["media_type"], post["media_data"], 1, channel["title"] if channel else "Канал", post["publish_at"]),
+            )
+            con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (post["publish_at"], link["target_chat_id"]))
+        con.execute("DELETE FROM scheduled_posts WHERE id = ?", (post["id"],))
+
+
+def telegram_api(bot_token: str, method: str, payload: dict | None = None) -> dict:
+    request = urlrequest.Request(
+        f"https://api.telegram.org/bot{bot_token}/{method}",
+        data=dumps(payload or {}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(request, timeout=12) as response:
+            result = loads(response.read().decode("utf-8"), {})
+    except (urlerror.URLError, TimeoutError, json.JSONDecodeError) as error:
+        raise ValueError("Не удалось связаться с Telegram. Проверьте токен и подключение.") from error
+    if not isinstance(result, dict) or not result.get("ok"):
+        description = str(result.get("description", "") if isinstance(result, dict) else "")
+        if "webhook" in description.lower():
+            raise ValueError("У бота настроен webhook. Отключите его, чтобы получать публикации через getUpdates.")
+        raise ValueError("Telegram отклонил запрос. Проверьте токен и права бота в исходном канале.")
+    return result.get("result", {})
+
+
+def telegram_photo_data(bot_token: str, photo_sizes: list) -> str | None:
+    for photo in reversed(photo_sizes if isinstance(photo_sizes, list) else []):
+        if not isinstance(photo, dict) or int(photo.get("file_size", 0) or 0) > TELEGRAM_MEDIA_MAX_BYTES:
+            continue
+        file_id = str(photo.get("file_id", ""))
+        if not file_id:
+            continue
+        try:
+            file_info = telegram_api(bot_token, "getFile", {"file_id": file_id})
+            file_path = str(file_info.get("file_path", ""))
+            if not file_path:
+                continue
+            with urlrequest.urlopen(
+                f"https://api.telegram.org/file/bot{bot_token}/{file_path}", timeout=15
+            ) as response:
+                image = response.read(TELEGRAM_MEDIA_MAX_BYTES + 1)
+                content_type = response.headers.get_content_type()
+            if len(image) > TELEGRAM_MEDIA_MAX_BYTES or not content_type.startswith("image/"):
+                continue
+            return f"data:{content_type};base64,{base64.b64encode(image).decode('ascii')}"
+        except (ValueError, urlerror.URLError, TimeoutError):
+            continue
+    return None
+
+
+def rss_text(value: str | None) -> str:
+    return re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", value or ""))).strip()
+
+
+def xml_child_text(entry: ElementTree.Element, names: tuple[str, ...]) -> str:
+    for child in entry:
+        local_name = child.tag.rsplit("}", 1)[-1].lower()
+        if local_name in names:
+            return rss_text("".join(child.itertext()))
+    return ""
+
+
+def xml_entry_link(entry: ElementTree.Element) -> str:
+    for child in entry:
+        if child.tag.rsplit("}", 1)[-1].lower() != "link":
+            continue
+        href = str(child.attrib.get("href", "")).strip()
+        if href:
+            return href
+        text = rss_text("".join(child.itertext()))
+        if text:
+            return text
+    return ""
+
+
+def xml_entry_image(entry: ElementTree.Element, entry_link: str) -> str:
+    candidates = []
+    for child in entry:
+        local_name = child.tag.rsplit("}", 1)[-1].lower()
+        media_type = str(child.attrib.get("type", child.attrib.get("medium", ""))).lower()
+        if local_name == "enclosure" and media_type and not media_type.startswith("image/"):
+            continue
+        if local_name in {"enclosure", "content", "thumbnail", "image"}:
+            candidates.extend((child.attrib.get("url", ""), child.attrib.get("href", "")))
+        if local_name in {"description", "summary", "content", "encoded"}:
+            candidates.extend(re.findall(r"<img\b[^>]*\bsrc\s*=\s*['\"]([^'\"]+)", "".join(child.itertext()), flags=re.IGNORECASE))
+    for candidate in candidates:
+        candidate = str(candidate).strip()
+        if candidate:
+            return urljoin(entry_link, candidate)
+    return ""
+
+
+def validate_rss_url(value) -> str:
+    url = str(value or "").strip()
+    parsed = urlparse(url)
+    if len(url) > 2048 or parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("Укажите корректный публичный URL RSS-ленты по HTTP или HTTPS.")
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+    except socket.gaierror as error:
+        raise ValueError("Не удалось найти сервер RSS-ленты.") from error
+    for _, _, _, _, address in addresses:
+        if not ipaddress.ip_address(address[0]).is_global:
+            raise ValueError("RSS-лента должна находиться на публичном сервере.")
+    return url
+
+
+class SafeRssRedirect(urlrequest.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        validate_rss_url(newurl)
+        return super().redirect_request(request, fp, code, msg, headers, newurl)
+
+
+def fetch_rss_article_metadata(article_url: str) -> tuple[str, str]:
+    if not article_url:
+        return "", ""
+    try:
+        article_url = validate_rss_url(article_url)
+        request = urlrequest.Request(article_url, headers={"User-Agent": "Chat-Pro RSS importer/1.0", "Accept": "text/html", "Accept-Encoding": "identity", "Connection": "close"})
+        with urlrequest.build_opener(SafeRssRedirect).open(request, timeout=12) as response:
+            page = response.read(RSS_MAX_BYTES + 1).decode("utf-8", "replace")
+        if len(page) > RSS_MAX_BYTES:
+            return "", ""
+        metadata = {}
+        for tag in re.findall(r"<meta\b[^>]*>", page, flags=re.IGNORECASE):
+            property_name = re.search(r"\b(?:property|name)\s*=\s*['\"]([^'\"]+)", tag, flags=re.IGNORECASE)
+            content = re.search(r"\bcontent\s*=\s*['\"]([^'\"]+)", tag, flags=re.IGNORECASE)
+            if property_name and content:
+                metadata.setdefault(property_name.group(1).lower(), rss_text(unescape(content.group(1))))
+        description = next((metadata[name] for name in ("og:description", "twitter:description", "description") if metadata.get(name)), "")[:8_000]
+        image_url = next((metadata[name] for name in ("og:image", "twitter:image") if metadata.get(name)), "")
+        return description, urljoin(article_url, image_url) if image_url else ""
+    except (ValueError, urlerror.URLError, socket.timeout, TimeoutError, OSError):
+        return "", ""
+
+
+def fetch_rss_image(image_url: str) -> str | None:
+    if not image_url:
+        return None
+    try:
+        image_url = validate_rss_url(image_url)
+        request = urlrequest.Request(image_url, headers={"User-Agent": "Chat-Pro RSS importer/1.0", "Accept": "image/*", "Accept-Encoding": "identity", "Connection": "close"})
+        with urlrequest.build_opener(SafeRssRedirect).open(request, timeout=15) as response:
+            content_type = response.headers.get_content_type()
+            image = response.read(RSS_IMAGE_MAX_BYTES + 1)
+        if not content_type.startswith("image/") or len(image) > RSS_IMAGE_MAX_BYTES:
+            return None
+        return f"data:{content_type};base64,{base64.b64encode(image).decode('ascii')}"
+    except (ValueError, urlerror.URLError, socket.timeout, TimeoutError, OSError):
+        return None
+
+
+def validate_vk_group_url(value) -> tuple[str, str]:
+    source_url = str(value or "").strip()
+    parsed = urlparse(source_url)
+    if parsed.scheme != "https" or parsed.hostname not in {"vk.com", "www.vk.com", "m.vk.com"}:
+        raise ValueError("Укажите ссылку на публичную группу VK вида https://vk.com/имя_группы.")
+    source_ref = parsed.path.strip("/").split("/", 1)[0]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{2,80}", source_ref):
+        raise ValueError("В ссылке VK не найдено корректное имя публичной группы.")
+    return f"https://vk.com/{source_ref}", source_ref
+
+
+def normalize_vk_keywords(value) -> list[str]:
+    values = value.splitlines() if isinstance(value, str) else value if isinstance(value, list) else None
+    if values is None:
+        raise ValueError("Ключевые слова должны быть строкой или списком.")
+    keywords = []
+    for item in values:
+        keyword = " ".join(str(item).split()).casefold()
+        if keyword and keyword not in keywords:
+            keywords.append(keyword[:120])
+    if len(keywords) > 30:
+        raise ValueError("Можно указать до 30 ключевых слов.")
+    return keywords
+
+
+def vk_api(access_token: str, method: str, params: dict | None = None):
+    query = urlencode({**(params or {}), "access_token": access_token, "v": VK_API_VERSION})
+    request = urlrequest.Request(f"https://api.vk.com/method/{method}?{query}", headers={"User-Agent": "Chat-Pro VK importer/1.0", "Accept": "application/json"})
+    try:
+        with urlrequest.urlopen(request, timeout=15) as response:
+            payload = loads(response.read(RSS_MAX_BYTES + 1).decode("utf-8"), {})
+    except (urlerror.URLError, socket.timeout, TimeoutError, OSError, json.JSONDecodeError) as error:
+        raise ValueError("Не удалось связаться с VK. Проверьте подключение и токен.") from error
+    if not isinstance(payload, dict) or "error" in payload:
+        message = str(payload.get("error", {}).get("error_msg", "") if isinstance(payload, dict) else "")
+        raise ValueError(f"VK отклонил запрос{f': {message}' if message else ''}. Проверьте токен и доступ к группе.")
+    return payload.get("response")
+
+
+def vk_group_data(access_token: str, source_ref: str) -> tuple[int, str]:
+    groups = vk_api(access_token, "groups.getById", {"group_id": source_ref})
+    group = groups[0] if isinstance(groups, list) and groups else None
+    group_id = int(group.get("id", 0) or 0) if isinstance(group, dict) else 0
+    if not group_id:
+        raise ValueError("VK не нашёл доступную публичную группу по этой ссылке.")
+    return -group_id, str(group.get("name", source_ref))[:120]
+
+
+def vk_post_image_url(post: dict) -> str:
+    for attachment in post.get("attachments", []) if isinstance(post.get("attachments"), list) else []:
+        photo = attachment.get("photo") if isinstance(attachment, dict) else None
+        sizes = photo.get("sizes") if isinstance(photo, dict) else None
+        images = [item for item in sizes if isinstance(item, dict) and item.get("url")] if isinstance(sizes, list) else []
+        if images:
+            return str(max(images, key=lambda item: int(item.get("width", 0) or 0) * int(item.get("height", 0) or 0))["url"])
+    return ""
+
+
+def fetch_rss_feed(feed_url: str) -> tuple[str, list[dict]]:
+    request = urlrequest.Request(feed_url, headers={"User-Agent": "Chat-Pro RSS importer/1.0", "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml", "Accept-Encoding": "identity", "Connection": "close"})
+    try:
+        with urlrequest.build_opener(SafeRssRedirect).open(request, timeout=20) as response:
+            data = response.read(RSS_MAX_BYTES + 1)
+    except (urlerror.URLError, socket.timeout, TimeoutError, OSError) as error:
+        raise ValueError("RSS-лента не ответила вовремя или недоступна. Попробуйте другой публичный RSS-адрес.") from error
+    if len(data) > RSS_MAX_BYTES:
+        raise ValueError("RSS-лента слишком большая: допустимо до 500 КБ.")
+    try:
+        root = ElementTree.fromstring(data)
+    except ElementTree.ParseError as error:
+        raise ValueError("Сервер вернул некорректную RSS или Atom-ленту.") from error
+    root_name = root.tag.rsplit("}", 1)[-1].lower()
+    channel = next((child for child in root if child.tag.rsplit("}", 1)[-1].lower() == "channel"), root)
+    feed_title = xml_child_text(channel, ("title",))[:120] or urlparse(feed_url).hostname or "RSS"
+    entry_tag = "entry" if root_name == "feed" else "item"
+    entries = []
+    for entry in channel.iter():
+        if entry.tag.rsplit("}", 1)[-1].lower() != entry_tag:
+            continue
+        title = xml_child_text(entry, ("title",))[:500]
+        summary = xml_child_text(entry, ("description", "summary", "content", "encoded"))[:8_000]
+        link = xml_entry_link(entry)
+        image_url = xml_entry_image(entry, link)
+        source_id = xml_child_text(entry, ("guid", "id")) or link or f"{title}\n{summary}"
+        if source_id and (title or summary):
+            entries.append({"id": source_id[:2_000], "title": title, "summary": summary, "link": link[:2_000], "imageUrl": image_url[:2_000]})
+        if len(entries) >= RSS_MAX_ENTRIES:
+            break
+    if not entries:
+        raise ValueError("В RSS-ленте не найдены публикации.")
+    return feed_title, entries
+
+
+def poll_rss_channels(con: sqlite3.Connection) -> None:
+    current = now()
+    due_sources = con.execute("SELECT * FROM rss_channel_sources WHERE next_poll_at <= ? ORDER BY next_poll_at LIMIT 20", (current,)).fetchall()
+    for source in due_sources:
+        claimed = con.execute(
+            "UPDATE rss_channel_sources SET next_poll_at = ? WHERE id = ? AND next_poll_at <= ?",
+            (current + RSS_POLL_INTERVAL, source["id"], current),
+        ).rowcount
+        if not claimed:
+            continue
+        # Do not retain SQLite's write lock while the external RSS server responds.
+        # This lets a channel owner disconnect the source immediately, even mid-poll.
+        con.commit()
+        try:
+            feed_title, entries = fetch_rss_feed(source["feed_url"])
+            sender = con.execute("SELECT id FROM users WHERE id = ?", (source["created_by"],)).fetchone()
+            if not sender:
+                sender = con.execute("SELECT owner_id AS id FROM chats WHERE id = ?", (source["channel_id"],)).fetchone()
+            if sender and sender["id"]:
+                for entry in reversed(entries):
+                    # The source could have been disconnected while its feed was loading.
+                    # Re-check before every import so no new posts appear after disconnect.
+                    if not con.execute("SELECT 1 FROM rss_channel_sources WHERE id = ? AND channel_id = ?", (source["id"], source["channel_id"])).fetchone():
+                        break
+                    imported = con.execute(
+                        "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
+                        (source["id"], entry["id"], current),
+                    ).rowcount
+                    if not imported:
+                        continue
+                    page_summary, page_image_url = fetch_rss_article_metadata(entry["link"]) if not entry["summary"] or not entry["imageUrl"] else ("", "")
+                    summary = entry["summary"] or page_summary
+                    text = "\n\n".join(part for part in (entry["title"], summary) if part)[:10_000]
+                    media_data = fetch_rss_image(entry["imageUrl"] or page_image_url)
+                    message_id = uid("msg")
+                    con.execute(
+                        """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (message_id, source["channel_id"], sender["id"], text, "photo" if media_data else None, media_data, 1, f"RSS · {feed_title}", "rss", entry["link"] or entry["id"], current),
+                    )
+                    schedule_automated_comments(con, message_id, source["channel_id"], current)
+                    con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (current, source["channel_id"]))
+            con.execute("UPDATE rss_channel_sources SET feed_title = ?, last_sync_at = ?, last_error = NULL WHERE id = ?", (feed_title, current, source["id"]))
+        except ValueError as error:
+            con.execute("UPDATE rss_channel_sources SET last_sync_at = ?, last_error = ? WHERE id = ?", (current, str(error)[:300], source["id"]))
+
+
+def poll_vk_channels(con: sqlite3.Connection) -> None:
+    current = now()
+    due_sources = con.execute("SELECT * FROM vk_channel_sources WHERE next_poll_at <= ? ORDER BY next_poll_at LIMIT 20", (current,)).fetchall()
+    for source in due_sources:
+        claimed = con.execute(
+            "UPDATE vk_channel_sources SET next_poll_at = ? WHERE id = ? AND next_poll_at <= ?",
+            (current + VK_POLL_INTERVAL, source["id"], current),
+        ).rowcount
+        if not claimed:
+            continue
+        con.commit()
+        try:
+            wall = vk_api(source["access_token"], "wall.get", {"owner_id": source["owner_id"], "count": 30, "filter": "owner"})
+            posts = wall.get("items", []) if isinstance(wall, dict) else []
+            sender = con.execute("SELECT id FROM users WHERE id = ?", (source["created_by"],)).fetchone()
+            if not sender:
+                sender = con.execute("SELECT owner_id AS id FROM chats WHERE id = ?", (source["channel_id"],)).fetchone()
+            keywords = loads(source["keywords_json"], [])
+            if sender and sender["id"]:
+                for post in reversed(posts if isinstance(posts, list) else []):
+                    if not isinstance(post, dict) or str(post.get("post_type", "post")) != "post":
+                        continue
+                    post_id = int(post.get("id", 0) or 0)
+                    if not post_id or not con.execute("SELECT 1 FROM vk_channel_sources WHERE id = ? AND channel_id = ?", (source["id"], source["channel_id"])).fetchone():
+                        continue
+                    text = str(post.get("text", "")).strip()[:10_000]
+                    if keywords and not any(keyword in text.casefold() for keyword in keywords):
+                        continue
+                    image_url = vk_post_image_url(post)
+                    if not text and not image_url:
+                        continue
+                    imported = con.execute(
+                        "INSERT OR IGNORE INTO vk_source_imported_posts(source_id,post_id,imported_at) VALUES (?,?,?)",
+                        (source["id"], post_id, current),
+                    ).rowcount
+                    if not imported:
+                        continue
+                    owner_id = int(post.get("owner_id", source["owner_id"]) or source["owner_id"])
+                    original_url = f"https://vk.com/wall{owner_id}_{post_id}"
+                    media_data = fetch_rss_image(image_url)
+                    message_id = uid("msg")
+                    con.execute(
+                        """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                        (message_id, source["channel_id"], sender["id"], text, "photo" if media_data else None, media_data, 1,
+                         f"VK · {source['source_title']}", "vk", original_url, int(post.get("date", current) or current)),
+                    )
+                    schedule_automated_comments(con, message_id, source["channel_id"], current)
+                    con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (current, source["channel_id"]))
+            con.execute("UPDATE vk_channel_sources SET last_sync_at = ?, last_error = NULL WHERE id = ?", (current, source["id"]))
+        except ValueError as error:
+            con.execute("UPDATE vk_channel_sources SET last_sync_at = ?, last_error = ? WHERE id = ?", (current, str(error)[:300], source["id"]))
+
+
+AUTOMATED_COMMENT_CATEGORIES = {"support", "opinion", "question", "humor", "disagreement", "criticism", "irony"}
+
+
+def local_automated_comment(post_text: str, has_image: bool, categories: list[str]) -> str:
+    enabled = [category for category in categories if category in AUTOMATED_COMMENT_CATEGORIES]
+    if not enabled:
+        enabled = ["support", "opinion", "question"]
+    normalized = " ".join(post_text.lower().split())
+    subject = "публикацию с фотографией" if has_image and not normalized else "материал"
+    if any(word in normalized for word in ("спасибо", "благодар", "поздрав", "побед", "успех")):
+        variants = {
+            "support": "Спасибо, очень тёплый и приятный материал.",
+            "opinion": "Хорошая мысль — такие истории действительно вдохновляют.",
+            "question": "Спасибо за публикацию. Что для вас было самым важным в этой истории?",
+        }
+    elif any(word in normalized for word in ("как ", "почему", "зачем", "что делать", "совет", "вопрос")):
+        variants = {
+            "support": "Спасибо за понятную постановку вопроса.",
+            "opinion": "На мой взгляд, здесь важно спокойно рассмотреть несколько вариантов.",
+            "question": "Интересно, какие решения вы уже успели попробовать?",
+            "disagreement": "Возможен и другой взгляд: многое зависит от конкретной ситуации.",
+            "criticism": "Не хватает деталей, чтобы сделать уверенный вывод — полезно добавить примеры или источники.",
+        }
+    else:
+        variants = {
+            "support": f"Спасибо за {subject}, было интересно ознакомиться.",
+            "opinion": "Интересная точка зрения, есть над чем подумать.",
+            "question": "А какой вывод вы считаете главным для читателей?",
+            "humor": "Похоже, этот материал точно не оставит ленту без обсуждения 🙂",
+            "disagreement": "Не со всем готов согласиться, но взгляд заслуживает обсуждения.",
+            "criticism": "Аргумент интересный, хотя хотелось бы больше конкретики и подтверждений.",
+            "irony": "Вот это поворот — есть о чём поспорить в комментариях 🙂",
+        }
+    available = [(category, variants[category]) for category in enabled if category in variants]
+    if not available:
+        available = [("support", f"Спасибо за {subject}, было интересно ознакомиться.")]
+    return available[secrets.randbelow(len(available))][1]
+
+
+def comment_opening_words(text: str) -> list[str]:
+    return [word[:5] for word in re.findall(r"[^\W\d_]+", str(text or "").casefold()) if len(word) > 2][:4]
+
+
+def has_similar_comment_opening(candidate: str, previous_comments: list[str]) -> bool:
+    candidate_words = comment_opening_words(candidate)
+    if not candidate_words:
+        return True
+    candidate_first = candidate_words[0]
+    for previous in previous_comments:
+        previous_words = comment_opening_words(previous)
+        if candidate_first in previous_words[:3]:
+            return True
+        if candidate_words[:2] == previous_words[:2]:
+            return True
+    return False
+
+
+def ai_automated_comment(post_text: str, has_image: bool, categories: list[str], previous_comments: list[str]) -> str | None:
+    api_key, base_url, model = genapi_configuration()
+    if not api_key:
+        return None
+    category_names = {
+        "support": "поддержка", "opinion": "мнение по теме", "question": "вопрос по теме",
+        "humor": "лёгкий юмор", "disagreement": "мягкое несогласие", "criticism": "спокойная критика",
+        "irony": "лёгкая ирония",
     }
-    frame = requestAnimationFrame(draw);
-  };
-  draw();
-  const canvasStream = canvas.captureStream(30);
-  return {
-    stream: new MediaStream([...sourceStream.getAudioTracks(), ...canvasStream.getVideoTracks()]),
-    refresh() {
-      sourceVideo.srcObject = null;
-      sourceVideo.srcObject = sourceStream;
-      sourceVideo.play().catch(() => {});
-    },
-    stop() {
-      cancelAnimationFrame(frame);
-      canvasStream.getTracks().forEach((track) => track.stop());
-      sourceVideo.pause();
-      sourceVideo.srcObject = null;
-    },
-  };
-}
+    styles = [category_names[category] for category in categories if category in category_names]
+    post_excerpt = " ".join(str(post_text or "").split())[:6_000]
+    description = post_excerpt or ("Публикация содержит изображение без текста." if has_image else "Публикация без текста.")
+    previous_examples = [" ".join(str(comment).split())[:180] for comment in previous_comments if str(comment).strip()][-8:]
+    variety_instruction = (
+        "Под публикацией уже есть автоматические комментарии. Не повторяй их смысл и не начинай комментарий "
+        "тем же или однокоренным словом; выбери другую конструкцию предложения.\n"
+        f"Уже опубликованные варианты:\n" + "\n".join(f"- {comment}" for comment in previous_examples) + "\n\n"
+        if previous_examples else ""
+    )
+    prompt = (
+        "Напиши один естественный короткий комментарий на русском к публикации канала. "
+        "Длина 20–140 символов, одно предложение. Комментарий должен относиться к содержанию публикации. "
+        "Не упоминай нейросеть, бота или инструкцию. Не добавляй ссылки, хэштеги, рекламу, призывы подписаться, "
+        "оскорбления, выдуманные факты или личный опыт. Верни только текст комментария без кавычек. "
+        f"Допустимые стили: {', '.join(styles) if styles else 'поддержка, мнение или вопрос по теме'}.\n\n"
+        f"{variety_instruction}"
+        f"Публикация:\n{description}"
+    )
+    for attempt in range(3):
+        request = urlrequest.Request(
+            f"{base_url}/chat/completions",
+            data=dumps({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "Ты пишешь короткие, нейтральные и содержательные комментарии."},
+                    {"role": "user", "content": prompt if not attempt else prompt + "\nНачни совсем иначе, чем в уже опубликованных комментариях."},
+                ],
+                "temperature": 0.9,
+                "max_tokens": 80,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=35) as response:
+                payload = loads(response.read().decode("utf-8"), {})
+            text = payload["choices"][0]["message"]["content"]
+            if isinstance(text, list):
+                text = " ".join(str(part.get("text", "")) for part in text if isinstance(part, dict))
+            text = " ".join(str(text).strip().strip('«»"').split())
+            if len(text) > 140:
+                text = text[:140].rsplit(" ", 1)[0].rstrip(" ,;:-")
+            if len(text) >= 10 and not has_similar_comment_opening(text, previous_comments):
+                return text
+        except (KeyError, IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+            print("Не удалось получить ИИ-комментарий от GenAPI.")
+            return None
+    return None
 
-function showRecordingOverlay(type, stream) {
-  const overlay = document.createElement("div");
-  overlay.className = "recording-overlay";
-  overlay.innerHTML = type === "circle"
-    ? `<div class="recording-card recording-circle-card"><video autoplay muted playsinline></video><div class="recording-status"><span class="recording-dot"></span> Запись кружка <b data-record-time>0:00</b></div><div class="recording-actions"><button class="button" type="button" data-switch-camera>${callControlIcon("cameraFlip")}<span>Сменить камеру</span></button><button class="button" data-cancel>Отмена</button><button class="button danger" data-stop>Остановить и отправить</button></div></div>`
-    : `<div class="recording-card"><div class="recording-status"><span class="recording-dot"></span> Голосовое сообщение <b data-record-time>0:00</b></div><div class="voice-wave" data-wave>${Array.from({ length: 34 }, () => '<i></i>').join("")}</div><p class="muted">Говорите — дорожка показывает уровень звука</p><div class="recording-actions"><button class="button" data-cancel>Отмена</button><button class="button danger" data-stop>Остановить и отправить</button></div></div>`;
-  document.body.append(overlay);
-  const video = overlay.querySelector("video");
-  if (video) {
-    video.srcObject = stream;
-    bindCameraPinchZoom(video, () => stream.getVideoTracks()[0]);
-  }
-  const startedAt = Date.now();
-  const timer = setInterval(() => {
-    const seconds = Math.floor((Date.now() - startedAt) / 1000);
-    overlay.querySelector("[data-record-time]").textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-  }, 250);
-  let analyser;
-  let audioContext;
-  let animation;
-  const waveform = [];
-  if (type === "voice") {
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioContext.createMediaStreamSource(stream);
-    analyser = audioContext.createAnalyser();
-    analyser.fftSize = 64;
-    source.connect(analyser);
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    const bars = [...overlay.querySelectorAll("[data-wave] i")];
-    const animate = () => {
-      analyser.getByteFrequencyData(data);
-      const level = Math.round(data.reduce((sum, value) => sum + value, 0) / data.length / 255 * 100);
-      if (waveform.length < 48) waveform.push(level);
-      else waveform[Math.floor((Date.now() - startedAt) / 120) % waveform.length] = level;
-      bars.forEach((bar, index) => { bar.style.height = `${5 + (data[index % data.length] / 255) * 38}px`; });
-      animation = requestAnimationFrame(animate);
-    };
-    animate();
-  }
-  const close = () => {
-    clearInterval(timer);
-    if (animation) cancelAnimationFrame(animation);
-    audioContext?.close?.();
-    overlay.remove();
-  };
-  return {
-    close,
-    waveform() { return waveform.length ? waveform : Array.from({ length: 40 }, () => 12); },
-    preview() { return video; },
-    onCancel(handler) { overlay.querySelector("[data-cancel]").addEventListener("click", handler); },
-    onStop(handler) { overlay.querySelector("[data-stop]").addEventListener("click", handler); },
-    onSwitchCamera(handler) {
-      const button = overlay.querySelector("[data-switch-camera]");
-      button?.addEventListener("click", async () => {
-        button.disabled = true;
-        try { await handler(); }
-        catch (error) { toast(error.name === "NotAllowedError" ? "Разрешите доступ к камере." : "Не удалось переключить камеру.", true); }
-        finally { button.disabled = false; }
-      });
-    },
-  };
-}
 
-async function donateToChannelMessage(message) {
-  const recipient = userById(message.senderId);
-  if (!recipient || recipient.id === state.me.id) {
-    toast(recipient ? "Нельзя отправить звёзды самому себе." : "Получатель не найден.", true);
-    return;
-  }
-  const overlay = document.createElement("div");
-  overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Подарить звёзды"><header><div><b>Подарить звёзды</b><small>За публикацию ${esc(recipient.name)} · доступно ★ ${state.me.stars || 0}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-donation-form><label>Количество звёзд<input name="amount" type="number" min="1" max="${Math.max(1, Number(state.me.stars) || 0)}" step="1" required autofocus value="5"></label><p class="muted">Звёзды будут сразу зачислены автору публикации.</p><button class="button primary" ${state.me.stars > 0 ? "" : "disabled"}>Отправить</button></form></section>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector(".member-manager__close").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-donation-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const amount = Number(new FormData(event.currentTarget).get("amount"));
-      await api("/api/donate", { method: "POST", body: { messageId: message.id, amount } });
-      close();
-      await refresh();
-      toast("Звёзды отправлены.");
-    } catch (error) { toast(error.message, true); }
-  });
-}
+def schedule_automated_comments(con: sqlite3.Connection, message_id: str, channel_id: str, current: int | None = None, include_existing: bool = False) -> None:
+    current = current or now()
+    rules = con.execute(
+        """SELECT * FROM automated_comment_rules
+            WHERE channel_id = ? AND active = 1 AND starts_at <= ? AND ends_at >= ?
+              AND (target_message_id = ? OR (target_message_id IS NULL AND target_scope = 'future')
+                   OR (target_message_id IS NULL AND target_scope = 'existing' AND ?))""",
+        (channel_id, current, current, message_id, 1 if include_existing else 0),
+    ).fetchall()
+    for rule in rules:
+        commenter_ids = loads(rule["commenter_ids_json"], [])
+        mode = str(rule["comment_mode"] or "manual")
+        texts = [str(text).strip()[:1000] for text in loads(rule["texts_json"], []) if str(text).strip()]
+        categories = loads(rule["categories_json"], [])
+        if not isinstance(categories, list):
+            categories = []
+        if mode not in {"manual", "local", "ai"} or not isinstance(commenter_ids, list) or (mode == "manual" and not texts):
+            continue
+        if mode == "local":
+            post = con.execute("SELECT text, media_type FROM messages WHERE id = ? AND chat_id = ?", (message_id, channel_id)).fetchone()
+            if not post:
+                continue
+        minimum = max(0, int(rule["min_delay_seconds"]))
+        maximum = max(minimum, int(rule["max_delay_seconds"]))
+        distribution = max(0, int(rule["distribution_seconds"]))
+        latest_publish_at = min(int(rule["ends_at"]), current + distribution)
+        commenter_count = len(commenter_ids)
+        for position, commenter_id in enumerate(commenter_ids):
+            commenter = con.execute("SELECT id FROM automated_commenters WHERE id = ?", (str(commenter_id),)).fetchone()
+            if not commenter:
+                continue
+            if latest_publish_at < current + maximum:
+                continue
+            denominator = max(1, commenter_count - 1)
+            lower = current + minimum + (latest_publish_at - current - minimum) * position // denominator
+            upper = current + maximum + (latest_publish_at - current - maximum) * position // denominator
+            publish_at = lower + secrets.randbelow(upper - lower + 1)
+            con.execute(
+                """INSERT OR IGNORE INTO automated_comment_jobs(id,rule_id,message_id,commenter_id,text,publish_at,created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (uid("autocomment"), rule["id"], message_id, commenter["id"], local_automated_comment(post["text"], post["media_type"] == "photo", categories) if mode == "local" else "" if mode == "ai" else texts[position % len(texts)], publish_at, current),
+            )
 
-async function editUsername() {
-  const username = prompt("Новый username", state.me.username);
-  if (!username) return;
-  try { await api("/api/username", { method: "POST", body: { username } }); toast("Username изменён."); await refresh(); }
-  catch (error) { toast(error.message, true); }
-}
 
-async function refresh(full = true) { await loadState(); full ? renderApp() : (renderChat(), renderRight()); }
+def publish_automated_comments(con: sqlite3.Connection) -> None:
+    current = now()
+    con.execute("DELETE FROM automated_comment_jobs WHERE rule_id IN (SELECT id FROM automated_comment_rules WHERE active = 0 OR ends_at < ?)", (current,))
+    jobs = con.execute(
+        """SELECT job.*, commenter.user_id, chat.settings_json, rule.comment_mode, rule.categories_json,
+                  message.text AS message_text, message.media_type AS message_media_type
+           FROM automated_comment_jobs job
+           JOIN automated_comment_rules rule ON rule.id = job.rule_id
+           JOIN automated_commenters commenter ON commenter.id = job.commenter_id
+           JOIN messages message ON message.id = job.message_id
+           JOIN chats chat ON chat.id = message.chat_id
+           WHERE job.publish_at <= ? AND rule.active = 1 AND rule.starts_at <= ? AND rule.ends_at >= ?
+             AND message.chat_id = rule.channel_id
+           ORDER BY job.publish_at LIMIT 30""",
+        (current, current, current),
+    ).fetchall()
+    for job in jobs:
+        claimed = con.execute(
+            """DELETE FROM automated_comment_jobs
+               WHERE id = ? AND EXISTS (
+                 SELECT 1 FROM automated_comment_rules
+                 WHERE id = ? AND active = 1 AND starts_at <= ? AND ends_at >= ?
+               )""",
+            (job["id"], job["rule_id"], current, current),
+        ).rowcount
+        if not claimed:
+            continue
+        if not loads(job["settings_json"], {}).get("commentsEnabled", True):
+            continue
+        text = job["text"]
+        if job["comment_mode"] == "ai":
+            categories = loads(job["categories_json"], [])
+            previous_comments = [row["text"] for row in con.execute(
+                "SELECT text FROM channel_comments WHERE message_id = ? AND automated = 1 ORDER BY created_at DESC LIMIT 8",
+                (job["message_id"],),
+            ).fetchall()]
+            con.commit()
+            text = ai_automated_comment(
+                job["message_text"],
+                job["message_media_type"] == "photo",
+                categories if isinstance(categories, list) else [],
+                previous_comments,
+            )
+            if not text:
+                con.execute(
+                    "INSERT INTO automated_comment_jobs(id,rule_id,message_id,commenter_id,text,publish_at,created_at) VALUES (?,?,?,?,?,?,?)",
+                    (job["id"], job["rule_id"], job["message_id"], job["commenter_id"], "", current + 60, job["created_at"]),
+                )
+                continue
+        if con.execute("SELECT 1 FROM channel_comments WHERE message_id = ? AND text = ?", (job["message_id"], text)).fetchone():
+            continue
+        con.execute(
+            "INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)",
+            (uid("comment"), job["message_id"], job["user_id"], text, None, 1, current),
+        )
 
-const CHAT_ACTIVITY_LABELS = { typing: "печатает", sending: "отправляет", recording: "записывает" };
 
-function chatActivityHtml(chat, fallback = "") {
-  const activity = state.activities?.[chat.id] || "";
-  const label = CHAT_ACTIVITY_LABELS[activity];
-  return `<span data-chat-activity="${chat.id}" class="chat-activity${label ? " is-active" : ""}">${esc(label || fallback)}</span>`;
-}
+def poll_telegram_channels(con: sqlite3.Connection) -> None:
+    current = now()
+    due_links = con.execute(
+        "SELECT * FROM telegram_channel_links WHERE next_poll_at <= ? ORDER BY next_poll_at LIMIT 10", (current,)
+    ).fetchall()
+    for link in due_links:
+        claimed = con.execute(
+            "UPDATE telegram_channel_links SET next_poll_at = ? WHERE channel_id = ? AND next_poll_at <= ?",
+            (current + TELEGRAM_POLL_INTERVAL, link["channel_id"], current),
+        ).rowcount
+        if not claimed:
+            continue
+        # Do not keep a SQLite write lock while Telegram responds.
+        con.commit()
+        try:
+            updates = telegram_api(link["bot_token"], "getUpdates", {
+                "offset": int(link["last_update_id"]) + 1,
+                "limit": 100,
+                "timeout": 0,
+                "allowed_updates": ["channel_post"],
+            })
+            max_update_id = int(link["last_update_id"])
+            for update in updates if isinstance(updates, list) else []:
+                if not isinstance(update, dict):
+                    continue
+                max_update_id = max(max_update_id, int(update.get("update_id", 0) or 0))
+                post = update.get("channel_post")
+                if not isinstance(post, dict) or not isinstance(post.get("chat"), dict):
+                    continue
+                source_chat = post["chat"]
+                source_id = str(source_chat.get("id", ""))
+                source_username = f"@{str(source_chat.get('username', '')).lower()}" if source_chat.get("username") else ""
+                if source_id != str(link["source_chat_id"] or "") and source_username != str(link["source_chat_ref"]).lower():
+                    continue
+                telegram_message_id = int(post.get("message_id", 0) or 0)
+                if not telegram_message_id:
+                    continue
+                text = str(post.get("text") or post.get("caption") or "").strip()[:10000]
+                media_data = telegram_photo_data(link["bot_token"], post.get("photo", [])) if post.get("photo") else None
+                if not text and not media_data:
+                    continue
+                imported = con.execute(
+                    "INSERT OR IGNORE INTO telegram_imported_posts(channel_id,telegram_message_id,imported_at) VALUES (?,?,?)",
+                    (link["channel_id"], telegram_message_id, current),
+                ).rowcount
+                if not imported:
+                    continue
+                sender = con.execute("SELECT id FROM users WHERE id = ?", (link["created_by"],)).fetchone()
+                if not sender:
+                    sender = con.execute("SELECT owner_id AS id FROM chats WHERE id = ?", (link["channel_id"],)).fetchone()
+                if not sender or not sender["id"]:
+                    continue
+                source_title = str(source_chat.get("title", "Telegram"))[:120]
+                message_id = uid("msg")
+                con.execute(
+                    """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (message_id, link["channel_id"], sender["id"], text, "photo" if media_data else None,
+                     media_data, 1, f"Telegram · {source_title}", "telegram", str(telegram_message_id), int(post.get("date", current) or current)),
+                )
+                schedule_automated_comments(con, message_id, link["channel_id"], current)
+                con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (current, link["channel_id"]))
+            con.execute(
+                "UPDATE telegram_channel_links SET last_update_id = ?, last_sync_at = ?, last_error = NULL WHERE channel_id = ?",
+                (max_update_id, current, link["channel_id"]),
+            )
+        except (ValueError, urlerror.URLError, TimeoutError) as error:
+            con.execute(
+                "UPDATE telegram_channel_links SET last_sync_at = ?, last_error = ? WHERE channel_id = ?",
+                (current, str(error)[:300], link["channel_id"]),
+            )
 
-function updateActiveChatActivity() {
-  const chat = state.chats.find((item) => item.id === activeChatId);
-  if (!chat || chat.type !== "direct") return;
-  const activity = state.activities?.[chat.id] || "";
-  const label = CHAT_ACTIVITY_LABELS[activity];
-  const subtitle = chatMeta(chat).subtitle;
-  const element = app.querySelector(`[data-chat-activity="${chat.id}"]`);
-  if (!element) return;
-  element.textContent = label || subtitle;
-  element.classList.toggle("is-active", Boolean(label));
-}
 
-function isDirectChat(chatId) {
-  return state?.chats.some((chat) => chat.id === chatId && chat.type === "direct");
-}
+class Handler(BaseHTTPRequestHandler):
+    server_version = "Chat-Pro/2.0"
 
-function setChatActivity(chatId, activity, force = false) {
-  if (!isDirectChat(chatId) || !CHAT_ACTIVITY_LABELS[activity]) return;
-  const timestamp = Date.now();
-  if (!force && lastChatActivity.chatId === chatId && lastChatActivity.activity === activity && timestamp - lastChatActivity.sentAt < 3500) return;
-  clearTimeout(chatActivityPingTimer);
-  lastChatActivity = { chatId, activity, sentAt: timestamp };
-  api("/api/chats/activity", { method: "POST", body: { chatId, activity } }).catch(() => {});
-  chatActivityPingTimer = window.setTimeout(() => {
-    const textarea = app.querySelector("#composer textarea");
-    if (activity === "typing" && textarea?.value.trim()) setChatActivity(chatId, activity, true);
-    else if (["recording", "sending"].includes(activity)) setChatActivity(chatId, activity, true);
-  }, 4000);
-}
+    def do_GET(self):
+        self.route("GET")
 
-function stopChatActivity(chatId) {
-  clearTimeout(chatActivityPingTimer);
-  if (!isDirectChat(chatId)) return;
-  chatActivityPingTimer = null;
-  if (lastChatActivity.chatId !== chatId || !lastChatActivity.activity) return;
-  lastChatActivity = { chatId: null, activity: "", sentAt: 0 };
-  api("/api/chats/activity", { method: "POST", body: { chatId, activity: "" } }).catch(() => {});
-}
+    def do_HEAD(self):
+        self.route("HEAD")
 
-function startTypingActivity(chatId) { setChatActivity(chatId, "typing"); }
-function stopTypingActivity(chatId) { stopChatActivity(chatId); }
+    def do_POST(self):
+        self.route("POST")
 
-function appendLiveMessage(message) {
-  if (!message || message.chatId !== activeChatId) return;
-  const messagesBox = app.querySelector("#messages");
-  if (!messagesBox || messagesBox.querySelector(`#message-${CSS.escape(message.id)}`)) return;
-  const shouldScroll = message.senderId === state.me.id || messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight < 8;
-  messagesBox.querySelector(".empty-chat-notice")?.remove();
-  messagesBox.insertAdjacentHTML("beforeend", messageHtml(message));
-  const element = messagesBox.querySelector(`#message-${CSS.escape(message.id)}`);
-  bindLiveMessageElement(element);
-  if (shouldScroll) messagesBox.scrollTo({ top: messagesBox.scrollHeight, behavior: "auto" });
-}
+    def route(self, method: str):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        try:
+            if path.startswith("/api/"):
+                with connect() as con:
+                    return self.handle_api(con, method, path, parse_qs(parsed.query))
+            if method in {"GET", "HEAD"} and path.startswith("/media/messages/"):
+                with connect() as con:
+                    media_user = get_user_by_token(con, self.headers)
+                    media_token = parse_qs(parsed.query).get("token", [""])[0]
+                    if not media_user and media_token:
+                        media_user = con.execute(
+                            "SELECT users.* FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = ?",
+                            (media_token,),
+                        ).fetchone()
+                    self.require_user(media_user)
+                    message_id = path.removeprefix("/media/messages/").removesuffix(".m4a").removesuffix(".mp4")
+                    return self.send_message_media(con, media_user, message_id)
+            if path in {"/admin", "/admin/"}:
+                return self.send_file(ROOT / "admin.html")
+            if path == "/requisites":
+                return self.send_file(ROOT / "requisites.html")
+            if path == "/" or path == "/payment-return" or path.startswith("/invite/") or path.startswith("/channel/"):
+                return self.send_file(ROOT / "index.html")
+            return self.send_file(ROOT / path.lstrip("/"))
+        except ConnectionError:
+            return
+        except ValueError as error:
+            return self.json({"ok": False, "error": str(error)}, HTTPStatus.BAD_REQUEST)
+        except PermissionError:
+            return self.json({"ok": False, "error": "Нет доступа."}, HTTPStatus.FORBIDDEN)
+        except Exception as error:  # Keep local demo debuggable.
+            return self.json({"ok": False, "error": f"Ошибка сервера: {error}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
-function replaceLiveMessage(previousId, message) {
-  const element = app.querySelector(`#message-${CSS.escape(previousId)}`);
-  if (!element) return appendLiveMessage(message);
-  element.outerHTML = messageHtml(message);
-  bindLiveMessageElement(app.querySelector(`#message-${CSS.escape(message.id)}`));
-}
+    def handle_api(self, con: sqlite3.Connection, method: str, path: str, query):
+        body = self.read_json() if method == "POST" else {}
+        user = get_user_by_token(con, self.headers)
 
-function confirmPendingMessage(temporaryId, messageId) {
-  const pending = pendingOutgoingMessages.get(temporaryId);
-  if (!pending || !messageId) return;
-  pending.id = messageId;
-  pending.deliveryState = "sent";
-  pendingOutgoingMessages.delete(temporaryId);
-  if (!state.messages.some((message) => message.id === messageId)) state.messages.push(pending);
-  app.querySelector(`#message-${CSS.escape(messageId)}`)?.remove();
-  replaceLiveMessage(temporaryId, pending);
-  stopChatActivity(pending.chatId);
-}
+        if path == "/api/yookassa/webhook" and method == "POST":
+            return self.handle_yookassa_webhook(con, body)
+        if path == "/api/register" and method == "POST":
+            return self.register(con, body)
+        if path == "/api/register/verify" and method == "POST":
+            return self.verify_registration(con, body)
+        if path == "/api/auth-challenges/resend" and method == "POST":
+            return self.resend_auth_challenge(con, body)
+        if path == "/api/login" and method == "POST":
+            return self.login(con, body)
+        if path == "/api/password-reset/request" and method == "POST":
+            return self.request_password_reset(con, body)
+        if path == "/api/password-reset/confirm" and method == "POST":
+            return self.confirm_password_reset(con, body)
+        if path == "/api/public/legal" and method == "GET":
+            legal_row = con.execute("SELECT value FROM settings WHERE key = 'public_legal'").fetchone()
+            branding_row = con.execute("SELECT value FROM settings WHERE key = 'public_branding'").fetchone()
+            return self.json({
+                "ok": True,
+                "legal": normalize_public_legal(loads(legal_row["value"], {})) if legal_row else DEFAULT_PUBLIC_LEGAL,
+                "branding": normalize_public_branding(loads(branding_row["value"], {})) if branding_row else DEFAULT_PUBLIC_BRANDING,
+            })
+        if path == "/api/bootstrap" and method == "GET":
+            self.require_user(user)
+            return self.bootstrap(con, user)
+        if path == "/api/ai-agent/settings" and method == "POST":
+            self.require_user(user)
+            return self.update_ai_agent_settings(con, user, body)
+        if path == "/api/ai-agent/ask" and method == "POST":
+            self.require_user(user)
+            return self.ask_ai_agent(con, user, body)
+        if path == "/api/ai-agent/control" and method == "POST":
+            self.require_user(user)
+            return self.control_ai_agent(con, user, body)
+        if path == "/api/ai-agent/draft" and method == "POST":
+            self.require_user(user)
+            return self.draft_ai_agent_reply(con, user, body)
+        if path == "/api/ai-agent/private-search" and method == "GET":
+            self.require_user(user)
+            return self.ai_agent_private_search(con, user, query)
+        if path == "/api/ai-agent/channel-rule" and method == "POST":
+            self.require_user(user)
+            return self.update_ai_agent_channel_rule(con, user, body)
+        if path == "/api/media/messages/upload" and method == "POST":
+            self.require_user(user)
+            return self.prepare_message_media_upload(con, user, body)
+        if path == "/api/users" and method == "GET":
+            self.require_user(user)
+            q = (query.get("q", [""])[0] or "").lower().replace("@", "")
+            rows = con.execute(
+                "SELECT * FROM users WHERE id != ? AND (username LIKE ? OR lower(name) LIKE ?) ORDER BY username LIMIT 12",
+                (user["id"], f"%{q}%", f"%{q}%"),
+            ).fetchall()
+            return self.json({"ok": True, "users": [public_user(r) for r in rows]})
+        if path == "/api/messages/search" and method == "GET":
+            self.require_user(user)
+            return self.search_messages(con, user, query)
+        if path == "/api/username" and method == "POST":
+            self.require_user(user)
+            username = normalize_username(body.get("username"))
+            validate_username(username)
+            if username_taken(con, username, user["id"]):
+                raise ValueError("Этот username уже занят. Выберите другой.")
+            con.execute("UPDATE users SET username = ? WHERE id = ?", (username, user["id"]))
+            return self.json({"ok": True})
+        if path == "/api/preferences" and method == "POST":
+            self.require_user(user)
+            theme = str(body.get("theme", "light"))
+            if theme not in {"light", "dark"}:
+                raise ValueError("Неизвестный режим оформления.")
+            background = str(body.get("chatBackground", "default"))
+            allowed_backgrounds = {"default", "whatsapp", "mint", "aurora", "noir", "cyan", "mist", "sunset", "ocean", "lavender", "forest", "midnight", "ember", "iris", "prism", "live", "custom"}
+            if background not in allowed_backgrounds:
+                raise ValueError("Неизвестный вариант фона.")
+            background_data = str(body.get("chatBackgroundData", "")) or None
+            if background == "custom":
+                if not background_data.startswith("data:image/") or len(background_data) > 3_500_000:
+                    raise ValueError("Загрузите фоновое изображение до 2,5 МБ.")
+            else:
+                background_data = None
+            sidebar_background_data = str(body.get("sidebarBackgroundData", "")) or None
+            if sidebar_background_data and (not sidebar_background_data.startswith("data:image/") or len(sidebar_background_data) > 3_500_000):
+                raise ValueError("Загрузите изображение левой панели до 2,5 МБ.")
+            site_color = str(body.get("siteColor", "#2aabee"))
+            if not re.fullmatch(r"#[0-9a-fA-F]{6}", site_color):
+                raise ValueError("Выберите корректный цвет сайта.")
+            dialog_bubble_style = str(body.get("dialogBubbleStyle", "custom"))
+            if dialog_bubble_style != "custom":
+                raise ValueError("Неизвестный стиль сообщений.")
+            dialog_color = str(body.get("dialogColor", "#dff9f9"))
+            other_dialog_color = str(body.get("otherDialogColor", "#ffffff"))
+            dialog_panel_color = str(body.get("dialogPanelColor", "#f4f8fc"))
+            if not all(re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in (dialog_color, other_dialog_color, dialog_panel_color)):
+                raise ValueError("Выберите корректный цвет сообщений.")
+            dialog_panel_style = str(body.get("dialogPanelStyle", "custom"))
+            if dialog_panel_style not in {"custom", "pearl", "sky", "mint", "sunset", "lavender", "midnight", "noir", "aurora", "live", "interactive", "interactive-light", "ember"}:
+                raise ValueError("Неизвестный стиль панелей диалога.")
+            dialog_font = str(body.get("dialogFont", "system"))
+            if dialog_font not in {"system", "business", "classic", "script", "rounded", "serif", "mono", "humanist", "condensed", "typewriter", "elegant"}:
+                raise ValueError("Неизвестный шрифт сообщений.")
+            text_scale = str(body.get("textScale", "system"))
+            if text_scale not in {"system", "110", "120", "130"}:
+                raise ValueError("Неизвестный размер текста.")
+            night_appearance_custom = body.get("nightAppearanceCustom", False)
+            if not isinstance(night_appearance_custom, bool):
+                raise ValueError("Неверная настройка личной подсветки.")
+            night_appearance = normalize_ui_appearance({
+                "outlineColor": body.get("nightOutlineColor", DEFAULT_UI_APPEARANCE["outlineColor"]),
+                "glowColor": body.get("nightGlowColor", DEFAULT_UI_APPEARANCE["glowColor"]),
+                "glowIntensity": body.get("nightGlowIntensity", DEFAULT_UI_APPEARANCE["glowIntensity"]),
+            }) if night_appearance_custom else None
+            group_invite_privacy = str(body.get("groupInvitePrivacy", "contacts"))
+            if group_invite_privacy not in {"everyone", "contacts", "nobody"}:
+                raise ValueError("Неизвестная настройка добавления в группы.")
+            direct_message_privacy = str(body.get("directMessagePrivacy", "everyone"))
+            if direct_message_privacy not in {"everyone", "contacts", "nobody"}:
+                raise ValueError("Неизвестная настройка личных сообщений.")
+            call_ringtone = str(body.get("callRingtone", "classic"))
+            if call_ringtone not in {"classic", "pulse", "bright"}:
+                raise ValueError("Неизвестная мелодия звонка.")
+            if call_ringtone != "classic":
+                self.require_active_account_level(con, user["id"])
+            site_background = str(body.get("siteBackground", "default"))
+            if site_background not in allowed_backgrounds:
+                raise ValueError("Неизвестный вариант фона сайта.")
+            site_background_data = str(body.get("siteBackgroundData", "")) or None
+            if site_background == "custom":
+                if not site_background_data.startswith("data:image/") or len(site_background_data) > 3_500_000:
+                    raise ValueError("Загрузите фоновое изображение сайта до 2,5 МБ.")
+            else:
+                site_background_data = None
+            con.execute(
+                "UPDATE users SET theme = ?, site_color = ?, site_background = ?, site_background_data = ?, dialog_color = ?, other_dialog_color = ?, dialog_panel_color = ?, dialog_panel_style = ?, dialog_bubble_style = ?, dialog_font = ?, text_scale = ?, chat_background = ?, chat_background_data = ?, sidebar_background_data = ?, hidden_status_ids = ?, group_invite_privacy = ?, direct_message_privacy = ?, night_appearance_custom = ?, night_outline_color = ?, night_glow_color = ?, night_glow_intensity = ?, call_ringtone = ? WHERE id = ?",
+                (theme, site_color, site_background, site_background_data, dialog_color, other_dialog_color, dialog_panel_color, dialog_panel_style, dialog_bubble_style, dialog_font, text_scale, background, background_data, sidebar_background_data, dumps(body.get("hiddenStatusIds", [])), group_invite_privacy, direct_message_privacy, int(night_appearance_custom), night_appearance["outlineColor"] if night_appearance else None, night_appearance["glowColor"] if night_appearance else None, night_appearance["glowIntensity"] if night_appearance else None, call_ringtone, user["id"]),
+            )
+            return self.json({"ok": True})
+        if path == "/api/profile/avatar" and method == "POST":
+            self.require_user(user)
+            return self.update_avatar(con, user, body)
+        if path == "/api/my-reactions" and method == "GET":
+            self.require_user(user)
+            return self.my_reactions(con, user)
+        if path == "/api/profile/posts" and method == "POST":
+            self.require_user(user)
+            return self.create_profile_post(con, user, body)
+        if path == "/api/profile/posts/react" and method == "POST":
+            self.require_user(user)
+            return self.react_to_profile_post(con, user, body)
+        if path == "/api/profile/stories" and method == "POST":
+            self.require_user(user)
+            return self.create_story(con, user, body)
+        if path == "/api/stories/view" and method == "POST":
+            self.require_user(user)
+            return self.view_story(con, user, body)
+        if path == "/api/stories/react" and method == "POST":
+            self.require_user(user)
+            return self.react_to_story(con, user, body)
+        if path == "/api/stories/permanent" and method == "POST":
+            self.require_user(user)
+            return self.save_story_permanent(con, user, body)
+        if path == "/api/stories/hide-author" and method == "POST":
+            self.require_user(user)
+            return self.hide_story_author(con, user, body)
+        if path == "/api/stories/privacy" and method == "POST":
+            self.require_user(user)
+            return self.update_story_privacy(con, user, body)
+        if path == "/api/stories/reply" and method == "POST":
+            self.require_user(user)
+            return self.reply_to_story(con, user, body)
+        if path == "/api/stories/share" and method == "POST":
+            self.require_user(user)
+            return self.share_story(con, user, body)
+        if path == "/api/chats" and method == "POST":
+            self.require_user(user)
+            return self.create_chat(con, user, body)
+        if path == "/api/secret-chats/unlock" and method == "POST":
+            self.require_user(user)
+            return self.unlock_secret_chats(con, user, body.get("password"))
+        if path == "/api/chats/join" and method == "POST":
+            self.require_user(user)
+            return self.join_chat(con, user, body.get("chatId"))
+        if path == "/api/invites/join" and method == "POST":
+            self.require_user(user)
+            return self.join_chat_by_invite(con, user, body.get("code"))
+        if path == "/api/chats/members" and method == "POST":
+            self.require_user(user)
+            return self.add_chat_member(con, user, body)
+        if path == "/api/chats/update" and method == "POST":
+            self.require_user(user)
+            return self.update_group_chat(con, user, body)
+        if path == "/api/channels/schedule" and method == "POST":
+            self.require_user(user)
+            return self.schedule_channel_post(con, user, body)
+        if path == "/api/channels/link" and method == "POST":
+            self.require_user(user)
+            return self.update_channel_link(con, user, body)
+        if path == "/api/channels/telegram" and method == "POST":
+            self.require_user(user)
+            return self.update_telegram_channel_link(con, user, body)
+        if path == "/api/channels/rss" and method == "POST":
+            self.require_user(user)
+            return self.update_rss_channel_link(con, user, body)
+        if path == "/api/channels/vk" and method == "POST":
+            self.require_user(user)
+            return self.update_vk_channel_link(con, user, body)
+        if path == "/api/channels/appearance" and method == "POST":
+            self.require_user(user)
+            return self.update_channel_appearance(con, user, body)
+        if path == "/api/channels/comments" and method == "POST":
+            self.require_user(user)
+            return self.add_channel_comment(con, user, body)
+        if path == "/api/chats/members/role" and method == "POST":
+            self.require_user(user)
+            return self.update_chat_member_role(con, user, body)
+        if path == "/api/chats/members/remove" and method == "POST":
+            self.require_user(user)
+            return self.remove_chat_member(con, user, body)
+        if path == "/api/chats/leave" and method == "POST":
+            self.require_user(user)
+            return self.leave_chat(con, user, body.get("chatId"))
+        if path == "/api/chats/pin" and method == "POST":
+            self.require_user(user)
+            return self.toggle_chat_pin(con, user, body.get("chatId"))
+        if path == "/api/chats/archive" and method == "POST":
+            self.require_user(user)
+            return self.toggle_chat_archive(con, user, body.get("chatId"), body.get("archived"))
+        if path == "/api/chats/delete" and method == "POST":
+            self.require_user(user)
+            return self.delete_chat(con, user, body.get("chatId"), body.get("scope"))
+        if path == "/api/messages" and method == "POST":
+            self.require_user(user)
+            return self.add_message(con, user, body)
+        if path == "/api/chats/activity" and method == "POST":
+            self.require_user(user)
+            return self.update_chat_activity(con, user, body)
+        if path == "/api/group-content/share" and method == "POST":
+            self.require_user(user)
+            return self.share_content_to_group(con, user, body)
+        if path == "/api/messages/source-delete" and method == "POST":
+            self.require_user(user)
+            return self.delete_source_repost(con, user, body.get("messageId"))
+        if path == "/api/messages/edit" and method == "POST":
+            self.require_user(user)
+            return self.edit_message(con, user, body)
+        if path == "/api/messages/read" and method == "POST":
+            self.require_user(user)
+            return self.mark_messages_read(con, user, body.get("chatId"))
+        if path == "/api/messages/pin" and method == "POST":
+            self.require_user(user)
+            return self.toggle_message_pin(con, user, body.get("messageId"))
+        if path == "/api/messages/pin/hide" and method == "POST":
+            self.require_user(user)
+            return self.hide_pinned_message(con, user, body.get("messageId"))
+        if path == "/api/messages/delete" and method == "POST":
+            self.require_user(user)
+            return self.delete_message(con, user, body)
+        if path == "/api/messages/bulk" and method == "POST":
+            self.require_user(user)
+            return self.bulk_messages(con, user, body)
+        if path == "/api/react" and method == "POST":
+            self.require_user(user)
+            return self.react(con, user, body)
+        if path == "/api/donate" and method == "POST":
+            self.require_user(user)
+            return self.donate(con, user, body)
+        if path == "/api/yookassa/payments" and method == "POST":
+            self.require_user(user)
+            return self.create_yookassa_payment(con, user, body)
+        if path == "/api/yookassa/payments/status" and method == "POST":
+            self.require_user(user)
+            return self.check_yookassa_payment(con, user, body)
+        if path == "/api/reviews" and method == "POST":
+            self.require_user(user)
+            return self.add_review(con, user, body)
+        if path == "/api/reports" and method == "POST":
+            self.require_user(user)
+            return self.add_report(con, user, body)
+        if path == "/api/promotions/claim" and method == "POST":
+            self.require_user(user)
+            return self.claim_promotion(con, user, body.get("promotionId"))
+        if path == "/api/activity-rewards/claim" and method == "POST":
+            self.require_user(user)
+            return self.claim_activity_reward(con, user, body.get("rewardId"), body.get("channelId"))
+        if path == "/api/account-level/claim" and method == "POST":
+            self.require_user(user)
+            return self.claim_account_level_reward(con, user, body.get("levelId"))
+        if path == "/api/account-level/buy" and method == "POST":
+            self.require_user(user)
+            return self.buy_account_level(con, user, body.get("levelId"))
+        if path == "/api/calls/start" and method == "POST":
+            self.require_user(user)
+            return self.start_call(con, user, body)
+        if path == "/api/calls/poll" and method == "GET":
+            self.require_user(user)
+            return self.poll_calls(con, user)
+        if path == "/api/calls/answer" and method == "POST":
+            self.require_user(user)
+            return self.answer_call(con, user, body)
+        if path == "/api/calls/end" and method == "POST":
+            self.require_user(user)
+            return self.end_call(con, user, body)
 
-function bindLiveMessageElement(element) {
-  if (!element) return;
-  element.querySelectorAll("[data-open-profile]").forEach((button) => button.addEventListener("click", () => openProfile(button.dataset.openProfile)));
-  element.querySelectorAll("[data-remove-pending-message]").forEach((button) => button.addEventListener("click", () => removePendingMessage(button.dataset.removePendingMessage)));
-  element.querySelectorAll("[data-open-message-media]").forEach((button) => button.addEventListener("click", () => {
-    const source = button.dataset.openMessageMediaSource;
-    if (source) openMedia(source, button.dataset.mediaType || "photo");
-    else {
-      const message = state.messages.find((item) => item.id === button.dataset.openMessageMedia);
-      if (message) openMedia(messageMediaUrl(message), message.mediaType);
-    }
-  }));
-  element.querySelectorAll("[data-open-circle]").forEach((button) => button.addEventListener("click", () => openCircle(button.dataset.openCircle)));
-  element.querySelectorAll("[data-circle-playback]").forEach((button) => button.addEventListener("click", () => {
-    const video = button.closest(".circle-message")?.querySelector(".message-circle");
-    if (!video) return;
-    if (video.paused) video.play().catch(() => toast("Не удалось запустить видеокружок.", true));
-    else video.pause();
-  }));
-  element.querySelectorAll("[data-circle-progress]").forEach((input) => input.addEventListener("input", () => {
-    const video = input.closest(".circle-message")?.querySelector(".message-circle");
-    if (video?.duration) video.currentTime = (Number(input.value) / 100) * video.duration;
-  }));
-  element.querySelectorAll(".message-circle").forEach((video) => {
-    const circle = video.closest(".circle-message");
-    const button = circle?.querySelector("[data-circle-playback]");
-    const progress = circle?.querySelector("[data-circle-progress]");
-    const update = () => {
-      if (!button) return;
-      button.innerHTML = video.paused
-        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 8 6-8 6Z"/></svg>'
-        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6v12M15 6v12"/></svg>';
-    };
-    video.addEventListener("play", update);
-    video.addEventListener("pause", update);
-    video.addEventListener("loadeddata", () => circle?.classList.add("is-ready"), { once: true });
-    video.addEventListener("timeupdate", () => { if (video.duration && progress) progress.value = String((video.currentTime / video.duration) * 100); });
-    video.addEventListener("click", () => { if (video.paused) video.play().catch(() => toast("Не удалось запустить видеокружок.", true)); else video.pause(); });
-  });
-  element.querySelectorAll("[data-voice-playback]").forEach((button) => button.addEventListener("click", async () => {
-    const voice = button.closest(".message-voice");
-    const audio = voice?.querySelector(".message-audio");
-    if (!audio) return;
-    if (!audio.paused) { audio.pause(); audio.currentTime = 0; return; }
-    try { await audio.play(); }
-    catch { toast("Не удалось запустить голосовое сообщение.", true); }
-  }));
-  element.querySelectorAll(".message-voice").forEach((voice) => {
-    const audio = voice.querySelector(".message-audio");
-    const button = voice.querySelector("[data-voice-playback]");
-    const duration = voice.querySelector("[data-voice-duration]");
-    const wave = voice.querySelector("[data-voice-wave]");
-    const format = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-    const update = () => {
-      button.innerHTML = actionIcon(audio.paused ? "play" : "stop");
-      if (audio.duration) duration.textContent = `${format(audio.currentTime)} / ${format(audio.duration)}`;
-      const bars = Math.ceil(((audio.currentTime / audio.duration) || 0) * wave.children.length);
-      wave.querySelectorAll("i").forEach((bar, index) => bar.classList.toggle("is-played", index < bars));
-    };
-    audio.addEventListener("loadedmetadata", update);
-    audio.addEventListener("timeupdate", update);
-    audio.addEventListener("play", update);
-    audio.addEventListener("pause", update);
-  });
-  element.addEventListener("click", (event) => {
-    if (event.target.closest("button, audio, video, input, label")) return;
-    const message = [...state.messages, ...pendingOutgoingMessages.values()].find((item) => item.id === element.id.replace("message-", ""));
-    if (message && !message.mediaType?.includes("system")) openMessageMenu(message);
-  });
-}
+        if path.startswith("/api/admin/"):
+            self.require_admin()
+            return self.handle_admin(con, method, path, body)
 
-async function markChatRead(chatId) {
-  const chat = state.chats.find((item) => item.id === chatId);
-  if (!chat?.unreadCount) return;
-  try {
-    await api("/api/messages/read", { method: "POST", body: { chatId } });
-    chat.unreadCount = 0;
-    state.messages.filter((message) => message.chatId === chatId).forEach((message) => { message.unread = false; });
-    app.querySelector(`.chat-row [data-chat="${chatId}"] .unread-badge`)?.remove();
-    app.querySelector(`.chat-row [data-chat="${chatId}"]`)?.closest(".chat-row")?.classList.remove("has-unread");
-  } catch { /* A subsequent polling cycle will retry the read status. */ }
-}
+        return self.json({"ok": False, "error": "API не найден."}, HTTPStatus.NOT_FOUND)
 
-function beginMessagePolling() {
-  clearInterval(messagePollTimer);
-  messagePollTimer = setInterval(async () => {
-    if (!token || !state || messagePollInProgress) return;
-    messagePollInProgress = true;
-    const knownMessageIds = new Set(state.messages.map((message) => message.id));
-    const previousListSignature = chatListSignature();
-    const previousStoriesSignature = state.stories.map((story) => `${story.id}:${Number(story.viewed)}`).join("|");
-    try {
-      await loadState();
-      const hasNewActiveMessage = activeChatId && state.messages.some((message) => message.chatId === activeChatId && !knownMessageIds.has(message.id));
-      const shouldUpdateLeft = previousListSignature !== chatListSignature() || previousStoriesSignature !== state.stories.map((story) => `${story.id}:${Number(story.viewed)}`).join("|");
-      if (shouldUpdateLeft && activeSection !== "settings" && document.activeElement?.id !== "userSearch") renderLeft();
-      if (hasNewActiveMessage) {
-        state.messages
-          .filter((message) => message.chatId === activeChatId && !knownMessageIds.has(message.id))
-          .forEach(appendLiveMessage);
-        markChatRead(activeChatId);
-      }
-      updateActiveChatActivity();
-    } catch { /* The next cycle will retry after a temporary connection error. */ }
-    finally { messagePollInProgress = false; }
-  }, 1500);
-}
+    def handle_admin(self, con: sqlite3.Connection, method: str, path: str, body):
+        if path == "/api/admin/bootstrap" and method == "GET":
+            return self.admin_bootstrap(con)
+        if path == "/api/admin/settings" and method == "POST":
+            key = str(body.get("key", ""))
+            if key == "account_levels":
+                value = normalize_account_levels(body.get("value"))
+            elif key == "features":
+                value = body.get("value")
+                if not isinstance(value, dict):
+                    raise ValueError("Настройки функций должны быть объектом.")
+            elif key == "ui_appearance":
+                value = normalize_ui_appearance(body.get("value"))
+            elif key == "channel_reactions":
+                value = normalize_channel_reactions(body.get("value"))
+            elif key == "public_branding":
+                value = normalize_public_branding(body.get("value"))
+            elif key == "public_legal":
+                value = normalize_public_legal(body.get("value"))
+            else:
+                raise ValueError("Этот раздел настроек нельзя изменять через админку.")
+            con.execute("INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)", (key, dumps(value)))
+            return self.json({"ok": True})
+        if path == "/api/admin/users/stars" and method == "POST":
+            amount = int(body.get("amount", 0))
+            user_id = str(body.get("userId", ""))
+            if amount > 0:
+                self.credit_stars(con, user_id, amount)
+            elif amount < 0:
+                before = con.execute("SELECT stars FROM users WHERE id = ?", (user_id,)).fetchone()
+                if not before:
+                    raise ValueError("Пользователь не найден.")
+                con.execute("UPDATE users SET stars = MAX(0, stars + ?) WHERE id = ?", (amount, user_id))
+                after = con.execute("SELECT stars FROM users WHERE id = ?", (user_id,)).fetchone()
+                amount = int(after["stars"]) - int(before["stars"])
+            if amount:
+                self.record_star_transaction(con, user_id, amount, "admin", "Корректировка баланса администрацией")
+            return self.json({"ok": True})
+        if path == "/api/admin/recommended" and method == "POST":
+            chat_id = str(body.get("chatId", ""))
+            channel = con.execute("SELECT id FROM chats WHERE id = ? AND type = 'channel'", (chat_id,)).fetchone()
+            if not channel:
+                raise ValueError("Для рекомендации можно выбрать только канал.")
+            con.execute("INSERT OR REPLACE INTO recommended_groups(chat_id,position,created_at) VALUES (?,?,?)", (chat_id, int(body.get("position", 100)), now()))
+            return self.json({"ok": True})
+        if path == "/api/admin/recommended/delete" and method == "POST":
+            con.execute("DELETE FROM recommended_groups WHERE chat_id = ?", (str(body.get("chatId", "")),))
+            return self.json({"ok": True})
+        if path == "/api/admin/promotions" and method == "POST":
+            con.execute(
+                """INSERT INTO promotions(id,title,description,action_type,target_count,reward_type,reward_amount,premium_days,daily_limit,active,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (uid("promo"), body.get("title", "Акция"), body.get("description", ""), body.get("actionType", "manual"), int(body.get("targetCount", 1)), body.get("rewardType", "stars"), int(body.get("rewardAmount", 0)), int(body.get("premiumDays", 0)), int(body.get("dailyLimit", 1)), 1, now()),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/activity-rewards" and method == "POST":
+            criteria = self.normalize_activity_criteria(body.get("criteria", {}))
+            if not criteria:
+                raise ValueError("Укажите хотя бы одно условие активности.")
+            title = str(body.get("title", "")).strip()
+            if not title:
+                raise ValueError("Введите название награды.")
+            reward = normalize_level_reward(body.get("reward", {"stars": body.get("rewardStars", 0)}), "reward")
+            levels_row = con.execute("SELECT value FROM settings WHERE key = 'account_levels'").fetchone()
+            configured_levels = normalize_account_levels(loads(levels_row["value"], []) if levels_row else []) if levels_row else []
+            if reward["accountLevelId"] and reward["accountLevelId"] not in {level["id"] for level in configured_levels}:
+                raise ValueError("Выберите существующий уровень аккаунта для награды.")
+            if not any((reward["stars"], reward["premiumDays"], reward["limits"], reward["recurringStars"], reward["starPackageDiscountPercent"], reward["accountLevelId"], reward["recommendOwnChannel"])):
+                raise ValueError("Укажите хотя бы один вид награды.")
+            add_activity_reward(con, title[:120], str(body.get("description", "")).strip()[:1000], criteria, reward)
+            return self.json({"ok": True})
+        if path == "/api/admin/activity-rewards/deactivate" and method == "POST":
+            con.execute("UPDATE activity_rewards SET active = 0 WHERE id = ?", (str(body.get("rewardId", "")),))
+            return self.json({"ok": True})
+        if path == "/api/admin/statuses" and method == "POST":
+            con.execute(
+                """INSERT INTO statuses(id,icon,title,description,criteria_json,reward_json,active,created_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (uid("status"), body.get("icon", "🏅"), body.get("title", "Статус"), body.get("description", ""), dumps(body.get("criteria", {})), dumps(body.get("reward", {})), 1, now()),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-packages" and method == "POST":
+            title = " ".join(str(body.get("title", "")).split())[:80]
+            if not title:
+                raise ValueError("Введите название демо-пакета.")
+            existing = con.execute("SELECT count(*) AS count FROM demo_activity_packages").fetchone()["count"]
+            if existing >= 6:
+                raise ValueError("Можно создать не более шести демо-пакетов.")
+            values = {
+                metric: nonnegative_int(body.get(f"{metric}PerDay", 0), f"{metric}PerDay", 1_000_000)
+                for metric in ("subscribers", "views", "reactions", "comments")
+            }
+            post_limit = nonnegative_int(body.get("postLimit", 1), "postLimit", 10)
+            indefinite = bool(body.get("indefinite"))
+            fade_duration_days = nonnegative_int(body.get("fadeDurationDays", 30), "fadeDurationDays", 365)
+            if not post_limit or not any(values.values()):
+                raise ValueError("Укажите число публикаций и хотя бы один дневной показатель.")
+            if not indefinite and not fade_duration_days:
+                raise ValueError("Укажите длительность затухания или включите бессрочный режим.")
+            con.execute(
+                """INSERT INTO demo_activity_packages(id,title,subscribers_per_day,views_per_day,reactions_per_day,comments_per_day,post_limit,duration_days,fade_duration_days,indefinite,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (uid("demopackage"), title, values["subscribers"], values["views"], values["reactions"], values["comments"], post_limit, 7, fade_duration_days, 1 if indefinite else 0, now()),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-packages/delete" and method == "POST":
+            package_id = str(body.get("packageId", "")).strip()
+            if con.execute("SELECT 1 FROM demo_activity_subscriptions WHERE package_id = ? AND active = 1", (package_id,)).fetchone():
+                raise ValueError("Сначала отключите активные подключения этого пакета.")
+            con.execute("DELETE FROM demo_activity_packages WHERE id = ?", (package_id,))
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-subscriptions" and method == "POST":
+            package_id = str(body.get("packageId", "")).strip()
+            channel_id = str(body.get("channelId", "")).strip()
+            package = con.execute("SELECT * FROM demo_activity_packages WHERE id = ?", (package_id,)).fetchone()
+            if not package or not con.execute("SELECT 1 FROM chats WHERE id = ? AND type = 'channel'", (channel_id,)).fetchone():
+                raise ValueError("Выберите существующий пакет и канал.")
+            if (package["views_per_day"] or package["reactions_per_day"] or package["comments_per_day"]) and not demo_activity_post(con, channel_id, package["post_limit"]):
+                raise ValueError("Для этого пакета в канале должна быть хотя бы одна публикация.")
+            if package["comments_per_day"] and not con.execute("SELECT 1 FROM automated_commenters LIMIT 1").fetchone():
+                raise ValueError("Для комментариев сначала добавьте служебные аккаунты в раздел «Автокомментарии».")
+            current = now()
+            con.execute(
+                """INSERT INTO demo_activity_subscriptions(id,package_id,channel_id,starts_at,ends_at,auto_renew,created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (uid("demosubscription"), package_id, channel_id, current, current + package["duration_days"] * 86400, 0 if package["indefinite"] else 1 if body.get("autoRenew") else 0, current),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-subscriptions/deactivate" and method == "POST":
+            con.execute("UPDATE demo_activity_subscriptions SET active = 0 WHERE id = ?", (str(body.get("subscriptionId", "")),))
+            return self.json({"ok": True})
+        if path == "/api/admin/boost-jobs" and method == "POST":
+            target_type = str(body.get("targetType", ""))
+            target_id = str(body.get("targetId", ""))
+            metric = str(body.get("metric", ""))
+            amount_per_minute = nonnegative_int(body.get("amountPerMinute", 1), "amountPerMinute", 10_000)
+            duration = nonnegative_int(body.get("durationMinutes", 1), "durationMinutes", 10_080)
+            if not amount_per_minute or not duration:
+                raise ValueError("Скорость и длительность накрутки должны быть больше нуля.")
+            if target_type == "chat" and metric == "subscribers":
+                target = con.execute("SELECT 1 FROM chats WHERE id = ? AND type IN ('group','community','channel')", (target_id,)).fetchone()
+            elif target_type == "message" and metric in {"views", "reactions"}:
+                target = con.execute("SELECT 1 FROM messages WHERE id = ?", (target_id,)).fetchone()
+            else:
+                raise ValueError("Выберите поддерживаемую цель и показатель.")
+            if not target:
+                raise ValueError("Цель накрутки не найдена.")
+            total = amount_per_minute * duration
+            con.execute(
+                """INSERT INTO boost_jobs(id,target_type,target_id,metric,amount_per_minute,remaining,active,last_tick,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (uid("boost"), target_type, target_id, metric, amount_per_minute, total, 1, now(), now()),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/channel-growth-jobs" and method == "POST":
+            channel_id = str(body.get("channelId", "")).strip()
+            subscribers_per_hour = nonnegative_int(body.get("subscribersPerHour", 0), "subscribersPerHour", 100_000)
+            views_per_hour = nonnegative_int(body.get("viewsPerHour", 0), "viewsPerHour", 100_000)
+            reactions_per_hour = nonnegative_int(body.get("reactionsPerHour", 0), "reactionsPerHour", 100_000)
+            comments_per_hour = nonnegative_int(body.get("commentsPerHour", 0), "commentsPerHour", 1_000)
+            duration_hours = nonnegative_int(body.get("durationHours", 0), "durationHours", 720)
+            if not duration_hours or not any((subscribers_per_hour, views_per_hour, reactions_per_hour, comments_per_hour)):
+                raise ValueError("Укажите длительность и хотя бы одну ненулевую скорость.")
+            if not con.execute("SELECT 1 FROM chats WHERE id = ? AND type = 'channel'", (channel_id,)).fetchone():
+                raise ValueError("Выберите существующий канал.")
+            if (views_per_hour or reactions_per_hour or comments_per_hour) and not weighted_channel_post(con, channel_id):
+                raise ValueError("Для просмотров, реакций или комментариев в канале должна быть хотя бы одна публикация.")
+            if comments_per_hour and not con.execute("SELECT 1 FROM automated_commenters LIMIT 1").fetchone():
+                raise ValueError("Для ИИ-комментариев сначала добавьте аккаунты в пул автокомментаторов.")
+            starts_at = now()
+            con.execute(
+                """INSERT INTO channel_growth_jobs(
+                       id,channel_id,subscribers_per_hour,views_per_hour,reactions_per_hour,comments_per_hour,
+                       starts_at,ends_at,subscribers_added,views_added,reactions_added,comments_added,active,created_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (uid("channel_growth"), channel_id, subscribers_per_hour, views_per_hour, reactions_per_hour, comments_per_hour,
+                 starts_at, starts_at + duration_hours * 3600, 0, 0, 0, 0, 1, starts_at),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/automated-commenters" and method == "POST":
+            return self.create_automated_commenter(con, body)
+        if path == "/api/admin/automated-commenters/create-pool" and method == "POST":
+            return self.create_automated_commenter_pool(con)
+        if path == "/api/admin/automated-commenters/password" and method == "POST":
+            return self.reset_automated_commenter_password(con, body)
+        if path == "/api/admin/automated-comment-rules" and method == "POST":
+            return self.create_automated_comment_rule(con, body)
+        if path == "/api/admin/automated-comment-rules/deactivate" and method == "POST":
+            rule_id = str(body.get("ruleId", ""))
+            con.execute("UPDATE automated_comment_rules SET active = 0 WHERE id = ?", (rule_id,))
+            con.execute("DELETE FROM automated_comment_jobs WHERE rule_id = ?", (rule_id,))
+            return self.json({"ok": True})
+        if path == "/api/admin/stories/delete" and method == "POST":
+            story_id = str(body.get("storyId", ""))
+            if not con.execute("SELECT 1 FROM stories WHERE id = ?", (story_id,)).fetchone():
+                raise ValueError("Сторис не найдена.")
+            con.execute("DELETE FROM stories WHERE id = ?", (story_id,))
+            return self.json({"ok": True})
+        if path == "/api/admin/messages/moderate" and method == "POST":
+            return self.moderate_message_admin(con, body)
+        return self.json({"ok": False, "error": "Admin API не найден."}, HTTPStatus.NOT_FOUND)
 
-function beginCallPolling() {
-  clearInterval(callPollTimer);
-  callPollTimer = setInterval(pollCalls, 1500);
-  pollCalls();
-}
+    def register(self, con, body):
+        username = normalize_username(body.get("username"))
+        validate_username(username)
+        if username_taken(con, username):
+            raise ValueError("Этот username уже занят. Выберите другой.")
+        name = str(body.get("name", "")).strip()
+        password = str(body.get("password", ""))
+        email = normalize_email(body.get("email"))
+        if body.get("agreementAccepted") is not True and str(body.get("agreementAccepted", "")).lower() != "true":
+            raise ValueError("Для регистрации необходимо принять пользовательское соглашение.")
+        if not name:
+            raise ValueError("Введите имя.")
+        if len(password) < 8:
+            raise ValueError("Пароль должен быть не короче 8 символов.")
+        if con.execute("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE", (email,)).fetchone():
+            raise ValueError("Этот e-mail уже используется.")
+        challenge_id = self.create_auth_challenge(
+            con, "register", email, None, None,
+            {"name": name[:80], "username": username, "password": hash_password(password), "agreementAcceptedAt": now()},
+            "Подтверждение регистрации",
+        )
+        return self.json({"ok": True, "challengeId": challenge_id, "message": "Код подтверждения отправлен."})
 
-async function startCall(chat, callType) {
-  if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) {
-    toast("Этот браузер не поддерживает звонки.", true);
-    return;
-  }
-  if (activeCall) { toast("Сначала завершите текущий звонок.", true); return; }
-  let stream = null;
-  let peer = null;
-  const pendingCall = { callType, role: "caller", chatId: chat.id, pending: true, peer: null, stream: null, remoteStream: null, cameraFacing: "user" };
-  try {
-    activeCall = pendingCall;
-    showCallOverlay(`Звоним: ${chatMeta(chat).title}`, callType, null);
-    updateCallOverlay("Подготавливаем звонок…");
-    stream = await navigator.mediaDevices.getUserMedia(callMediaConstraints(callType));
-    if (activeCall !== pendingCall) {
-      stream.getTracks().forEach((track) => track.stop());
-      return;
-    }
-    peer = createPeer(stream);
-    Object.assign(pendingCall, { peer, stream, remoteStream: peer.remoteStream || null });
-    const localVideo = document.querySelector("[data-local-video]");
-    if (localVideo) {
-      localVideo.srcObject = stream;
-      localVideo.play().catch(() => {});
-    }
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
-    await waitForIce(peer);
-    const response = await api("/api/calls/start", { method: "POST", body: { chatId: chat.id, callType, offerSdp: peer.localDescription } });
-    if (activeCall !== pendingCall) {
-      await api("/api/calls/end", { method: "POST", body: { callId: response.callId } });
-      return;
-    }
-    Object.assign(pendingCall, { id: response.callId, pending: false });
-    updateCallOverlay("Ожидаем ответа…");
-    startRingTone(state.me.callRingtone || "classic");
-  } catch (error) {
-    peer?.close();
-    stream?.getTracks().forEach((track) => track.stop());
-    if (activeCall === pendingCall) activeCall = null;
-    document.querySelector(".call-overlay")?.remove();
-    toast(error.name === "NotAllowedError" ? "Разрешите доступ к микрофону и камере." : error.message, true);
-  }
-}
+    def verify_registration(self, con, body):
+        challenge = self.verify_auth_challenge(con, body, "register")
+        payload = loads(challenge["payload_json"], {})
+        username = str(payload.get("username", ""))
+        if not username or username_taken(con, username):
+            raise ValueError("Username уже занят. Начните регистрацию заново.")
+        if con.execute("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE", (challenge["email"],)).fetchone():
+            raise ValueError("Этот e-mail уже используется.")
+        user_id = uid("user")
+        con.execute(
+            """INSERT INTO users(id,name,username,password,email,email_verified,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,agreement_accepted_at,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, payload["name"], username, payload["password"], challenge["email"], 1, 50, "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", payload.get("agreementAcceptedAt") or now(), now()),
+        )
+        con.execute("DELETE FROM auth_challenges WHERE id = ?", (challenge["id"],))
+        self.ensure_saved(con, user_id)
+        return self.issue_token(con, user_id)
 
-async function pollCalls() {
-  if (!token) return;
-  try {
-    const data = await api("/api/calls/poll");
-    const incoming = data.calls.find((call) => call.receiverId === state.me.id && call.status === "ringing");
-    if (incoming && (!activeCall || activeCall.id !== incoming.id)) showIncomingCall(incoming);
-    if (activeCall?.role === "caller" && activeCall.id) {
-      const remote = data.calls.find((call) => call.id === activeCall.id);
-      if (remote?.status === "accepted") stopRingTone();
-      if (remote?.answerSdp && !activeCall.answerApplied) {
-        await activeCall.peer.setRemoteDescription(new RTCSessionDescription(remote.answerSdp));
-        activeCall.answerApplied = true;
-        updateCallOverlay("Звонок подключён");
-        stopRingTone();
-      }
-      if (!remote) finishCall(false);
-    }
-    if (activeCall?.role === "receiver" && !data.calls.some((call) => call.id === activeCall.id)) finishCall(false);
-  } catch { /* Server may be restarting; the next poll will retry. */ }
-}
+    def login(self, con, body):
+        login = str(body.get("login", body.get("username", ""))).strip()
+        if "@" in login:
+            email = normalize_email(login)
+            user = con.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (email,)).fetchone()
+        else:
+            username = normalize_username(login)
+            user = con.execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)).fetchone()
+        if not user or not password_matches(user["password"], str(body.get("password", ""))):
+            raise ValueError("Неверный username, e-mail или пароль.")
+        if not user["password"].startswith("pbkdf2_sha256$"):
+            con.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(str(body.get("password", ""))), user["id"]))
+        self.update_login_streak(con, user["id"])
+        self.ensure_saved(con, user["id"])
+        return self.issue_token(con, user["id"])
 
-function showIncomingCall(call) {
-  document.querySelector(".incoming-call")?.remove();
-  const box = document.createElement("div");
-  box.className = "incoming-call";
-  box.innerHTML = `<div><b>${esc(call.callerName)} звонит</b><p>${call.callType === "video" ? "Видеозвонок" : "Аудиозвонок"}</p><div class="incoming-call__actions"><button class="button call-action--accept" data-accept>${callControlIcon("accept")}<span>Принять</span></button><button class="button danger" data-decline>${callControlIcon("decline")}<span>Отклонить</span></button></div></div>`;
-  document.body.append(box);
-  startRingTone(call.callerRingtone || "classic");
-  box.querySelector("[data-accept]").addEventListener("click", () => acceptCall(call));
-  box.querySelector("[data-decline]").addEventListener("click", async () => { stopRingTone(); await api("/api/calls/end", { method: "POST", body: { callId: call.id } }); box.remove(); });
-}
+    def create_auth_challenge(self, con, purpose, email, phone, user_id, payload, message) -> str:
+        current = now()
+        con.execute("DELETE FROM auth_challenges WHERE expires_at < ? OR (purpose = ? AND email = ? AND phone = ?)", (current, purpose, email, phone))
+        email_code = generate_auth_code()
+        challenge_id = uid("auth")
+        con.execute(
+            """INSERT INTO auth_challenges(id,purpose,email,phone,user_id,payload_json,email_code_hash,phone_code_hash,expires_at,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (challenge_id, purpose, email, None, user_id, dumps(payload), hash_password(email_code), None, current + AUTH_CODE_TTL, current),
+        )
+        deliver_email_code(email, email_code, message)
+        return challenge_id
 
-async function acceptCall(call) {
-  document.querySelector(".incoming-call")?.remove();
-  stopRingTone();
-  if (activeCall) return;
-  let stream = null;
-  let peer = null;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia(callMediaConstraints(call.callType));
-    peer = createPeer(stream);
-    await peer.setRemoteDescription(new RTCSessionDescription(call.offerSdp));
-    const answer = await peer.createAnswer();
-    await peer.setLocalDescription(answer);
-    await waitForIce(peer);
-    await api("/api/calls/answer", { method: "POST", body: { callId: call.id, answerSdp: peer.localDescription } });
-    activeCall = { id: call.id, peer, stream, remoteStream: peer.remoteStream || null, callType: call.callType, role: "receiver", chatId: call.chatId, cameraFacing: "user" };
-    showCallOverlay(`Звонок: ${call.callerName}`, call.callType, stream, null);
-    updateCallOverlay("Звонок подключён");
-  } catch (error) {
-    peer?.close();
-    stream?.getTracks().forEach((track) => track.stop());
-    await api("/api/calls/end", { method: "POST", body: { callId: call.id } });
-    toast(error.name === "NotAllowedError" ? "Разрешите доступ к микрофону и камере." : error.message, true);
-  }
-}
+    def verify_auth_challenge(self, con, body, purpose):
+        challenge_id = str(body.get("challengeId", ""))
+        challenge = con.execute("SELECT * FROM auth_challenges WHERE id = ? AND purpose = ?", (challenge_id, purpose)).fetchone()
+        if not challenge or challenge["expires_at"] < now():
+            raise ValueError("Код истёк. Запросите новые коды.")
+        if challenge["attempts"] >= AUTH_CODE_MAX_ATTEMPTS:
+            raise ValueError("Слишком много неверных попыток. Запросите новые коды.")
+        code = str(body.get("code", ""))
+        code_hash = challenge["email_code_hash"]
+        valid = bool(code_hash) and password_matches(code_hash, code)
+        if not valid:
+            con.execute("UPDATE auth_challenges SET attempts = attempts + 1 WHERE id = ?", (challenge_id,))
+            raise ValueError("Один или оба кода неверны.")
+        return challenge
 
-function cameraVideoConstraints(facingMode = "user", exact = false) {
-  return { facingMode: exact ? { exact: facingMode } : { ideal: facingMode }, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } };
-}
+    def resend_auth_challenge(self, con, body):
+        challenge_id = str(body.get("challengeId", ""))
+        purpose = str(body.get("purpose", ""))
+        if purpose not in {"register", "password_reset"}:
+            raise ValueError("Неизвестный тип подтверждения.")
+        challenge = con.execute("SELECT * FROM auth_challenges WHERE id = ? AND purpose = ?", (challenge_id, purpose)).fetchone()
+        if not challenge or challenge["expires_at"] < now():
+            raise ValueError("Срок действия кода истёк. Начните подтверждение заново.")
+        retry_after = 60 - (now() - challenge["created_at"])
+        if retry_after > 0:
+            raise ValueError(f"Повторный код можно запросить через {retry_after} с.")
+        code = generate_auth_code()
+        message = "Подтверждение регистрации" if purpose == "register" else "Восстановление пароля"
+        con.execute(
+            "UPDATE auth_challenges SET email_code_hash = ?, attempts = 0, expires_at = ?, created_at = ? WHERE id = ?",
+            (hash_password(code), now() + AUTH_CODE_TTL, now(), challenge_id),
+        )
+        deliver_email_code(challenge["email"], code, message)
+        return self.json({"ok": True, "message": "Новый код отправлен на тот же контакт."})
 
-function callMediaConstraints(callType, facingMode = "user") {
-  return {
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    video: callType === "video" ? cameraVideoConstraints(facingMode) : false,
-  };
-}
+    def request_password_reset(self, con, body):
+        contact = str(body.get("contact", "")).strip()
+        try:
+            normalized_contact = normalize_email(contact)
+        except ValueError:
+            return self.json({"ok": True, "message": "Если контакт найден, инструкции по восстановлению отправлены."})
+        user = con.execute("SELECT * FROM users WHERE email = ? COLLATE NOCASE", (normalized_contact,)).fetchone()
+        if user:
+            challenge_id = self.create_auth_challenge(con, "password_reset", user["email"], None, user["id"], {}, "Восстановление пароля")
+            return self.json({"ok": True, "challengeId": challenge_id, "message": "Если контакт найден, код отправлен."})
+        return self.json({"ok": True, "message": "Если контакт найден, инструкции по восстановлению отправлены."})
 
-async function switchMediaStreamCamera(stream, facingMode, preview, previousFacing = "user") {
-  const currentTrack = stream?.getVideoTracks?.()[0];
-  if (!currentTrack) throw new Error("Камера недоступна.");
-  const wasEnabled = currentTrack.enabled;
-  let replacement;
-  currentTrack.stop();
-  try {
-    replacement = await requestCameraStream(facingMode);
-    const nextTrack = replacement.getVideoTracks()[0];
-    if (!nextTrack) throw new Error("Камера недоступна.");
-    nextTrack.enabled = wasEnabled;
-    stream.removeTrack(currentTrack);
-    stream.addTrack(nextTrack);
-    updateCameraPreview(preview, stream);
-    return nextTrack;
-  } catch (error) {
-    replacement?.getTracks().forEach((track) => track.stop());
-    await restoreCameraStream(stream, currentTrack, previousFacing, wasEnabled, preview);
-    throw error;
-  }
-}
+    def confirm_password_reset(self, con, body):
+        challenge = self.verify_auth_challenge(con, body, "password_reset")
+        password = str(body.get("password", ""))
+        if len(password) < 8:
+            raise ValueError("Новый пароль должен быть не короче 8 символов.")
+        con.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(password), challenge["user_id"]))
+        con.execute("DELETE FROM sessions WHERE user_id = ?", (challenge["user_id"],))
+        con.execute("DELETE FROM auth_challenges WHERE id = ?", (challenge["id"],))
+        return self.json({"ok": True, "message": "Пароль изменён. Войдите с новым паролем."})
 
-async function requestCameraStream(facingMode) {
-  let firstError;
-  for (const exact of [true, false]) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: cameraVideoConstraints(facingMode, exact) });
-      const track = stream.getVideoTracks()[0];
-      const actualFacing = track?.getSettings?.().facingMode;
-      if (actualFacing && actualFacing !== facingMode) {
-        stream.getTracks().forEach((item) => item.stop());
-        continue;
-      }
-      return stream;
-    } catch (error) { firstError ||= error; }
-  }
-  const error = firstError || new Error("Камера недоступна.");
-  error.message = facingMode === "environment" ? "Задняя камера недоступна на этом устройстве." : "Фронтальная камера недоступна на этом устройстве.";
-  throw error;
-}
+    def issue_token(self, con, user_id):
+        token = secrets.token_urlsafe(24)
+        con.execute("INSERT INTO sessions(token,user_id,created_at) VALUES (?,?,?)", (token, user_id, now()))
+        user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return self.json({"ok": True, "token": token, "user": public_user(user)})
 
-async function restoreCameraStream(stream, previousTrack, facingMode, enabled, preview) {
-  try {
-    const recovery = await requestCameraStream(facingMode);
-    const recoveryTrack = recovery.getVideoTracks()[0];
-    if (!recoveryTrack) throw new Error("Камера недоступна.");
-    recoveryTrack.enabled = enabled;
-    stream.removeTrack(previousTrack);
-    stream.addTrack(recoveryTrack);
-    updateCameraPreview(preview, stream);
-    return recoveryTrack;
-  } catch {
-    return null;
-  }
-}
+    def update_login_streak(self, con, user_id):
+        today = time.strftime("%Y-%m-%d")
+        yesterday = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+        user = con.execute("SELECT last_login_day, login_streak FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user or user["last_login_day"] == today:
+            return
+        streak = int(user["login_streak"] or 0) + 1 if user["last_login_day"] == yesterday else 1
+        con.execute("UPDATE users SET last_login_day = ?, login_streak = ? WHERE id = ?", (today, streak, user_id))
 
-function updateCameraPreview(preview, stream) {
-  if (!preview) return;
-  preview.srcObject = null;
-  preview.srcObject = stream;
-  preview.play().catch(() => {});
-}
+    def bootstrap(self, con, user):
+        self.ensure_saved(con, user["id"])
+        self.evaluate_statuses(con, user["id"])
+        users = [public_user(r) for r in con.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()]
+        avatar_history = {}
+        for row in con.execute("SELECT user_id, avatar_data FROM avatar_history ORDER BY created_at DESC, id DESC").fetchall():
+            avatar_history.setdefault(row["user_id"], []).append(row["avatar_data"])
+        for public in users:
+            public["avatarHistory"] = avatar_history.get(public["id"], [])
+        chats = [chat_to_dict(r) for r in con.execute(
+            """SELECT c.*,
+                      EXISTS(SELECT 1 FROM pinned_chats pc WHERE pc.chat_id = c.id AND pc.user_id = ?) AS pinned,
+                      EXISTS(SELECT 1 FROM archived_chats ac WHERE ac.chat_id = c.id AND ac.user_id = ?) AS archived,
+                       (SELECT COUNT(*) FROM messages m
+                        WHERE m.chat_id = c.id AND m.sender_id != ?
+                          AND m.deleted_by_admin = 0
+                          AND m.rowid > COALESCE((SELECT crs.read_rowid FROM chat_read_states crs WHERE crs.chat_id = c.id AND crs.user_id = ?), 0)
+                          AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)) AS unread_count
+               FROM chats c
+               WHERE NOT EXISTS(SELECT 1 FROM hidden_chats hc WHERE hc.chat_id = c.id AND hc.user_id = ?)
+                 AND (c.type != 'secret' OR EXISTS(SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?))
+               ORDER BY updated_at DESC""",
+            (user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"]),
+        ).fetchall()]
+        members = [dict(r) for r in con.execute(
+            """SELECT cm.* FROM chat_members cm
+               JOIN chats c ON c.id = cm.chat_id
+               WHERE (c.type != 'secret' OR EXISTS(
+                       SELECT 1 FROM secret_chat_unlocks scu
+                       WHERE scu.chat_id = c.id AND scu.user_id = ?
+                   ))
+                 AND (
+                       c.type != 'channel'
+                       OR cm.user_id = ?
+                       OR EXISTS(
+                           SELECT 1 FROM chat_members viewer
+                           WHERE viewer.chat_id = c.id
+                             AND viewer.user_id = ?
+                             AND viewer.role IN ('owner', 'admin', 'author')
+                       )
+                 )""",
+            (user["id"], user["id"], user["id"]),
+        ).fetchall()]
+        scheduled_posts = [dict(r) for r in con.execute(
+            "SELECT id, chat_id, text, media_type, publish_at FROM scheduled_posts WHERE sender_id = ? ORDER BY publish_at", (user["id"],)
+        ).fetchall()]
+        channel_links = [dict(r) for r in con.execute(
+            """SELECT cl.* FROM channel_links cl
+               WHERE EXISTS(
+                   SELECT 1 FROM chat_members cm
+                   WHERE cm.chat_id = cl.channel_id
+                     AND cm.user_id = ?
+                     AND cm.role IN ('owner', 'admin', 'author')
+               )""",
+            (user["id"],),
+        ).fetchall()]
+        telegram_channel_links = [dict(r) for r in con.execute(
+            """SELECT tl.channel_id, tl.source_chat_ref, tl.source_chat_id, tl.last_sync_at, tl.last_error, tl.created_at
+               FROM telegram_channel_links tl JOIN chats c ON c.id = tl.channel_id
+               WHERE c.owner_id = ?""",
+            (user["id"],),
+        ).fetchall()]
+        rss_channel_links = [dict(r) for r in con.execute(
+            """SELECT rs.id, rs.channel_id, rs.feed_url, rs.feed_title, rs.last_sync_at, rs.last_error, rs.created_at
+               FROM rss_channel_sources rs JOIN chats c ON c.id = rs.channel_id
+               WHERE c.owner_id = ?""",
+            (user["id"],),
+        ).fetchall()]
+        vk_channel_links = [dict(r) for r in con.execute(
+            """SELECT vs.id, vs.channel_id, vs.source_url, vs.source_title, vs.keywords_json, vs.last_sync_at, vs.last_error, vs.created_at
+               FROM vk_channel_sources vs JOIN chats c ON c.id = vs.channel_id
+               WHERE c.owner_id = ?""",
+            (user["id"],),
+        ).fetchall()]
+        for link in vk_channel_links:
+            link["keywords"] = loads(link.pop("keywords_json"), [])
+        channel_comments = [dict(r) for r in con.execute(
+            """SELECT cc.* FROM channel_comments cc
+               JOIN messages m ON m.id = cc.message_id
+               JOIN chats c ON c.id = m.chat_id
+               WHERE c.type IN ('channel', 'group', 'community')
+                 AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
+               ORDER BY cc.created_at""",
+            (user["id"],),
+        ).fetchall()]
+        channel_star_purchases = [dict(r) for r in con.execute(
+            """SELECT csp.*, u.name AS buyer_name, u.username AS buyer_username
+               FROM channel_star_purchases csp
+               JOIN chats c ON c.id = csp.channel_id
+               JOIN users u ON u.id = csp.buyer_user_id
+               WHERE c.owner_id = ?
+               ORDER BY csp.created_at DESC
+               LIMIT 100""",
+            (user["id"],),
+        ).fetchall()]
+        notifications = [dict(r) for r in con.execute("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", (user["id"],)).fetchall()]
+        messages = [message_to_dict(r) for r in con.execute(
+            """SELECT m.id, m.chat_id, m.sender_id, m.profile_user_id, m.text, m.media_type, m.voice_waveform_json, m.views, m.views_boost, m.reactions_json, m.pinned, m.forwarded_from, m.forwarded_from_user_id, m.source_type, m.source_id, m.ai_agent, m.reply_to_id, m.edited_at, m.created_at,
+                      EXISTS(SELECT 1 FROM hidden_pinned_messages hpm WHERE hpm.message_id = m.id AND hpm.user_id = ?) AS pin_hidden,
+                      (m.sender_id != ? AND m.rowid > COALESCE((SELECT crs.read_rowid FROM chat_read_states crs WHERE crs.chat_id = m.chat_id AND crs.user_id = ?), 0)) AS is_unread,
+                      EXISTS(
+                        SELECT 1 FROM chat_members recipient
+                        JOIN chat_read_states recipient_state
+                          ON recipient_state.chat_id = m.chat_id AND recipient_state.user_id = recipient.user_id
+                        WHERE recipient.chat_id = m.chat_id
+                          AND c.type = 'direct'
+                          AND recipient.user_id != m.sender_id
+                          AND recipient_state.read_rowid >= m.rowid
+                      ) AS is_read_by_recipient
+               FROM messages m
+               JOIN chats c ON c.id = m.chat_id
+                WHERE m.deleted_by_admin = 0
+                  AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)
+                 AND (c.type != 'secret' OR EXISTS(SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?))
+               ORDER BY m.created_at""",
+            (user["id"], user["id"], user["id"], user["id"], user["id"]),
+        ).fetchall()]
+        posts = [dict(r) for r in con.execute("SELECT * FROM profile_posts ORDER BY created_at DESC").fetchall()]
+        for post in posts:
+            post["reactions"] = {
+                item["emoji"]: item["count"]
+                for item in con.execute(
+                    "SELECT emoji, count(*) AS count FROM profile_post_reactions WHERE post_id = ? GROUP BY emoji",
+                    (post["id"],),
+                ).fetchall()
+            }
+        stories = [self.story_to_dict(con, r, user["id"]) for r in con.execute(
+            """SELECT * FROM stories
+               WHERE (permanent = 1 OR expires_at > ?)
+                 AND NOT EXISTS(SELECT 1 FROM hidden_story_authors hsa WHERE hsa.user_id = ? AND hsa.author_id = stories.user_id)
+                 AND NOT EXISTS(SELECT 1 FROM story_privacy_blocks spb WHERE spb.owner_id = stories.user_id AND spb.blocked_user_id = ?)
+               ORDER BY created_at DESC""",
+            (now(), user["id"], user["id"]),
+        ).fetchall()]
+        reviews = [dict(r) for r in con.execute("SELECT * FROM reviews ORDER BY created_at DESC").fetchall()]
+        for review in reviews:
+            review["links"] = loads(review.pop("links_json"), [])
+            review["mediaData"] = review.pop("media_data", None)
+            review["sourceType"] = review.pop("source_type", "website")
+            review["city"] = review.get("city", "")
+        settings = {r["key"]: loads(r["value"], {}) for r in con.execute("SELECT * FROM settings").fetchall()}
+        account_level = self.account_level_data(con, user["id"], settings.get("account_levels", []))
+        star_package_discount = self.star_package_discount_percent(con, user["id"])
+        promotions = [dict(r) for r in con.execute("SELECT * FROM promotions WHERE active = 1 ORDER BY created_at DESC").fetchall()]
+        activity_rewards = self.activity_rewards_data(con, user["id"])
+        statuses = [dict(r) for r in con.execute("SELECT * FROM statuses WHERE active = 1 ORDER BY created_at DESC").fetchall()]
+        for status in statuses:
+            status["criteria"] = loads(status.pop("criteria_json"), {})
+            status["reward"] = loads(status.pop("reward_json"), {})
+        user_statuses = [dict(r) for r in con.execute("SELECT * FROM user_statuses").fetchall()]
+        recommended = [dict(r) for r in con.execute("SELECT * FROM recommended_groups ORDER BY position").fetchall()]
+        star_transactions = [dict(r) for r in con.execute("SELECT * FROM star_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100", (user["id"],)).fetchall()]
+        me = public_user(con.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone())
+        me["avatarHistory"] = avatar_history.get(me["id"], [])
+        me["hiddenStoryAuthorIds"] = [r["author_id"] for r in con.execute("SELECT author_id FROM hidden_story_authors WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
+        me["storyHiddenFromIds"] = [r["blocked_user_id"] for r in con.execute("SELECT blocked_user_id FROM story_privacy_blocks WHERE owner_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
+        activities = self.visible_chat_activities(con, chats, user["id"])
+        packages = [{**item, "originalPrice": item["price"], "price": discounted_price(item["price"], star_package_discount)} for item in yookassa_star_packages(con)]
+        ai_agent = self.ai_agent_settings(con, user["id"])
+        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "activities": activities, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "vkChannelLinks": vk_channel_links, "channelComments": channel_comments, "channelStarPurchases": channel_star_purchases, "notifications": notifications, "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "aiAgent": ai_agent, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions, "mediaS3Enabled": s3_is_configured(), "yookassa": {"available": yookassa_configured(), "discountPercent": star_package_discount, "packages": packages}})
 
-function bindCameraPinchZoom(video, getTrack) {
-  if (!video || typeof getTrack !== "function") return { wasPinching: () => false };
-  let initialDistance = 0;
-  let initialZoom = 1;
-  let pinchedUntil = 0;
-  let pendingZoom = null;
-  let applying = false;
-  const distance = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
-  const zoomInfo = () => {
-    const track = getTrack();
-    const capability = track?.getCapabilities?.().zoom;
-    if (!track || !capability) return null;
-    const current = Number(track.getSettings?.().zoom);
-    return { track, capability, current: Number.isFinite(current) ? current : capability.min };
-  };
-  const applyPendingZoom = async () => {
-    if (applying || pendingZoom === null) return;
-    applying = true;
-    while (pendingZoom !== null) {
-      const zoom = pendingZoom;
-      pendingZoom = null;
-      const info = zoomInfo();
-      if (!info) continue;
-      try { await info.track.applyConstraints({ advanced: [{ zoom }] }); }
-      catch { /* Zoom is optional and unsupported on some camera/browser combinations. */ }
-    }
-    applying = false;
-  };
-  video.addEventListener("touchstart", (event) => {
-    if (event.touches.length !== 2) return;
-    const info = zoomInfo();
-    if (!info) return;
-    initialDistance = distance(event.touches);
-    initialZoom = info.current;
-  }, { passive: true });
-  video.addEventListener("touchmove", (event) => {
-    if (event.touches.length !== 2 || !initialDistance) return;
-    const info = zoomInfo();
-    if (!info) return;
-    event.preventDefault();
-    pinchedUntil = Date.now() + 250;
-    const { min, max, step = 0.1 } = info.capability;
-    const rawZoom = initialZoom * (distance(event.touches) / initialDistance);
-    const zoom = Math.min(max, Math.max(min, Math.round(rawZoom / step) * step));
-    pendingZoom = zoom;
-    applyPendingZoom();
-  }, { passive: false });
-  video.addEventListener("touchend", () => { if (initialDistance) pinchedUntil = Date.now() + 250; initialDistance = 0; }, { passive: true });
-  video.addEventListener("touchcancel", () => { initialDistance = 0; }, { passive: true });
-  return { wasPinching: () => Date.now() < pinchedUntil };
-}
+    def my_reactions(self, con, user):
+        reactions = []
+        for row in con.execute(
+            """SELECT mr.emoji, mr.created_at, m.id AS target_id, m.text AS target_text, c.title AS target_title
+               FROM message_reactions mr JOIN messages m ON m.id = mr.message_id JOIN chats c ON c.id = m.chat_id
+               WHERE mr.user_id = ? ORDER BY mr.created_at DESC LIMIT 150""", (user["id"],)
+        ).fetchall():
+            reactions.append({"type": "message", "emoji": row["emoji"], "createdAt": row["created_at"], "targetId": row["target_id"], "title": row["target_title"], "text": row["target_text"]})
+        for row in con.execute(
+            """SELECT pr.emoji, pr.created_at, p.id AS target_id, p.text AS target_text, u.name AS target_title
+               FROM profile_post_reactions pr JOIN profile_posts p ON p.id = pr.post_id JOIN users u ON u.id = p.user_id
+               WHERE pr.user_id = ? ORDER BY pr.created_at DESC LIMIT 150""", (user["id"],)
+        ).fetchall():
+            reactions.append({"type": "post", "emoji": row["emoji"], "createdAt": row["created_at"], "targetId": row["target_id"], "title": row["target_title"], "text": row["target_text"]})
+        for row in con.execute(
+            """SELECT sr.emoji, sr.created_at, s.id AS target_id, s.caption AS target_text, u.name AS target_title
+               FROM story_reactions sr JOIN stories s ON s.id = sr.story_id JOIN users u ON u.id = s.user_id
+               WHERE sr.user_id = ? ORDER BY sr.created_at DESC LIMIT 150""", (user["id"],)
+        ).fetchall():
+            reactions.append({"type": "story", "emoji": row["emoji"], "createdAt": row["created_at"], "targetId": row["target_id"], "title": row["target_title"], "text": row["target_text"]})
+        reactions.sort(key=lambda item: item["createdAt"], reverse=True)
+        return self.json({"ok": True, "reactions": reactions[:200]})
 
-function attachRemoteStream(stream) {
-  const remote = document.querySelector("[data-remote-video]");
-  if (!stream || !remote || remote.srcObject === stream) return;
-  remote.srcObject = stream;
-  remote.play().catch(() => {});
-  startCallVoiceActivity("remote", stream);
-}
+    def search_messages(self, con, user, query):
+        text = " ".join((query.get("q", [""])[0] or "").split())
+        chat_id = str(query.get("chatId", [""])[0] or "").strip()
+        if len(text) < 2:
+            raise ValueError("Введите не менее двух символов для поиска.")
+        if len(text) > 120:
+            raise ValueError("Поисковый запрос не должен быть длиннее 120 символов.")
+        if chat_id and not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError("Нет доступа к этому диалогу.")
+        rows = con.execute(
+            """SELECT m.id, m.chat_id, m.text, m.media_type, m.created_at, c.title AS chat_title, c.type AS chat_type
+               FROM messages m
+               JOIN chats c ON c.id = m.chat_id
+               WHERE m.deleted_by_admin = 0
+                 AND m.text IS NOT NULL AND trim(m.text) != ''
+                  AND casefold(m.text) LIKE ?
+                 AND (? = '' OR m.chat_id = ?)
+                 AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)
+                 AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
+                 AND (c.type != 'secret' OR EXISTS(
+                   SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?
+                 ))
+               ORDER BY m.created_at DESC LIMIT 100""",
+            (f"%{text.casefold()}%", chat_id, chat_id, user["id"], user["id"], user["id"]),
+        ).fetchall()
+        return self.json({"ok": True, "messages": [dict(row) for row in rows]})
 
-function startCallVoiceActivity(side, stream) {
-  if (!stream?.getAudioTracks?.().length) return;
-  stopCallVoiceActivity(side);
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  const context = new AudioContext();
-  const analyser = context.createAnalyser();
-  analyser.fftSize = 512;
-  analyser.smoothingTimeConstant = 0.74;
-  const source = context.createMediaStreamSource(stream);
-  source.connect(analyser);
-  const data = new Uint8Array(analyser.fftSize);
-  const selector = side === "local" ? "[data-local-video]" : "[data-remote-video]";
-  const className = side === "local" ? "is-speaking-local" : "is-speaking-remote";
-  let speaking = false;
-  const tick = () => {
-    if (!activeCall) return;
-    analyser.getByteTimeDomainData(data);
-    let sum = 0;
-    for (const value of data) {
-      const normalized = (value - 128) / 128;
-      sum += normalized * normalized;
-    }
-    const level = Math.sqrt(sum / data.length);
-    const nextSpeaking = speaking ? level > 0.055 : level > 0.075;
-    if (nextSpeaking !== speaking) {
-      speaking = nextSpeaking;
-      document.querySelector(selector)?.classList.toggle(className, speaking);
-    }
-    const item = callVoiceActivity.find((entry) => entry.side === side);
-    if (item) item.frame = requestAnimationFrame(tick);
-  };
-  const item = { side, context, source, frame: requestAnimationFrame(tick) };
-  callVoiceActivity.push(item);
-}
+    def has_chat_access(self, con, user_id, chat_id):
+        return bool(con.execute(
+            """SELECT 1 FROM chat_members cm
+               JOIN chats c ON c.id = cm.chat_id
+               WHERE cm.chat_id = ? AND cm.user_id = ?
+                 AND (c.type != 'secret' OR EXISTS(
+                   SELECT 1 FROM secret_chat_unlocks scu
+                   WHERE scu.chat_id = c.id AND scu.user_id = ?
+                 ))""",
+            (chat_id, user_id, user_id),
+        ).fetchone())
 
-function stopCallVoiceActivity(side) {
-  const keep = [];
-  callVoiceActivity.forEach((item) => {
-    if (side && item.side !== side) {
-      keep.push(item);
-      return;
-    }
-    cancelAnimationFrame(item.frame);
-    try { item.source.disconnect(); } catch {}
-    item.context.close?.();
-    const selector = item.side === "local" ? "[data-local-video]" : "[data-remote-video]";
-    const className = item.side === "local" ? "is-speaking-local" : "is-speaking-remote";
-    document.querySelector(selector)?.classList.remove(className);
-  });
-  callVoiceActivity = keep;
-}
+    def visible_chat_activities(self, con, chats, user_id):
+        direct_chat_ids = {
+            chat["id"] for chat in chats
+            if chat["type"] == "direct" and self.has_chat_access(con, user_id, chat["id"])
+        }
+        now_monotonic = time.monotonic()
+        activities = {}
+        with chat_activities_lock:
+            expired = [key for key, (_, expires_at) in chat_activities.items() if expires_at <= now_monotonic]
+            for key in expired:
+                chat_activities.pop(key, None)
+            for (chat_id, sender_id), (activity, _) in chat_activities.items():
+                if chat_id in direct_chat_ids and sender_id != user_id:
+                    activities[chat_id] = activity
+        return activities
 
-function createPeer(stream) {
-  const peer = new RTCPeerConnection({
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-      { urls: "stun:stun.cloudflare.com:3478" },
-    ],
-  });
-  stream.getTracks().forEach((track) => peer.addTrack(track, stream));
-  peer.ontrack = (event) => {
-    const remoteStream = event.streams[0] || peer.remoteStream || new MediaStream();
-    if (!event.streams[0] && !remoteStream.getTracks().includes(event.track)) remoteStream.addTrack(event.track);
-    peer.remoteStream = remoteStream;
-    if (activeCall?.peer === peer) activeCall.remoteStream = remoteStream;
-    attachRemoteStream(remoteStream);
-  };
-  let disconnectTimer = null;
-  peer.onconnectionstatechange = () => {
-    if (peer.connectionState === "connected") {
-      clearTimeout(disconnectTimer);
-      return;
-    }
-    if (peer.connectionState === "disconnected") {
-      clearTimeout(disconnectTimer);
-      disconnectTimer = setTimeout(() => {
-        if (peer.connectionState === "disconnected" && activeCall?.peer === peer) finishCall(false);
-      }, 8000);
-      return;
-    }
-    if (peer.connectionState === "failed" && activeCall?.peer === peer) {
-      updateCallOverlay("Не удалось соединить устройства. Для разных сетей нужен защищённый relay-сервер.");
-    }
-    if (peer.connectionState === "closed" && activeCall?.peer === peer) finishCall(false);
-  };
-  return peer;
-}
+    def chat_member_role(self, con, chat_id, user_id):
+        row = con.execute(
+            "SELECT role FROM chat_members WHERE chat_id = ? AND user_id = ?",
+            (chat_id, user_id),
+        ).fetchone()
+        return row["role"] if row else None
 
-function waitForIce(peer) {
-  if (peer.iceGatheringState === "complete") return Promise.resolve();
-  return new Promise((resolve) => {
-    const timeout = setTimeout(resolve, 8000);
-    peer.addEventListener("icegatheringstatechange", () => {
-      if (peer.iceGatheringState === "complete") { clearTimeout(timeout); resolve(); }
-    });
-  });
-}
+    def can_manage_group_messages(self, con, user_id, chat_id):
+        chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat:
+            return False
+        role = self.chat_member_role(con, chat_id, user_id)
+        if chat["type"] == "channel":
+            return role in CHANNEL_MANAGER_ROLES
+        return chat["type"] in {"group", "community"} and role in {"owner", "admin"}
 
-function showCallOverlay(title, callType, stream) {
-  document.querySelector(".call-overlay")?.remove();
-  const box = document.createElement("div");
-  box.className = `call-overlay ${chatBackgroundClass(state.me)}`;
-  if (state.me.chatBackground === "custom" && state.me.chatBackgroundData) {
-    box.style.setProperty("--call-chat-wallpaper", `url('${state.me.chatBackgroundData.replace(/'/g, "\\'")}')`);
-  }
-  const cameraControl = callType === "video" ? `<button class="button call-control" data-toggle-camera>${callControlIcon("camera")}<span data-camera-label>Камера вкл.</span></button><button class="button call-control" data-switch-call-camera aria-label="Сменить камеру" title="Сменить камеру">${callControlIcon("cameraFlip")}<span>Сменить камеру</span></button>` : "";
-  box.innerHTML = `<div class="call-window"><div class="call-window__head"><div><h2>${esc(title)}</h2><p data-call-status>Подключение…</p></div><div class="call-window__view-actions"><button class="button call-control" data-toggle-call-fullscreen aria-label="На весь экран" title="На весь экран">${callControlIcon("expand")}<span data-fullscreen-label>На весь экран</span></button><button class="button call-control" data-toggle-call-minimized aria-label="Свернуть звонок" title="Свернуть звонок">${callControlIcon("minimize")}<span data-minimize-label>Свернуть</span></button></div></div><div class="call-videos ${callType === "audio" ? "audio-only" : ""}" data-call-videos><video class="call-videos__remote" data-remote-video autoplay playsinline title="Сделать главным видео"></video><video class="call-videos__local" data-local-video autoplay muted playsinline title="Сделать главным видео"></video></div><div class="call-actions"><button class="button call-control" data-toggle-mic>${callControlIcon("microphone")}<span data-mic-label>Микрофон вкл.</span></button>${cameraControl}<button class="button call-control" data-toggle-pause>${callControlIcon("pause")}<span data-pause-label>Пауза</span></button><button class="button danger call-control" data-end-call>${callControlIcon("end")}<span>Завершить звонок</span></button></div></div>`;
-  document.body.append(box);
-  const localVideo = box.querySelector("[data-local-video]");
-  if (stream) {
-    localVideo.srcObject = stream;
-    localVideo.play().catch(() => {});
-    startCallVoiceActivity("local", stream);
-  }
-  attachRemoteStream(activeCall?.remoteStream);
-  box.querySelector("[data-end-call]").addEventListener("click", () => finishCall());
-  box.querySelector("[data-toggle-mic]").addEventListener("click", toggleMicrophone);
-  box.querySelector("[data-toggle-camera]")?.addEventListener("click", toggleCamera);
-  box.querySelector("[data-switch-call-camera]")?.addEventListener("click", switchCallCamera);
-  box.querySelector("[data-toggle-pause]").addEventListener("click", toggleCallPause);
-  box.querySelector("[data-toggle-call-fullscreen]").addEventListener("click", toggleCallFullscreen);
-  box.querySelector("[data-toggle-call-minimized]").addEventListener("click", toggleCallMinimized);
-  const localPinchZoom = bindCameraPinchZoom(localVideo, () => activeCall?.stream?.getVideoTracks()[0]);
-  box.querySelector("[data-remote-video]").addEventListener("click", () => setCallPrimaryVideo("remote"));
-  localVideo.addEventListener("click", () => { if (!localPinchZoom.wasPinching()) setCallPrimaryVideo("local"); });
-  box.querySelector(".call-window").addEventListener("click", (event) => {
-    if (box.classList.contains("is-minimized") && !event.target.closest("button")) toggleCallMinimized();
-  });
-}
+    def effective_limits(self, con, user_id, level: dict) -> dict:
+        limits = {**{key: 0 for key in LEVEL_LIMIT_KEYS}, **level.get("limits", {})}
+        for row in con.execute("SELECT limits_json FROM personal_limit_rewards WHERE user_id = ?", (user_id,)).fetchall():
+            reward_limits = loads(row["limits_json"], {})
+            if not isinstance(reward_limits, dict):
+                continue
+            for key, value in reward_limits.items():
+                if key not in LEVEL_LIMIT_KEYS:
+                    continue
+                personal_limit = int(value or 0)
+                current_limit = int(limits.get(key, 0) or 0)
+                if personal_limit and (not current_limit or personal_limit > current_limit):
+                    limits[key] = personal_limit
+        return limits
 
-function updateCallOverlay(message) { const status = document.querySelector("[data-call-status]"); if (status) status.textContent = message; }
-function toggleCallFullscreen() {
-  const overlay = document.querySelector(".call-overlay");
-  if (!overlay) return;
-  const fullScreen = !overlay.classList.contains("is-fullscreen");
-  overlay.classList.toggle("is-fullscreen", fullScreen);
-  overlay.classList.remove("is-minimized");
-  if (fullScreen) overlay.requestFullscreen?.().catch(() => {});
-  else if (document.fullscreenElement === overlay) document.exitFullscreen?.().catch(() => {});
-  const label = overlay.querySelector("[data-fullscreen-label]");
-  const button = overlay.querySelector("[data-toggle-call-fullscreen]");
-  if (label) label.textContent = fullScreen ? "Обычный размер" : "На весь экран";
-  if (button) {
-    button.setAttribute("aria-label", fullScreen ? "Выйти из полноэкранного режима" : "На весь экран");
-    button.setAttribute("title", fullScreen ? "Выйти из полноэкранного режима" : "На весь экран");
-    button.innerHTML = `${callControlIcon(fullScreen ? "shrink" : "expand")}<span data-fullscreen-label>${fullScreen ? "Обычный размер" : "На весь экран"}</span>`;
-  }
-}
-function toggleCallMinimized() {
-  const overlay = document.querySelector(".call-overlay");
-  if (!overlay) return;
-  const minimized = overlay.classList.toggle("is-minimized");
-  if (document.fullscreenElement === overlay) document.exitFullscreen?.().catch(() => {});
-  overlay.classList.remove("is-fullscreen");
-  const label = overlay.querySelector("[data-minimize-label]");
-  const button = overlay.querySelector("[data-toggle-call-minimized]");
-  if (label) label.textContent = minimized ? "Открыть" : "Свернуть";
-  if (button) {
-    button.setAttribute("aria-label", minimized ? "Открыть звонок" : "Свернуть звонок");
-    button.setAttribute("title", minimized ? "Открыть звонок" : "Свернуть звонок");
-    button.innerHTML = `${callControlIcon(minimized ? "expand" : "minimize")}<span data-minimize-label>${minimized ? "Открыть" : "Свернуть"}</span>`;
-  }
-}
-function setCallPrimaryVideo(side) {
-  if (activeCall?.callType !== "video") return;
-  activeCall.primaryVideo = side;
-  document.querySelector("[data-call-videos]")?.classList.toggle("primary-local", side === "local");
-}
-function toggleMicrophone(event) {
-  const audioTrack = activeCall?.stream?.getAudioTracks()[0];
-  if (!audioTrack) return;
-  audioTrack.enabled = !audioTrack.enabled;
-  event.currentTarget.innerHTML = `${callControlIcon(audioTrack.enabled ? "microphone" : "microphoneOff")}<span data-mic-label>${audioTrack.enabled ? "Микрофон вкл." : "Микрофон выкл."}</span>`;
-}
-function toggleCamera(event) {
-  const videoTrack = activeCall?.stream?.getVideoTracks()[0];
-  if (!videoTrack) return;
-  videoTrack.enabled = !videoTrack.enabled;
-  event.currentTarget.innerHTML = `${callControlIcon(videoTrack.enabled ? "camera" : "cameraOff")}<span data-camera-label>${videoTrack.enabled ? "Камера вкл." : "Камера выкл."}</span>`;
-}
-async function switchCallCamera(event) {
-  const call = activeCall;
-  if (!call?.stream || !call.peer || call.callType !== "video") return;
-  const button = event.currentTarget;
-  const nextFacing = call.cameraFacing === "user" ? "environment" : "user";
-  const currentFacing = call.cameraFacing;
-  let replacement;
-  let currentTrack;
-  let sender;
-  try {
-    button.disabled = true;
-    currentTrack = call.stream.getVideoTracks()[0];
-    sender = call.peer.getSenders().find((entry) => entry.track?.kind === "video");
-    if (!currentTrack || !sender) throw new Error("Камера недоступна.");
-    const wasEnabled = currentTrack.enabled;
-    currentTrack.stop();
-    replacement = await requestCameraStream(nextFacing);
-    const nextTrack = replacement.getVideoTracks()[0];
-    if (!nextTrack) throw new Error("Камера недоступна.");
-    nextTrack.enabled = wasEnabled;
-    await sender.replaceTrack(nextTrack);
-    call.stream.removeTrack(currentTrack);
-    call.stream.addTrack(nextTrack);
-    call.cameraFacing = nextFacing;
-    updateCameraPreview(document.querySelector("[data-local-video]"), call.stream);
-  } catch (error) {
-    replacement?.getTracks().forEach((track) => track.stop());
-    const recoveryTrack = currentTrack && sender
-      ? await restoreCameraStream(call.stream, currentTrack, currentFacing, currentTrack.enabled, document.querySelector("[data-local-video]"))
-      : null;
-    if (recoveryTrack) {
-      try { await sender.replaceTrack(recoveryTrack); }
-      catch { recoveryTrack.stop(); }
-    }
-    toast(error.name === "NotAllowedError" ? "Разрешите доступ к камере." : error.message || "Не удалось переключить камеру.", true);
-  } finally { button.disabled = false; }
-}
-function toggleCallPause(event) {
-  if (!activeCall?.stream) return;
-  activeCall.paused = !activeCall.paused;
-  activeCall.stream.getTracks().forEach((track) => { track.enabled = !activeCall.paused; });
-  event.currentTarget.innerHTML = `${callControlIcon(activeCall.paused ? "play" : "pause")}<span data-pause-label>${activeCall.paused ? "Продолжить" : "Пауза"}</span>`;
-  updateCallOverlay(activeCall.paused ? "Звонок на паузе" : "Звонок подключён");
-}
-function startRingTone(ringtone = "classic") {
-  stopRingTone();
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  const context = new AudioContext();
-  const gain = context.createGain();
-  gain.gain.value = 0.04;
-  gain.connect(context.destination);
-  const tones = {
-    classic: { frequencies: [440], interval: 1400, duration: 0.18 },
-    pulse: { frequencies: [392, 494], interval: 1200, duration: 0.14, gap: 0.2 },
-    bright: { frequencies: [660, 880], interval: 1100, duration: 0.13, gap: 0.16 },
-  };
-  const pattern = tones[ringtone] || tones.classic;
-  const playTone = (frequency, delay = 0) => {
-    const oscillator = context.createOscillator();
-    oscillator.type = "sine";
-    oscillator.frequency.value = frequency;
-    oscillator.connect(gain);
-    oscillator.start(context.currentTime + delay);
-    oscillator.stop(context.currentTime + delay + pattern.duration);
-  };
-  const playBeep = () => pattern.frequencies.forEach((frequency, index) => playTone(frequency, index * (pattern.gap || 0)));
-  playBeep();
-  ringTone = { context, timer: setInterval(playBeep, pattern.interval) };
-}
-function stopRingTone() {
-  if (!ringTone) return;
-  clearInterval(ringTone.timer);
-  ringTone.context.close?.();
-  ringTone = null;
-}
-async function finishCall(notify = true) {
-  const call = activeCall;
-  activeCall = null;
-  stopRingTone();
-  stopCallVoiceActivity();
-  document.querySelector(".call-overlay")?.remove();
-  document.querySelector(".incoming-call")?.remove();
-  if (!call) return;
-  call.stream?.getTracks().forEach((track) => track.stop());
-  call.peer?.close();
-  if (notify && call.id) { try { await api("/api/calls/end", { method: "POST", body: { callId: call.id } }); } catch {} }
-}
-function hasChatMessages(chatId) { return state.messages.some((message) => message.chatId === chatId); }
-function shouldShowChatInList(chat) { return chat.type !== "direct" || hasChatMessages(chat.id); }
-function visibleChats(archived = false) { return state.chats.filter((chat) => chat.type !== "secret" && isMember(chat.id) && shouldShowChatInList(chat) && Boolean(chat.archived) === archived).sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt); }
-function chatListSignature() {
-  return visibleChats(false)
-    .map((chat) => `${chat.id}:${chat.updatedAt}:${latestChatMessage(chat.id)?.id || ""}:${chat.unreadCount || 0}:${Number(chat.pinned)}:${Number(chat.archived)}`)
-    .join("|");
-}
-function isMember(chatId) { return state.members.some((m) => m.chat_id === chatId && m.user_id === state.me.id); }
-function chatMemberRole(chatId, userId = state.me.id) { return state.members.find((member) => member.chat_id === chatId && member.user_id === userId)?.role || null; }
-function isChannelManagerRole(role) { return ["owner", "admin", "author"].includes(role); }
-function canPinMessageForEveryone(message) {
-  const chat = state.chats.find((item) => item.id === message.chatId);
-  return chat?.type !== "channel" || isChannelManagerRole(chatMemberRole(message.chatId));
-}
-function canDeleteMessageForEveryone(message) { return message.senderId === state.me.id || (["group", "community", "channel"].includes(state.chats.find((chat) => chat.id === message.chatId)?.type) && ["owner", "admin"].includes(chatMemberRole(message.chatId))); }
-function userById(id) { return state.users.find((user) => user.id === id); }
-function chatIcon(chat) { return chat.type === "saved" ? "★" : chat.type === "group" ? "G" : chat.type === "community" ? "C" : chat.type === "channel" ? "К" : initials(chat.title); }
-function chatAvatarHtml(chat, className = "avatar") { return chat.avatarData ? `<img class="${className}" src="${esc(chat.avatarData)}" alt="">` : `<div class="${className}">${esc(chatIcon(chat))}</div>`; }
-function memberWord(count) { return count % 10 === 1 && count % 100 !== 11 ? "участник" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) ? "участника" : "участников"; }
-function subscriberWord(count) { return count % 10 === 1 && count % 100 !== 11 ? "подписчик" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) ? "подписчика" : "подписчиков"; }
-function chatMeta(chat) {
-  if (chat.type === "saved") return { icon: "★", title: "Избранное", subtitle: "Пишите самому себе" };
-  if (chat.type === "direct") {
-    const member = state.members.find((m) => m.chat_id === chat.id && m.user_id !== state.me.id);
-    const user = userById(member?.user_id);
-    return { icon: initials(user?.name || "?"), title: user?.name || "Пользователь", subtitle: user ? `@${user.username}` : "", user };
-  }
-  const parts = [];
-  if ((chat.settings || {}).showSubscribers !== false) parts.push(`${chat.subscriberCount} подписчиков`);
-  parts.push(chat.type === "group" ? "группа" : chat.type === "channel" ? "канал" : "комьюнити");
-  return { icon: chatIcon(chat), title: chat.title, subtitle: parts.join(" · ") };
-}
-function reviewStats() {
-  return state.reviews.reduce((acc, review) => {
-    const url = normalizeReviewIdentifier(review.url);
-    acc[url] ||= { url, sourceType: review.sourceType || (isReviewUrl(url) ? "website" : "other"), score: 0, count: 0, positive: 0, negative: 0, links: [] };
-    acc[url].score += review.rating;
-    acc[url].count += 1;
-    if (review.rating > 0) acc[url].positive += 1;
-    else acc[url].negative += 1;
-    acc[url].links.push(...(review.links || []).map(normalizeReviewIdentifier));
-    return acc;
-  }, {});
-}
-function reviewRelatedUrls(url) {
-  const normalizedUrl = normalizeReviewIdentifier(url);
-  const linked = state.reviews.filter((review) => normalizeReviewIdentifier(review.url) === normalizedUrl).flatMap((review) => (review.links || []).map(normalizeReviewIdentifier));
-  const reciprocal = state.reviews.filter((review) => (review.links || []).map(normalizeReviewIdentifier).includes(normalizedUrl)).map((review) => normalizeReviewIdentifier(review.url));
-  return [...new Set([...linked, ...reciprocal])].filter((item) => item !== normalizedUrl);
-}
-function isReviewUrl(value) { return /^https?:\/\//i.test(String(value || "").trim()); }
-function isReviewPhone(value) { const source = String(value || "").trim(); const digits = source.replace(/\D/g, ""); return /^[+\d()\-\s.]+$/.test(source) && digits.length >= 7 && digits.length <= 15; }
-function isReviewTelegram(value) { return /^@?[A-Za-z0-9_]{3,64}$/.test(String(value || "").trim()); }
-function normalizeReviewIdentifier(value) { const source = String(value || "").trim().replace(/\s+/g, " "); return isReviewUrl(source) ? source : isReviewPhone(source) ? `+${source.replace(/\D/g, "")}` : isReviewTelegram(source) ? `@${source.replace(/^@/, "").toLowerCase()}` : source.toLowerCase(); }
-function sourceTypeBadge(sourceType) { const labels = { telegram: "Telegram", instagram: "Instagram", other: "Другая", website: "Сайт", phone: "Телефон" }; const title = labels[sourceType] || String(sourceType || "").trim(); return title ? `<span class="review-source-type">${esc(title)}</span>` : ""; }
-function reviewWord(count) { return count % 10 === 1 && count % 100 !== 11 ? "отзыв" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) ? "отзыва" : "отзывов"; }
-function myStatuses() { return state.userStatuses.filter((us) => us.user_id === state.me.id).map((us) => state.statuses.find((s) => s.id === us.status_id)).filter(Boolean); }
-function visibleStatusesFor(userId) { const hidden = new Set(userById(userId)?.hiddenStatusIds || []); return state.userStatuses.filter((us) => us.user_id === userId && !hidden.has(us.status_id)).map((us) => state.statuses.find((s) => s.id === us.status_id)).filter(Boolean); }
-function currentLimits() { return state.accountLevel?.limits || state.accountLevel?.current?.limits || {}; }
-function premiumBadge() { return ""; }
-function avatarTone(user) { const source = String(user?.id || user?.username || user?.name || "user"); let hash = 0; for (let index = 0; index < source.length; index += 1) hash = ((hash * 31) + source.charCodeAt(index)) | 0; return Math.abs(hash) % 8; }
-function avatarHtml(user, className = "avatar") { const storyClass = user?.id && hasUnseenStory(user.id) && !className.includes("message__author-avatar") ? " has-story" : ""; return user?.avatarData ? `<img class="${className}${storyClass}" src="${esc(user.avatarData)}" alt="">` : `<div class="${className} avatar-tone-${avatarTone(user)}${storyClass}">${esc(initials(user?.name || "U"))}</div>`; }
-function storyHtml(story) { const user = userById(story.user_id); const own = story.user_id === state.me.id; return `<button class="story${story.viewed ? "" : " has-story"}" data-open-story="${story.id}"><img src="${esc(story.media_data)}" alt="Сторис"><b>${esc(user?.name || "Пользователь")}</b><span>${own ? `👁 ${story.viewerCount || 0}${story.permanent ? " · постоянная" : ""}` : esc(story.caption || "")}</span></button>`; }
-function postHtml(post) {
-  const user = userById(post.user_id);
-  const reactions = Object.entries(post.reactions || {}).filter(([, count]) => Number(count) > 0);
-  return `<article class="post">${avatarHtml(user)}<div class="post__body"><div class="post__author"><b>${esc(user?.name || "Пользователь")}</b><button class="post__menu" type="button" data-post-menu="${post.id}" aria-label="Действия с публикацией" title="Действия с публикацией">☰</button></div>${post.media_data ? `<button class="media-button" type="button" data-open-profile-post="${post.id}" aria-label="Открыть публикацию"><img class="post-photo" src="${esc(post.media_data)}" alt="Фото публикации"></button>` : ""}${post.text ? `<p>${esc(post.text)}</p>` : ""}${reactions.length ? `<div class="post-reactions">${reactions.map(([emoji, count]) => `<span>${esc(emoji)} ${count}</span>`).join("")}</div>` : ""}<span class="muted">${timeFmt(post.created_at)}</span></div></article>`;
-}
-function openProfilePost(postId) {
-  const post = state.posts.find((item) => item.id === postId);
-  if (!post) return;
-  const author = userById(post.user_id);
-  const reactions = Object.entries(post.reactions || {}).filter(([, count]) => Number(count) > 0);
-  const emojis = ["❤️", "👍", "🔥", "😂", "😮", "👏"];
-  const overlay = document.createElement("div");
-  overlay.className = "profile-post-overlay";
-  overlay.innerHTML = `<article class="profile-post-viewer" role="dialog" aria-modal="true" aria-label="Публикация"><header><div><b>${esc(author?.name || "Пользователь")}</b><span>${timeFmt(post.created_at)}</span></div><button type="button" data-close-profile-post aria-label="Закрыть">×</button></header>${post.media_data ? `<button type="button" class="profile-post-viewer__media" data-open-media="${esc(post.media_data)}" aria-label="Открыть фото на весь экран"><img src="${esc(post.media_data)}" alt="Фото публикации"></button>` : ""}${post.text ? `<p>${esc(post.text)}</p>` : ""}<footer>${reactions.length ? `<div class="profile-post-viewer__reactions">${reactions.map(([emoji, count]) => `<span>${esc(emoji)} ${count}</span>`).join("")}</div>` : ""}<div class="profile-post-viewer__actions"><div class="profile-post-viewer__emoji-actions">${emojis.map((emoji) => `<button type="button" data-react-profile-post="${post.id}" data-emoji="${esc(emoji)}" aria-label="Выбрать реакцию ${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div><button type="button" class="profile-post-viewer__send-reaction" data-send-profile-post-reaction disabled aria-label="Отправить выбранную реакцию" title="Отправить реакцию">✈</button><button type="button" class="button small" data-share-profile-post="${post.id}">Поделиться</button></div></footer></article>`;
-  document.body.append(overlay);
-  const close = () => overlay.remove();
-  overlay.querySelector("[data-close-profile-post]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-open-media]")?.addEventListener("click", (event) => openMedia(event.currentTarget.dataset.openMedia, "photo", state.posts.filter((item) => item.user_id === post.user_id && item.media_data).map((item) => item.media_data)));
-  overlay.querySelector("[data-share-profile-post]").addEventListener("click", () => { close(); openGroupContentShare("profile-post", post.id); });
-  let selectedReaction = "";
-  const sendReaction = overlay.querySelector("[data-send-profile-post-reaction]");
-  const updateReactionSelection = () => {
-    overlay.querySelectorAll("[data-react-profile-post]").forEach((button) => button.classList.toggle("active", button.dataset.emoji === selectedReaction));
-    sendReaction.disabled = !selectedReaction;
-  };
-  overlay.querySelectorAll("[data-react-profile-post]").forEach((button) => button.addEventListener("click", () => {
-    selectedReaction = button.dataset.emoji;
-    updateReactionSelection();
-  }));
-  sendReaction.addEventListener("click", async () => {
-    if (!selectedReaction) return;
-    try {
-      await api("/api/profile/posts/react", { method: "POST", body: { postId: post.id, emoji: selectedReaction } });
-      toast("Реакция отправлена автору в личные сообщения.");
-      selectedReaction = "";
-      updateReactionSelection();
-    } catch (error) { toast(error.message, true); }
-  });
-}
-function galleryPostHtml(post) { return `<button class="gallery-photo" data-open-profile-post="${post.id}"><img src="${esc(post.media_data)}" alt="Фото поста"></button>`; }
-function limitLabel(key) { return ({ maxStars: "Звёзд на балансе", postsPerDay: "Постов в сутки (профиль и каналы)", storiesPerDay: "Сторис в сутки", storiesPerMonth: "Сторис за 30 дней", groupsJoined: "Подписок на группы", groupsCreated: "Созданных групп", communitiesJoined: "Вступлений в беседы", communitiesCreated: "Созданных бесед", channelsJoined: "Подписок на каналы", channelsCreated: "Созданных каналов", savedAccounts: "Сохранённых входов", autopostSourcesTotal: "Всех источников автопостинга", autopostSourcesPerChannel: "Источников автопостинга на канал" })[key] || key; }
-function openMedia(source, mediaType = "photo", sources = [source]) {
-  if (!source) return;
-  const items = [...new Set(sources.filter(Boolean))];
-  let index = Math.max(0, items.indexOf(source));
-  const isVideo = mediaType === "video";
-  const overlay = document.createElement("div");
-  overlay.className = "media-overlay";
-  const render = () => {
-    const current = items[index];
-    overlay.innerHTML = `<button class="media-overlay__close" aria-label="Закрыть">×</button>${items.length > 1 ? `<button class="media-overlay__nav media-overlay__nav--previous" type="button" data-media-previous aria-label="Предыдущее фото">‹</button><button class="media-overlay__nav media-overlay__nav--next" type="button" data-media-next aria-label="Следующее фото">›</button><span class="media-overlay__counter">${index + 1} / ${items.length}</span>` : ""}${isVideo ? `<video controls autoplay playsinline src="${esc(current)}">Ваш браузер не поддерживает видео.</video>` : `<img src="${esc(current)}" alt="Просмотр изображения">`}`;
-    overlay.querySelector(".media-overlay__close").addEventListener("click", close);
-    overlay.querySelector("[data-media-previous]")?.addEventListener("click", () => show(index - 1));
-    overlay.querySelector("[data-media-next]")?.addEventListener("click", () => show(index + 1));
-  };
-  const show = (nextIndex) => { index = (nextIndex + items.length) % items.length; render(); };
-  document.body.append(overlay);
-  const close = () => {
-    overlay.querySelector("video")?.pause();
-    overlay.remove();
-    document.removeEventListener("keydown", onKeyDown);
-  };
-  const onKeyDown = (event) => { if (event.key === "Escape") close(); else if (items.length > 1 && event.key === "ArrowLeft") show(index - 1); else if (items.length > 1 && event.key === "ArrowRight") show(index + 1); };
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  render();
-  document.addEventListener("keydown", onKeyDown);
-}
-function openCircle(messageId) {
-  const message = state.messages.find((item) => item.id === messageId && item.mediaType === "circle");
-  if (!message) return;
-  const overlay = document.createElement("div");
-  overlay.className = "circle-overlay";
-  overlay.innerHTML = `<section class="circle-viewer"><header><button class="circle-back" type="button" data-close-circle>← <span>Назад к диалогу</span></button><span>Видеокружок</span></header><video autoplay playsinline src="${esc(messageMediaUrl(message))}"></video><div class="circle-viewer__player" aria-label="Управление видеокружком"><button type="button" data-circle-viewer-playback aria-label="Пауза">Ⅱ</button><input type="range" min="0" max="100" value="0" step="0.1" data-circle-viewer-progress aria-label="Прогресс видеокружка"></div></section>`;
-  document.body.append(overlay);
-  const video = overlay.querySelector("video");
-  const playButton = overlay.querySelector("[data-circle-viewer-playback]");
-  const progress = overlay.querySelector("[data-circle-viewer-progress]");
-  const setProgress = (value) => {
-    const normalized = Math.min(100, Math.max(0, Number(value) || 0));
-    progress.value = String(normalized);
-    progress.style.setProperty("--circle-progress", `${normalized}%`);
-  };
-  const updatePlayback = () => {
-    playButton.textContent = video.paused ? "▶" : "Ⅱ";
-    playButton.setAttribute("aria-label", video.paused ? "Воспроизвести" : "Пауза");
-    overlay.querySelector(".circle-viewer")?.classList.toggle("is-playing", !video.paused);
-  };
-  playButton.addEventListener("click", () => { if (video.paused) video.play(); else video.pause(); });
-  progress.addEventListener("input", () => { if (video.duration) video.currentTime = (Number(progress.value) / 100) * video.duration; setProgress(progress.value); });
-  video.addEventListener("play", updatePlayback);
-  video.addEventListener("pause", updatePlayback);
-  video.addEventListener("timeupdate", () => { if (video.duration) setProgress((video.currentTime / video.duration) * 100); });
-  video.addEventListener("ended", () => { setProgress(0); updatePlayback(); });
-  const onKeyDown = (event) => { if (event.key === "Escape") close(); };
-  const close = () => { video.pause(); overlay.remove(); document.removeEventListener("keydown", onKeyDown); };
-  overlay.querySelector("[data-close-circle]").addEventListener("click", close);
-  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  document.addEventListener("keydown", onKeyDown);
-}
-async function openStory(storyId, storyIds = (state.stories || []).map((story) => story.id)) {
-  try {
-    const data = await api("/api/stories/view", { method: "POST", body: { storyId } });
-    await refresh();
-    const story = data.story;
-    const availableStoryIds = storyIds.filter((id) => (state.stories || []).some((item) => item.id === id));
-    const storyIndex = availableStoryIds.indexOf(story.id);
-    const own = story.user_id === state.me.id;
-    const reactions = ["❤️", "🔥", "😍", "😂", "😮", "👏"];
-    const overlay = document.createElement("div");
-    overlay.className = "story-overlay";
-    overlay.innerHTML = `<div class="story-viewer"><button class="media-overlay__close" data-close-story aria-label="Закрыть">×</button>${availableStoryIds.length > 1 ? `<button class="story-viewer__nav story-viewer__nav--previous" type="button" data-story-previous aria-label="Предыдущая сторис">‹</button><button class="story-viewer__nav story-viewer__nav--next" type="button" data-story-next aria-label="Следующая сторис">›</button><span class="story-viewer__counter">${storyIndex + 1} / ${availableStoryIds.length}</span>` : ""}<img src="${esc(story.media_data)}" alt="Сторис">${story.caption ? `<p>${esc(story.caption)}</p>` : ""}${own ? `<button class="button small" type="button" data-save-story-permanent ${story.permanent ? "disabled" : ""}>${story.permanent ? "В постоянных" : "Сохранить в постоянные"}</button><section class="story-insights"><b>Просмотры: ${story.viewerCount || 0}</b>${story.viewers?.map((viewer) => `<div class="story-viewer-row"><button class="row" type="button" data-story-viewer="${viewer.id}">${avatarHtml(viewer)}<span>${esc(viewer.name)} ${viewer.storyReaction ? `<b>${esc(viewer.storyReaction)}</b>` : ""}<small>@${esc(viewer.username)}</small></span></button><button class="button danger small" type="button" data-hide-story-from-viewer="${viewer.id}">Скрыть от него</button></div>`).join("") || '<p class="muted">Пока никто не посмотрел.</p>'}</section>` : `<section class="story-reaction-panel"><div class="story-reactions">${reactions.map((emoji) => `<button class="${story.myReaction === emoji ? "active" : ""}" data-story-react="${emoji}" aria-label="Выбрать реакцию ${emoji}">${emoji}</button>`).join("")}</div><button class="story-send-reaction" type="button" data-send-story-reaction disabled><span data-selected-story-reaction>Выберите реакцию</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 3-7.4 18-3.7-7.3L3 10.1 21 3Z"/><path d="m10 14 4.2-4.2"/></svg></button></section><form class="story-reply" data-story-reply><input name="text" maxlength="1000" placeholder="Ответить на сторис"><button class="button small" type="submit">Ответить</button></form><div class="story-actions"><button class="button small" type="button" data-share-story>Поделиться</button><button class="button small" type="button" data-share-story-to-group>В группу</button><button class="button small" type="button" data-report-story>Пожаловаться</button></div><button class="story-hide-author" type="button" data-hide-current-story-author title="Скрыть сторис пользователя" aria-label="Скрыть сторис пользователя">◉</button>`}</div>`;
-    document.body.append(overlay);
-    const close = () => overlay.remove();
-    overlay.querySelector("[data-close-story]").addEventListener("click", close);
-    overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-    const changeStory = (offset) => {
-      if (storyIndex < 0 || availableStoryIds.length < 2) return;
-      close();
-      openStory(availableStoryIds[(storyIndex + offset + availableStoryIds.length) % availableStoryIds.length], availableStoryIds);
-    };
-    overlay.querySelector("[data-story-previous]")?.addEventListener("click", () => changeStory(-1));
-    overlay.querySelector("[data-story-next]")?.addEventListener("click", () => changeStory(1));
-    overlay.querySelectorAll("[data-story-viewer]").forEach((button) => button.addEventListener("click", () => { close(); openProfile(button.dataset.storyViewer); }));
-    overlay.querySelectorAll("[data-hide-story-from-viewer]").forEach((button) => button.addEventListener("click", async () => { await setStoryPrivacyHidden(button.dataset.hideStoryFromViewer, true); close(); }));
-    overlay.querySelector("[data-hide-current-story-author]")?.addEventListener("click", async () => { await setStoryAuthorHidden(story.user_id, true); close(); });
-    overlay.querySelector("[data-save-story-permanent]")?.addEventListener("click", async () => { await api("/api/stories/permanent", { method: "POST", body: { storyId } }); toast("История сохранена в постоянные."); await refresh(false); close(); });
-    overlay.querySelector("[data-share-story]")?.addEventListener("click", () => openStoryShareDialog(story, close));
-    overlay.querySelector("[data-share-story-to-group]")?.addEventListener("click", () => { close(); openGroupContentShare("story", story.id); });
-    overlay.querySelector("[data-report-story]")?.addEventListener("click", async () => { try { await reportTarget("story", storyId); } catch (error) { toast(error.message, true); } });
-    overlay.querySelector("[data-story-reply]")?.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      try {
-        const data = await api("/api/stories/reply", { method: "POST", body: { storyId, text: new FormData(event.currentTarget).get("text") } });
-        activeChatId = data.chatId;
-        activeSection = "chats";
-        close();
-        await refresh();
-      } catch (error) { toast(error.message, true); }
-    });
-    let selectedReaction = story.myReaction || "";
-    const sendReaction = overlay.querySelector("[data-send-story-reaction]");
-    const selectedReactionLabel = overlay.querySelector("[data-selected-story-reaction]");
-    const updateReactionSelection = () => {
-      overlay.querySelectorAll("[data-story-react]").forEach((item) => item.classList.toggle("active", item.dataset.storyReact === selectedReaction));
-      if (sendReaction) sendReaction.disabled = !selectedReaction;
-      if (selectedReactionLabel) selectedReactionLabel.textContent = selectedReaction ? `Отправить реакцию ${selectedReaction}` : "Выберите реакцию";
-    };
-    overlay.querySelectorAll("[data-story-react]").forEach((button) => button.addEventListener("click", () => { selectedReaction = button.dataset.storyReact; updateReactionSelection(); }));
-    sendReaction?.addEventListener("click", async () => {
-      try {
-        await api("/api/stories/react", { method: "POST", body: { storyId, emoji: selectedReaction } });
-        showStoryReactionBurst(selectedReaction, sendReaction);
-        toast("Реакция отправлена.");
-      } catch (error) { toast(error.message, true); }
-    });
-    updateReactionSelection();
-  } catch (error) { toast(error.message, true); }
-}
-function getSavedAccounts() {
-  const keys = [SAVED_ACCOUNTS_KEY, "chatpro_saved_accounts_v1"];
-  for (const key of keys) {
-    try { const value = JSON.parse(localStorage.getItem(key) || "[]"); if (value.length) return value; } catch {}
-  }
-  return [];
-}
-function rememberAccount(user, accountToken) {
-  const accounts = getSavedAccounts().filter((x) => x.id !== user.id);
-  accounts.unshift({ id: user.id, name: user.name, username: user.username, avatarData: user.avatarData, token: accountToken });
-  saveAccounts(limitSavedAccounts(accounts));
-}
-function limitSavedAccounts(accounts) { const configuredLimit = Number(state?.accountLevel?.limits?.savedAccounts) || 0; return configuredLimit > 0 ? accounts.slice(0, configuredLimit) : accounts; }
-function trimSavedAccountsToLimit() { saveAccounts(limitSavedAccounts(getSavedAccounts())); }
-function removeSavedAccount(userId) {
-  saveAccounts(getSavedAccounts().filter((account) => account.id !== userId));
-}
-function saveAccounts(accounts) {
-  const saved = JSON.stringify(accounts);
-  localStorage.setItem(SAVED_ACCOUNTS_KEY, saved);
-  localStorage.setItem("chatpro_saved_accounts_v1", saved);
-}
-function fileMimeType(file) {
-  const supplied = String(file?.type || "").toLowerCase();
-  if (supplied === "image/jpg") return "image/jpeg";
-  if (supplied) return supplied;
-  const extension = String(file?.name || "").split(".").pop().toLowerCase();
-  return { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", m4a: "audio/mp4", pdf: "application/pdf" }[extension] || "application/octet-stream";
-}
+    def star_package_discount_percent(self, con, user_id) -> int:
+        row = con.execute(
+            "SELECT MAX(discount_percent) AS discount_percent FROM personal_star_package_discounts WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row["discount_percent"] or 0) if row else 0
 
-async function fileToDataUrl(file, maxBytes) {
-  if (!file || !file.size) return Promise.reject(new Error("Выберите файл."));
-  if (file.size > maxBytes) return Promise.reject(new Error("Файл слишком большой."));
-  if (typeof file.arrayBuffer === "function") {
-    try {
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      let binary = "";
-      for (let index = 0; index < bytes.length; index += 0x4000) binary += String.fromCharCode.apply(null, bytes.subarray(index, index + 0x4000));
-      return `data:${fileMimeType(file)};base64,${btoa(binary)}`;
-    } catch (_) { /* Older browsers continue through the FileReader fallback. */ }
-  }
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Не удалось прочитать файл."));
-    reader.readAsDataURL(file);
-  });
-}
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(new Error("Не удалось прочитать запись."));
-    reader.readAsDataURL(blob);
-  });
-}
-function channelAppearanceStyle(appearance) {
-  const allowedWallpapers = new Set([...CHAT_WALLPAPERS.map(({ id }) => id), "custom"]);
-  const allowedFonts = new Set(DIALOG_FONTS.map(({ id }) => id));
-  const validColor = (value) => /^#[\da-f]{6}$/i.test(String(value || ""));
-  const wallpaper = allowedWallpapers.has(appearance?.wallpaper) ? appearance.wallpaper : "default";
-  const ownBubble = validColor(appearance?.ownBubble) ? appearance.ownBubble : "";
-  const otherBubble = validColor(appearance?.otherBubble) ? appearance.otherBubble : "";
-  const panelColor = validColor(appearance?.panelColor) ? appearance.panelColor : "";
-  const font = allowedFonts.has(appearance?.font) ? appearance.font : "";
-  const styles = [];
-  if (ownBubble) styles.push(`--own-bubble-background:${ownBubble}`, `--own-bubble-text:${dialogBubbleTextColor(ownBubble)}`);
-  if (otherBubble) styles.push(`--other-bubble:${otherBubble}`, `--other-bubble-text:${dialogBubbleTextColor(otherBubble)}`);
-  if (panelColor) styles.push(`--channel-panel-color:${panelColor}`, `--channel-panel-text:${dialogBubbleTextColor(panelColor)}`);
-  if (font) styles.push(`--message-font:${dialogMessageFont(font)}`);
-  const backgroundData = String(appearance?.backgroundData || "");
-  if (wallpaper === "custom" && /^data:image\/(?:png|jpeg|webp);base64,[a-z\d+/=\s]+$/i.test(backgroundData)) {
-    styles.push(`--channel-background-image:url("${backgroundData.replace(/\s/g, "")}")`);
-  }
-  return styles.join(";");
-}
-function chatBackgroundClass(user) { return `chat-background-${["whatsapp", "live"].includes(user?.chatBackground) ? "default" : user?.chatBackground || "default"}`; }
-function chatBackgroundStyle(user) { return user?.chatBackground === "custom" && user.chatBackgroundData ? ` style="background-image: linear-gradient(rgba(255,255,255,.15), rgba(255,255,255,.15)), url('${esc(user.chatBackgroundData)}')"` : ""; }
-function initials(name) { return String(name || "U").trim().split(/\s+/).slice(0,2).map((x) => x[0]?.toUpperCase() || "").join("") || "U"; }
-function timeFmt(ts) { return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit" }).format(ts * 1000); }
-function dateFmt(ts) { return new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "long", year: "numeric" }).format(ts * 1000); }
-function starDateFmt(ts) { return new Intl.DateTimeFormat("ru-RU", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(ts * 1000); }
-function esc(value) { return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
-function toastAction(message) {
-  const text = String(message || "");
-  if (/недостаточно звёзд/i.test(text)) return { section: "stars", label: "Звёзды", message: "Недостаточно звёзд. Пополните баланс в разделе «Звёзды»." };
-  if (/на вашем уровне|лимит баланса|превышает лимит баланса|баланс этого аккаунта ограничен|доступна с уровня|повысьте уровень/i.test(text)) return { section: "account-level", label: "Уровень аккаунта", message: "Чтобы выполнить это действие, повысьте уровень аккаунта." };
-  return null;
-}
+    def apply_reward_benefits(self, con, user_id, source_type, source_id, title, reward):
+        premium_days = int(reward.get("premiumDays", 0) or 0)
+        if premium_days:
+            user = con.execute("SELECT premium_until FROM users WHERE id = ?", (user_id,)).fetchone()
+            premium_start = max(now(), int(user["premium_until"] or 0) if user else 0)
+            con.execute("UPDATE users SET premium_until = ? WHERE id = ?", (premium_start + premium_days * 86400, user_id))
+        limits = reward.get("limits", {}) if isinstance(reward, dict) else {}
+        if limits:
+            con.execute(
+                "INSERT OR REPLACE INTO personal_limit_rewards(user_id,source_type,source_id,limits_json,created_at) VALUES (?,?,?,?,?)",
+                (user_id, source_type, source_id, dumps(limits), now()),
+            )
+        discount_percent = int(reward.get("starPackageDiscountPercent", 0) or 0)
+        if discount_percent:
+            con.execute(
+                "INSERT OR REPLACE INTO personal_star_package_discounts(user_id,source_type,source_id,discount_percent,created_at) VALUES (?,?,?,?,?)",
+                (user_id, source_type, source_id, discount_percent, now()),
+            )
+        recurring_stars = int(reward.get("recurringStars", 0) or 0)
+        if recurring_stars:
+            interval_seconds = int(reward["recurringIntervalDays"]) * 86400
+            ends_at = now() + int(reward["recurringDurationDays"]) * 86400
+            con.execute(
+                """INSERT OR REPLACE INTO recurring_star_rewards(user_id,source_type,source_id,title,stars,interval_seconds,ends_at,next_credit_at,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (user_id, source_type, source_id, title, recurring_stars, interval_seconds, ends_at, now() + interval_seconds, now()),
+            )
 
-function toast(message, error = false) {
-  document.querySelector(".toast")?.remove();
-  const action = error && toastAction(message);
-  const el = document.createElement("div");
-  el.className = `toast${error ? " error" : ""}${action ? " toast--action" : ""}`;
-  const text = document.createElement("span");
-  text.className = "toast__text";
-  text.textContent = action?.message || message;
-  el.append(text);
-  if (action) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "toast__action";
-    button.textContent = action.label;
-    button.addEventListener("click", () => {
-      document.querySelectorAll(".member-manager-overlay, .group-card-overlay, .message-menu-overlay, .chat-menu-overlay, .simple-actions-overlay").forEach((overlay) => overlay.remove());
-      el.remove();
-      openMenuSection(action.section);
-    });
-    el.append(button);
-  }
-  document.body.append(el);
-  setTimeout(() => el.remove(), action ? 6400 : 3200);
-}
+    def process_recurring_star_rewards(self, con):
+        current = now()
+        rewards = con.execute("SELECT * FROM recurring_star_rewards WHERE next_credit_at <= ? ORDER BY next_credit_at LIMIT 100", (current,)).fetchall()
+        for reward in rewards:
+            if reward["next_credit_at"] > reward["ends_at"]:
+                con.execute("DELETE FROM recurring_star_rewards WHERE user_id = ? AND source_type = ? AND source_id = ?", (reward["user_id"], reward["source_type"], reward["source_id"]))
+                continue
+            try:
+                self.credit_stars(con, reward["user_id"], reward["stars"])
+            except ValueError:
+                pass
+            else:
+                self.record_star_transaction(con, reward["user_id"], reward["stars"], "recurring_reward", f"Периодическая награда «{reward['title']}»")
+            next_credit_at = int(reward["next_credit_at"]) + int(reward["interval_seconds"])
+            if next_credit_at > reward["ends_at"]:
+                con.execute("DELETE FROM recurring_star_rewards WHERE user_id = ? AND source_type = ? AND source_id = ?", (reward["user_id"], reward["source_type"], reward["source_id"]))
+            else:
+                con.execute("UPDATE recurring_star_rewards SET next_credit_at = ? WHERE user_id = ? AND source_type = ? AND source_id = ?", (next_credit_at, reward["user_id"], reward["source_type"], reward["source_id"]))
+
+    def enforce_autopost_source_limit(self, con, user_id, channel_id):
+        limits = self.account_level_data(con, user_id).get("limits", {})
+        total_limit = int(limits.get("autopostSourcesTotal", 0) or 0)
+        channel_limit = int(limits.get("autopostSourcesPerChannel", 0) or 0)
+        counts = con.execute(
+            """SELECT
+                   (SELECT count(*) FROM telegram_channel_links t JOIN chats c ON c.id = t.channel_id WHERE c.owner_id = ?) +
+                   (SELECT count(*) FROM rss_channel_sources r JOIN chats c ON c.id = r.channel_id WHERE c.owner_id = ?) +
+                   (SELECT count(*) FROM vk_channel_sources v JOIN chats c ON c.id = v.channel_id WHERE c.owner_id = ?) AS total,
+                   (SELECT count(*) FROM telegram_channel_links WHERE channel_id = ?) +
+                   (SELECT count(*) FROM rss_channel_sources WHERE channel_id = ?) +
+                   (SELECT count(*) FROM vk_channel_sources WHERE channel_id = ?) AS channel_total""",
+            (user_id, user_id, user_id, channel_id, channel_id, channel_id),
+        ).fetchone()
+        if total_limit and counts["total"] >= total_limit:
+            raise ValueError(f"На вашем уровне доступно не более {total_limit} источников автопостинга.")
+        if channel_limit and counts["channel_total"] >= channel_limit:
+            raise ValueError(f"К одному каналу на вашем уровне можно подключить не более {channel_limit} источников автопостинга.")
+
+    def credit_stars(self, con, user_id, amount):
+        amount = nonnegative_int(amount, "amount")
+        if not amount:
+            return
+        user = con.execute("SELECT stars FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not user:
+            raise ValueError("Пользователь не найден.")
+        maximum = int(self.account_level_data(con, user_id).get("limits", {}).get("maxStars", 0) or 0)
+        if maximum and int(user["stars"]) + amount > maximum:
+            raise ValueError(f"Баланс этого аккаунта ограничен {maximum} звёздами.")
+        con.execute("UPDATE users SET stars = stars + ? WHERE id = ?", (amount, user_id))
+
+    def enforce_join_limit(self, con, user_id, chat_type):
+        limit_key = {"group": "groupsJoined", "community": "communitiesJoined", "channel": "channelsJoined"}[chat_type]
+        limits = self.account_level_data(con, user_id).get("limits", {})
+        maximum = int(limits.get(limit_key, 0) or 0)
+        if not maximum:
+            return
+        joined = con.execute(
+            """SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id
+               WHERE cm.user_id = ? AND c.type = ? AND c.owner_id != ?""",
+            (user_id, chat_type, user_id),
+        ).fetchone()["count"]
+        if joined >= maximum:
+            label = {"group": "групп", "community": "бесед", "channel": "каналов"}[chat_type]
+            raise ValueError(f"На вашем уровне можно вступить не более чем в {maximum} {label}.")
+
+    def enforce_message_limit(self, con, user_id):
+        maximum = int(self.account_level_data(con, user_id).get("limits", {}).get("messagesPerDay", 0) or 0)
+        if not maximum:
+            return
+        sent_today = con.execute(
+            "SELECT count(*) AS count FROM messages WHERE sender_id = ? AND created_at >= ? AND forwarded_from IS NULL",
+            (user_id, now() - 86400),
+        ).fetchone()["count"]
+        if sent_today >= maximum:
+            raise ValueError(f"На вашем уровне можно отправлять до {maximum} сообщений в сутки.")
+
+    def enforce_post_limit(self, con, user_id):
+        maximum = int(self.account_level_data(con, user_id).get("limits", {}).get("postsPerDay", 0) or 0)
+        if not maximum:
+            return
+        created_today = con.execute(
+            """SELECT
+                   (SELECT count(*) FROM profile_posts WHERE user_id = ? AND created_at >= ?) +
+                   (SELECT count(*) FROM messages m JOIN chats c ON c.id = m.chat_id
+                    WHERE m.sender_id = ? AND m.created_at >= ? AND c.type = 'channel' AND m.forwarded_from IS NULL) AS count""",
+            (user_id, now() - 86400, user_id, now() - 86400),
+        ).fetchone()["count"]
+        if created_today >= maximum:
+            raise ValueError(f"На вашем уровне можно публиковать до {maximum} постов в сутки.")
+
+    def update_avatar(self, con, user, body):
+        avatar = normalize_image_data(body.get("avatarData", ""), 1_800_000, "Аватар")
+        previous = con.execute("SELECT avatar_data FROM users WHERE id = ?", (user["id"],)).fetchone()["avatar_data"]
+        if previous and previous != avatar:
+            con.execute("DELETE FROM avatar_history WHERE user_id = ? AND avatar_data = ?", (user["id"], previous))
+            con.execute("INSERT INTO avatar_history(id,user_id,avatar_data,created_at) VALUES (?,?,?,?)", (uid("avatar"), user["id"], previous, now()))
+            con.execute("""DELETE FROM avatar_history WHERE id IN (
+                           SELECT id FROM avatar_history WHERE user_id = ?
+                           ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET 20
+                         )""", (user["id"],))
+        con.execute("UPDATE users SET avatar_data = ? WHERE id = ?", (avatar, user["id"]))
+        return self.json({"ok": True})
+
+    def create_profile_post(self, con, user, body):
+        text = str(body.get("text", "")).strip()
+        media = str(body.get("mediaData", ""))
+        if (not text and not media) or len(text) > 3000:
+            raise ValueError("Пост должен содержать текст или фото, текст — до 3000 символов.")
+        if media and (not media.startswith("data:image/") or len(media) > 3_500_000):
+            raise ValueError("Фото поста должно быть изображением до 2,5 МБ.")
+        self.enforce_post_limit(con, user["id"])
+        con.execute("INSERT INTO profile_posts(id,user_id,text,media_data,created_at) VALUES (?,?,?,?,?)", (uid("post"), user["id"], text, media or None, now()))
+        return self.json({"ok": True})
+
+    def react_to_profile_post(self, con, user, body):
+        post_id = str(body.get("postId", ""))
+        emoji = str(body.get("emoji", ""))[:32]
+        if not emoji:
+            raise ValueError("Выберите реакцию.")
+        post = con.execute("SELECT user_id, media_data FROM profile_posts WHERE id = ?", (post_id,)).fetchone()
+        if not post:
+            raise ValueError("Публикация не найдена.")
+        author_id = post["user_id"]
+        if author_id == user["id"]:
+            raise ValueError("Нельзя отправить реакцию на свою публикацию.")
+        member_ids = sorted([user["id"], author_id])
+        chat = con.execute(
+            "SELECT c.id FROM chats c JOIN chat_members a ON a.chat_id = c.id JOIN chat_members b ON b.chat_id = c.id WHERE c.type = 'direct' AND a.user_id = ? AND b.user_id = ?",
+            (member_ids[0], member_ids[1]),
+        ).fetchone()
+        if chat:
+            chat_id = chat["id"]
+        else:
+            privacy_row = con.execute("SELECT direct_message_privacy FROM users WHERE id = ?", (author_id,)).fetchone()
+            if privacy_row and privacy_row["direct_message_privacy"] != "everyone":
+                raise PermissionError("Автор принимает новые сообщения только от людей из личных диалогов.")
+            chat_id = uid("chat")
+            con.execute("INSERT INTO chats(id,type,title,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (chat_id, "direct", "Личный чат", user["id"], now(), now()))
+            for member_id in member_ids:
+                con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, member_id, "member", now()))
+        con.execute("DELETE FROM hidden_chats WHERE chat_id = ? AND user_id IN (?, ?)", (chat_id, user["id"], author_id))
+        con.execute(
+            "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (uid("msg"), chat_id, user["id"], emoji, "photo" if post["media_data"] else None, post["media_data"], 1, now()),
+        )
+        con.execute("INSERT OR IGNORE INTO profile_post_reactions(post_id,user_id,emoji,created_at) VALUES (?,?,?,?)", (post_id, user["id"], emoji, now()))
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), chat_id))
+        return self.json({"ok": True, "chatId": chat_id})
+
+    def create_story(self, con, user, body):
+        media = str(body.get("mediaData", ""))
+        caption = str(body.get("caption", "")).strip()[:300]
+        if not media.startswith("data:image/") or len(media) > 3_500_000:
+            raise ValueError("Загрузите изображение истории до 2,5 МБ.")
+        limits = self.account_level_data(con, user["id"]).get("limits", {})
+        daily_limit = int(limits.get("storiesPerDay", 0) or 0)
+        monthly_limit = int(limits.get("storiesPerMonth", 0) or 0)
+        created_today = con.execute("SELECT count(*) AS count FROM stories WHERE user_id = ? AND created_at >= ?", (user["id"], now() - 86400)).fetchone()["count"]
+        created_month = con.execute("SELECT count(*) AS count FROM stories WHERE user_id = ? AND created_at >= ?", (user["id"], now() - 30 * 86400)).fetchone()["count"]
+        if daily_limit and created_today >= daily_limit:
+            raise ValueError(f"На вашем уровне можно публиковать до {daily_limit} сторис в сутки.")
+        if monthly_limit and created_month >= monthly_limit:
+            raise ValueError(f"На вашем уровне можно публиковать до {monthly_limit} сторис за 30 дней.")
+        con.execute("INSERT INTO stories(id,user_id,media_data,caption,created_at,expires_at,permanent) VALUES (?,?,?,?,?,?,0)", (uid("story"), user["id"], media, caption, now(), now() + 172800))
+        return self.json({"ok": True})
+
+    def story_to_dict(self, con, row, viewer_id):
+        story = dict(row)
+        own_story = story["user_id"] == viewer_id
+        story["viewed"] = own_story or bool(con.execute("SELECT 1 FROM story_views WHERE story_id = ? AND user_id = ?", (story["id"], viewer_id)).fetchone())
+        story["viewerCount"] = con.execute("SELECT count(*) AS count FROM story_views WHERE story_id = ?", (story["id"],)).fetchone()["count"] if own_story else None
+        if own_story:
+            story["viewers"] = []
+            for viewer in con.execute(
+                """SELECT u.*, sr.emoji AS story_reaction FROM story_views sv
+                   JOIN users u ON u.id = sv.user_id
+                   LEFT JOIN story_reactions sr ON sr.story_id = sv.story_id AND sr.user_id = sv.user_id
+                   WHERE sv.story_id = ? ORDER BY sv.viewed_at DESC""", (story["id"],)
+            ).fetchall():
+                public = public_user(viewer)
+                public["storyReaction"] = viewer["story_reaction"] or ""
+                story["viewers"].append(public)
+        else:
+            story["viewers"] = []
+        reaction = con.execute("SELECT emoji FROM story_reactions WHERE story_id = ? AND user_id = ?", (story["id"], viewer_id)).fetchone()
+        story["myReaction"] = reaction["emoji"] if reaction else ""
+        return story
+
+    def view_story(self, con, user, body):
+        story_id = body.get("storyId")
+        story = con.execute(
+            """SELECT * FROM stories
+               WHERE id = ? AND (permanent = 1 OR expires_at > ?)
+                 AND NOT EXISTS(SELECT 1 FROM hidden_story_authors hsa WHERE hsa.user_id = ? AND hsa.author_id = stories.user_id)
+                 AND NOT EXISTS(SELECT 1 FROM story_privacy_blocks spb WHERE spb.owner_id = stories.user_id AND spb.blocked_user_id = ?)""",
+            (story_id, now(), user["id"], user["id"]),
+        ).fetchone()
+        if not story:
+            raise ValueError("Сторис больше недоступна.")
+        if story["user_id"] != user["id"]:
+            con.execute("INSERT OR IGNORE INTO story_views(story_id,user_id,viewed_at) VALUES (?,?,?)", (story_id, user["id"], now()))
+        return self.json({"ok": True, "story": self.story_to_dict(con, story, user["id"])})
+
+    def react_to_story(self, con, user, body):
+        story_id = body.get("storyId")
+        emoji = str(body.get("emoji", ""))[:32]
+        story = con.execute("SELECT * FROM stories WHERE id = ? AND (permanent = 1 OR expires_at > ?)", (story_id, now())).fetchone()
+        if not story or story["user_id"] == user["id"]:
+            raise ValueError("Нельзя поставить реакцию на эту сторис.")
+        if not emoji:
+            con.execute("DELETE FROM story_reactions WHERE story_id = ? AND user_id = ?", (story_id, user["id"]))
+        else:
+            con.execute("INSERT OR REPLACE INTO story_reactions(story_id,user_id,emoji,created_at) VALUES (?,?,?,?)", (story_id, user["id"], emoji, now()))
+        return self.json({"ok": True})
+
+    def save_story_permanent(self, con, user, body):
+        story_id = body.get("storyId")
+        story = con.execute("SELECT * FROM stories WHERE id = ? AND user_id = ?", (story_id, user["id"])).fetchone()
+        if not story:
+            raise ValueError("История не найдена.")
+        con.execute("UPDATE stories SET permanent = 1, expires_at = ? WHERE id = ?", (now() + 315360000, story_id))
+        return self.json({"ok": True})
+
+    def hide_story_author(self, con, user, body):
+        author_id = str(body.get("authorId", ""))
+        hidden = bool(body.get("hidden", True))
+        if not author_id or author_id == user["id"]:
+            raise ValueError("Нельзя скрыть эти сторис.")
+        if hidden:
+            con.execute("INSERT OR IGNORE INTO hidden_story_authors(user_id,author_id,created_at) VALUES (?,?,?)", (user["id"], author_id, now()))
+        else:
+            con.execute("DELETE FROM hidden_story_authors WHERE user_id = ? AND author_id = ?", (user["id"], author_id))
+        return self.json({"ok": True})
+
+    def update_story_privacy(self, con, user, body):
+        target_id = str(body.get("userId", ""))
+        hidden = bool(body.get("hidden", True))
+        if not target_id or target_id == user["id"]:
+            raise ValueError("Нельзя изменить видимость для этого пользователя.")
+        if hidden:
+            con.execute("INSERT OR IGNORE INTO story_privacy_blocks(owner_id,blocked_user_id,created_at) VALUES (?,?,?)", (user["id"], target_id, now()))
+        else:
+            con.execute("DELETE FROM story_privacy_blocks WHERE owner_id = ? AND blocked_user_id = ?", (user["id"], target_id))
+        return self.json({"ok": True})
+
+    def reply_to_story(self, con, user, body):
+        story_id = body.get("storyId")
+        text = str(body.get("text", "")).strip()[:1000]
+        if not text:
+            raise ValueError("Введите ответ на сторис.")
+        story = con.execute(
+            """SELECT * FROM stories
+               WHERE id = ? AND user_id != ? AND (permanent = 1 OR expires_at > ?)
+                 AND NOT EXISTS(SELECT 1 FROM story_privacy_blocks spb WHERE spb.owner_id = stories.user_id AND spb.blocked_user_id = ?)""",
+            (story_id, user["id"], now(), user["id"]),
+        ).fetchone()
+        if not story:
+            raise ValueError("Сторис больше недоступна.")
+        owner = con.execute("SELECT name FROM users WHERE id = ?", (story["user_id"],)).fetchone()
+        ids = sorted([user["id"], story["user_id"]])
+        chat = con.execute(
+            """SELECT c.* FROM chats c
+               JOIN chat_members a ON a.chat_id = c.id
+               JOIN chat_members b ON b.chat_id = c.id
+               WHERE c.type = 'direct' AND a.user_id = ? AND b.user_id = ?""",
+            (ids[0], ids[1]),
+        ).fetchone()
+        if not chat:
+            chat_id = uid("chat")
+            title = f"{user['name']} и {owner['name']}"
+            con.execute(
+                "INSERT INTO chats(id,type,title,description,owner_id,settings_json,subscriber_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (chat_id, "direct", title, "", user["id"], dumps({}), 2, now(), now()),
+            )
+            for member_id in ids:
+                con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, member_id, "member", now()))
+        else:
+            chat_id = chat["id"]
+            con.execute("DELETE FROM hidden_chats WHERE chat_id = ? AND user_id IN (?, ?)", (chat_id, user["id"], story["user_id"]))
+        message_text = f"Ответ на сторис #{story_id}\n{story['caption'] or 'Без подписи'}\n\n{text}"
+        con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,created_at) VALUES (?,?,?,?,?,?,?,?)", (uid("msg"), chat_id, user["id"], message_text, "photo", story["media_data"], 1, now()))
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), chat_id))
+        return self.json({"ok": True, "chatId": chat_id})
+
+    def share_story(self, con, user, body):
+        story_id = str(body.get("storyId", ""))
+        recipient_id = str(body.get("recipientId", ""))
+        if not recipient_id or recipient_id == user["id"]:
+            raise ValueError("Выберите другого пользователя.")
+        story = con.execute("SELECT * FROM stories WHERE id = ? AND (permanent = 1 OR expires_at > ?)", (story_id, now())).fetchone()
+        recipient = con.execute("SELECT * FROM users WHERE id = ?", (recipient_id,)).fetchone()
+        if not story or not recipient:
+            raise ValueError("Сторис или получатель не найдены.")
+        ids = sorted([user["id"], recipient_id])
+        chat = con.execute(
+            """SELECT c.* FROM chats c
+               JOIN chat_members a ON a.chat_id = c.id
+               JOIN chat_members b ON b.chat_id = c.id
+               WHERE c.type = 'direct' AND a.user_id = ? AND b.user_id = ?""",
+            (ids[0], ids[1]),
+        ).fetchone()
+        if not chat:
+            chat_id = uid("chat")
+            con.execute("INSERT INTO chats(id,type,title,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (chat_id, "direct", "Личный чат", user["id"], now(), now()))
+            for member_id in ids:
+                con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, member_id, "member", now()))
+        else:
+            chat_id = chat["id"]
+            con.execute("DELETE FROM hidden_chats WHERE chat_id = ? AND user_id IN (?, ?)", (chat_id, user["id"], recipient_id))
+        owner = con.execute("SELECT name FROM users WHERE id = ?", (story["user_id"],)).fetchone()
+        text = f"Сторис от {owner['name'] if owner else 'пользователя'}\n{story['caption'] or 'Без подписи'}"
+        con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,created_at) VALUES (?,?,?,?,?,?,?,?)", (uid("msg"), chat_id, user["id"], text, "photo", story["media_data"], 1, now()))
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), chat_id))
+        return self.json({"ok": True, "chatId": chat_id})
+
+    def create_chat(self, con, user, body):
+        chat_type = body.get("type", "direct")
+        if chat_type == "direct":
+            other_id = body.get("userId")
+            if not other_id or other_id == user["id"]:
+                raise ValueError("Выберите другого пользователя.")
+            ids = sorted([user["id"], other_id])
+            existing = con.execute(
+                "SELECT c.* FROM chats c JOIN chat_members a ON a.chat_id=c.id JOIN chat_members b ON b.chat_id=c.id WHERE c.type='direct' AND a.user_id=? AND b.user_id=?",
+                (ids[0], ids[1]),
+            ).fetchone()
+            if existing:
+                con.execute("DELETE FROM hidden_chats WHERE chat_id = ? AND user_id = ?", (existing["id"], user["id"]))
+                return self.json({"ok": True, "chat": chat_to_dict(existing)})
+            recipient = con.execute("SELECT direct_message_privacy FROM users WHERE id = ?", (other_id,)).fetchone()
+            if not recipient:
+                raise ValueError("Пользователь не найден.")
+            privacy = recipient["direct_message_privacy"]
+            if privacy == "nobody":
+                raise PermissionError("Пользователь принимает новые сообщения только от тех, кому написал сам.")
+            if privacy == "contacts":
+                raise PermissionError("Пользователь принимает новые сообщения только от людей из личных диалогов.")
+            chat_id = uid("chat")
+            con.execute("INSERT INTO chats(id,type,title,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (chat_id, "direct", "Личный чат", user["id"], now(), now()))
+            for member_id in ids:
+                con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, member_id, "member", now()))
+            return self.json({"ok": True, "chat": chat_to_dict(con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone())})
+
+        if chat_type == "secret":
+            password = str(body.get("password", ""))
+            if not re.fullmatch(r"\d{4}", password):
+                raise ValueError("Пароль конфиденциального чата должен состоять из 4 цифр.")
+            raw_member_ids = body.get("memberIds", [])
+            if not isinstance(raw_member_ids, list):
+                raise ValueError("Некорректный список участников.")
+            member_ids = list(dict.fromkeys(str(member_id) for member_id in raw_member_ids if member_id and member_id != user["id"]))
+            if not member_ids:
+                raise ValueError("Добавьте хотя бы одного собеседника.")
+            if len(member_ids) > 50:
+                raise ValueError("В конфиденциальном чате может быть не более 50 приглашённых участников.")
+            for member_id in member_ids:
+                if not con.execute("SELECT 1 FROM users WHERE id = ?", (member_id,)).fetchone():
+                    raise ValueError("Один из выбранных пользователей не найден.")
+                is_direct_contact = con.execute(
+                    """SELECT 1 FROM chats c
+                       JOIN chat_members owner_member ON owner_member.chat_id = c.id
+                       JOIN chat_members contact_member ON contact_member.chat_id = c.id
+                       WHERE c.type = 'direct' AND owner_member.user_id = ? AND contact_member.user_id = ?
+                       LIMIT 1""",
+                    (user["id"], member_id),
+                ).fetchone()
+                if not is_direct_contact:
+                    raise ValueError("Добавить можно только пользователя из ваших личных диалогов.")
+            title = str(body.get("title", "")).strip() or "Скрытый чат"
+            chat_id = uid("chat")
+            con.execute(
+                "INSERT INTO chats(id,type,title,description,owner_id,settings_json,subscriber_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (chat_id, "secret", title, "", user["id"], dumps({"showViews": True, "showSubscribers": False, "showReactions": True}), len(member_ids) + 1, now(), now()),
+            )
+            con.execute("INSERT INTO secret_chats(chat_id,password_hash,created_at) VALUES (?,?,?)", (chat_id, secret_password_hash(password), now()))
+            for member_id in [user["id"], *member_ids]:
+                con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, member_id, "owner" if member_id == user["id"] else "member", now()))
+            con.execute("INSERT INTO secret_chat_unlocks(chat_id,user_id,unlocked_at) VALUES (?,?,?)", (chat_id, user["id"], now()))
+            secret_chat = con.execute("SELECT c.*, 0 AS pinned, 0 AS archived FROM chats c WHERE c.id = ?", (chat_id,)).fetchone()
+            return self.json({"ok": True, "chat": chat_to_dict(secret_chat)})
+
+        if chat_type not in ("community", "channel"):
+            raise ValueError("Неизвестный тип чата.")
+        limits = self.account_level_data(con, user["id"]).get("limits", {})
+        limit_key = {"community": "communitiesCreated", "channel": "channelsCreated"}[chat_type]
+        maximum = int(limits.get(limit_key, 0) or 0)
+        if maximum:
+            existing = con.execute("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = ?", (user["id"], chat_type)).fetchone()["count"]
+            if existing >= maximum:
+                label = {"community": "бесед", "channel": "каналов"}[chat_type]
+                raise ValueError(f"На вашем уровне доступно до {maximum} {label}.")
+        if chat_type == "channel":
+            title = str(body.get("title", "")).strip() or "Новый канал"
+            settings = {"showViews": True, "showSubscribers": True, "showReactions": True, "commentsEnabled": True, "isPublic": True, "starBonusType": "stars", "starBonusPercent": 10}
+            chat_id = uid("chat")
+            con.execute(
+                "INSERT INTO chats(id,type,title,description,invite_code,owner_id,settings_json,subscriber_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (chat_id, "channel", title, str(body.get("description", "")), secrets.token_urlsafe(12), user["id"], dumps(settings), 1, now(), now()),
+            )
+            con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, user["id"], "owner", now()))
+            return self.json({"ok": True, "chat": chat_to_dict(con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone())})
+        title = str(body.get("title", "")).strip() or "Новый чат"
+        settings = {"showViews": True, "showSubscribers": True, "showReactions": True, "inviteLinkEnabled": True}
+        chat_id = uid("chat")
+        con.execute(
+            "INSERT INTO chats(id,type,title,description,invite_code,owner_id,settings_json,subscriber_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (chat_id, chat_type, title, str(body.get("description", "")), secrets.token_urlsafe(12), user["id"], dumps(settings), 1, now(), now()),
+        )
+        con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, user["id"], "owner", now()))
+        return self.json({"ok": True, "chat": chat_to_dict(con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone())})
+
+    def unlock_secret_chats(self, con, user, password):
+        password = str(password or "")
+        if not re.fullmatch(r"\d{4}", password):
+            raise ValueError("Введите пароль из 4 цифр.")
+        rows = con.execute(
+            """SELECT sc.chat_id FROM secret_chats sc
+               JOIN chat_members cm ON cm.chat_id = sc.chat_id
+               WHERE cm.user_id = ? AND sc.password_hash = ?""",
+            (user["id"], secret_password_hash(password)),
+        ).fetchall()
+        if not rows:
+            raise ValueError("Скрытых чатов с таким паролем не найдено.")
+        for row in rows:
+            con.execute("INSERT OR REPLACE INTO secret_chat_unlocks(chat_id,user_id,unlocked_at) VALUES (?,?,?)", (row["chat_id"], user["id"], now()))
+        return self.json({"ok": True, "count": len(rows), "chatIds": [row["chat_id"] for row in rows]})
+
+    def join_chat(self, con, user, chat_id):
+        chat = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] not in {"group", "community", "channel"}:
+            raise ValueError("Не выбран чат.")
+        already_joined = con.execute("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"])).fetchone()
+        if not already_joined and chat["owner_id"] != user["id"]:
+            self.enforce_join_limit(con, user["id"], chat["type"])
+        con.execute("INSERT OR IGNORE INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, user["id"], "member", now()))
+        con.execute("DELETE FROM hidden_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"]))
+        con.execute("UPDATE chats SET subscriber_count = (SELECT count(*) FROM chat_members WHERE chat_id = ?), updated_at = ? WHERE id = ?", (chat_id, now(), chat_id))
+        return self.json({"ok": True, "chatId": chat_id})
+
+    def join_chat_by_invite(self, con, user, code):
+        chat = con.execute("SELECT id, type, settings_json FROM chats WHERE invite_code = ?", (str(code or ""),)).fetchone()
+        if not chat or chat["type"] not in {"group", "community", "channel"}:
+            raise ValueError("Ссылка-приглашение недействительна.")
+        if chat["type"] in {"group", "community"} and not loads(chat["settings_json"], {}).get("inviteLinkEnabled", True):
+            raise PermissionError("Владелец группы отключил публичную ссылку-приглашение.")
+        return self.join_chat(con, user, chat["id"])
+
+    def add_chat_member(self, con, user, body):
+        chat_id, user_id = body.get("chatId"), body.get("userId")
+        chat = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] not in {"group", "community", "secret", "channel"}:
+            raise ValueError("Участников можно добавлять только в группу, беседу, канал или скрытый чат.")
+        if chat["owner_id"] != user["id"]:
+            raise PermissionError("Добавлять участников может только создатель чата.")
+        if not con.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+            raise ValueError("Пользователь не найден.")
+        invite_privacy = con.execute("SELECT group_invite_privacy FROM users WHERE id = ?", (user_id,)).fetchone()["group_invite_privacy"]
+        if invite_privacy == "nobody":
+            raise PermissionError("Пользователь запретил добавлять себя в группы.")
+        is_direct_contact = con.execute(
+            """SELECT 1 FROM chats c
+               JOIN chat_members inviter ON inviter.chat_id = c.id
+               JOIN chat_members candidate ON candidate.chat_id = c.id
+               WHERE c.type = 'direct' AND inviter.user_id = ? AND candidate.user_id = ?
+               LIMIT 1""",
+            (user["id"], user_id),
+        ).fetchone()
+        if invite_privacy == "contacts" and not is_direct_contact:
+            raise PermissionError("Пользователь разрешил добавление только контактам.")
+        already_joined = con.execute("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone()
+        if not already_joined and chat["type"] in {"group", "community", "channel"} and chat["owner_id"] != user_id:
+            self.enforce_join_limit(con, user_id, chat["type"])
+        added = con.execute("INSERT OR IGNORE INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, user_id, "member", now())).rowcount
+        if added:
+            invited = con.execute("SELECT name FROM users WHERE id = ?", (user_id,)).fetchone()
+            chat_label = "скрытый чат" if chat["type"] == "secret" else "канал" if chat["type"] == "channel" else "беседу"
+            con.execute(
+                "INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)",
+                (uid("msg"), chat_id, user["id"], f"{user['name']} пригласил(а) {invited['name']} в {chat_label}", "system", 1, now()),
+            )
+        con.execute("UPDATE chats SET subscriber_count = (SELECT count(*) FROM chat_members WHERE chat_id = ?) WHERE id = ?", (chat_id, chat_id))
+        return self.json({"ok": True})
+
+    def update_group_chat(self, con, user, body):
+        chat_id = body.get("chatId")
+        chat = con.execute("SELECT type, owner_id, settings_json FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] not in {"group", "community", "channel"}:
+            raise ValueError("Изменить можно только группу, беседу или канал.")
+        if chat["owner_id"] != user["id"]:
+            raise PermissionError("Изменять профиль и настройки может только создатель.")
+        title = str(body.get("title", "")).strip()
+        description = str(body.get("description", "")).strip()
+        avatar = str(body.get("avatarData", "") or "")
+        if not title or len(title) > 120:
+            raise ValueError("Название должно содержать от 1 до 120 символов.")
+        if len(description) > 1000:
+            raise ValueError("Описание должно быть не длиннее 1000 символов.")
+        if avatar and (not avatar.startswith("data:image/") or len(avatar) > 2_500_000):
+            raise ValueError("Загрузите изображение до 1,8 МБ в формате PNG, JPG или WebP.")
+        settings = loads(chat["settings_json"], {})
+        if chat["type"] == "channel":
+            for key in ("showViews", "showSubscribers", "showReactions", "commentsEnabled", "isPublic"):
+                if key in body:
+                    settings[key] = bool(body[key])
+            if "starBonusType" in body or "starBonusPercent" in body:
+                bonus_type = str(body.get("starBonusType", settings.get("starBonusType", "stars"))).strip().lower()
+                if bonus_type not in {"stars", "money"}:
+                    raise ValueError("Выберите тип бонуса: звёзды или деньги.")
+                bonus_percent = nonnegative_int(body.get("starBonusPercent", settings.get("starBonusPercent", 10)), "starBonusPercent", 100)
+                if not bonus_percent:
+                    raise ValueError("Укажите бонус от 1 до 100 %.")
+                settings["starBonusType"] = bonus_type
+                settings["starBonusPercent"] = bonus_percent
+            buyer_gift_stars = nonnegative_int(body.get("buyerGiftStars", settings.get("buyerGiftStars", 0)), "buyerGiftStars", 100_000)
+            buyer_message = str(body.get("buyerPurchaseMessage", settings.get("buyerPurchaseMessage", ""))).strip()
+            if len(buyer_message) > 500:
+                raise ValueError("Сообщение покупателю должно быть не длиннее 500 символов.")
+            settings["buyerGiftStars"] = buyer_gift_stars
+            settings["buyerPurchaseMessage"] = buyer_message
+        elif chat["type"] in {"group", "community"} and "inviteLinkEnabled" in body:
+            settings["inviteLinkEnabled"] = bool(body["inviteLinkEnabled"])
+        con.execute("UPDATE chats SET title = ?, description = ?, avatar_data = ?, settings_json = ?, updated_at = ? WHERE id = ?", (title, description, avatar or None, dumps(settings), now(), chat_id))
+        return self.json({"ok": True})
+
+    def update_chat_member_role(self, con, user, body):
+        chat_id, user_id = body.get("chatId"), body.get("userId")
+        role = str(body.get("role", ""))
+        chat = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] not in {"group", "community", "channel"}:
+            raise ValueError("Роли доступны только в группе, беседе или канале.")
+        if chat["owner_id"] != user["id"]:
+            raise PermissionError("Назначать администраторов может только создатель беседы.")
+        if user_id == chat["owner_id"]:
+            raise ValueError("Нельзя изменить роль создателя беседы.")
+        allowed_roles = {"member", "admin"}
+        if role not in allowed_roles:
+            raise ValueError("Выберите допустимую роль участника.")
+        if not con.execute("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user_id)).fetchone():
+            raise ValueError("Пользователь не состоит в беседе.")
+        con.execute("UPDATE chat_members SET role = ? WHERE chat_id = ? AND user_id = ?", (role, chat_id, user_id))
+        return self.json({"ok": True})
+
+    def remove_chat_member(self, con, user, body):
+        chat_id, user_id = body.get("chatId"), body.get("userId")
+        chat = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] not in {"group", "community", "channel"}:
+            raise ValueError("Удалять участников можно только из группы, беседы или канала.")
+        actor_role = self.chat_member_role(con, chat_id, user["id"])
+        target_role = self.chat_member_role(con, chat_id, user_id)
+        if actor_role not in ({"owner", "admin", "author"} if chat["type"] == "channel" else {"owner", "admin"}):
+            raise PermissionError("Удалять участников могут только создатель и администраторы.")
+        if not target_role:
+            raise ValueError("Пользователь не состоит в беседе.")
+        if user_id == chat["owner_id"]:
+            raise PermissionError("Нельзя удалить создателя беседы.")
+        if actor_role in {"admin", "author"} and target_role != "member":
+            raise PermissionError("Администратор может удалить только обычного участника.")
+        con.execute("DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+        con.execute("DELETE FROM pinned_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user_id))
+        con.execute("UPDATE chats SET subscriber_count = (SELECT count(*) FROM chat_members WHERE chat_id = ?), updated_at = ? WHERE id = ?", (chat_id, now(), chat_id))
+        return self.json({"ok": True})
+
+    def leave_chat(self, con, user, chat_id):
+        chat = con.execute("SELECT id, type, owner_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] not in {"group", "community", "channel"}:
+            raise ValueError("Выйти можно только из группы, беседы или канала.")
+        if not con.execute("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"])).fetchone():
+            raise PermissionError("Вы не состоите в этой беседе.")
+        con.execute("DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"]))
+        if chat["owner_id"] == user["id"]:
+            next_owner = con.execute(
+                "SELECT user_id FROM chat_members WHERE chat_id = ? ORDER BY created_at, user_id LIMIT 1", (chat_id,)
+            ).fetchone()
+            if next_owner:
+                con.execute("UPDATE chats SET owner_id = ? WHERE id = ?", (next_owner["user_id"], chat_id))
+                con.execute("UPDATE chat_members SET role = 'owner' WHERE chat_id = ? AND user_id = ?", (chat_id, next_owner["user_id"]))
+            else:
+                con.execute("UPDATE chats SET owner_id = NULL WHERE id = ?", (chat_id,))
+        con.execute("DELETE FROM pinned_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"]))
+        con.execute("UPDATE chats SET subscriber_count = (SELECT count(*) FROM chat_members WHERE chat_id = ?), updated_at = ? WHERE id = ?", (chat_id, now(), chat_id))
+        return self.json({"ok": True})
+
+    def toggle_chat_pin(self, con, user, chat_id):
+        if not chat_id or not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        pinned = con.execute("SELECT 1 FROM pinned_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"])).fetchone()
+        if pinned:
+            con.execute("DELETE FROM pinned_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"]))
+        else:
+            con.execute("INSERT INTO pinned_chats(chat_id,user_id,pinned_at) VALUES (?,?,?)", (chat_id, user["id"], now()))
+        return self.json({"ok": True, "pinned": not bool(pinned)})
+
+    def toggle_chat_archive(self, con, user, chat_id, archived):
+        if not chat_id or not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        if archived:
+            con.execute("INSERT OR REPLACE INTO archived_chats(chat_id,user_id,archived_at) VALUES (?,?,?)", (chat_id, user["id"], now()))
+            con.execute("DELETE FROM pinned_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"]))
+        else:
+            con.execute("DELETE FROM archived_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"]))
+        return self.json({"ok": True, "archived": bool(archived)})
+
+    def delete_chat(self, con, user, chat_id, scope):
+        chat = con.execute("SELECT id, owner_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        if scope == "me":
+            con.execute("INSERT OR IGNORE INTO hidden_chats(chat_id,user_id,created_at) VALUES (?,?,?)", (chat_id, user["id"], now()))
+            con.execute("DELETE FROM archived_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"]))
+            con.execute("DELETE FROM pinned_chats WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"]))
+            return self.json({"ok": True})
+        if scope == "everyone":
+            if chat["owner_id"] != user["id"]:
+                raise PermissionError("Удалить диалог у всех может только его создатель.")
+            con.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
+            return self.json({"ok": True})
+        raise ValueError("Неизвестный вариант удаления.")
+
+    def prepare_message_media_upload(self, con, user, body):
+        if not s3_is_configured():
+            raise ValueError("Загрузка больших файлов скоро будет доступна. Повторите попытку через несколько минут.")
+        chat_id = str(body.get("chatId", "")).strip()
+        media_type = str(body.get("mediaType", "")).strip()
+        file_name = str(body.get("fileName", "")).strip()[:240]
+        content_type = str(body.get("contentType", "")).strip().lower().split(";", 1)[0]
+        try:
+            size_bytes = int(body.get("sizeBytes", 0) or 0)
+        except (TypeError, ValueError):
+            size_bytes = 0
+        allowed_content_types = {
+            "photo": {"image/png", "image/jpeg", "image/webp"},
+            "video": {"video/mp4", "video/webm", "video/quicktime"},
+            "document": {
+                "application/pdf", "text/plain", "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            },
+        }
+        if media_type not in allowed_content_types or content_type not in allowed_content_types[media_type]:
+            raise ValueError("Этот тип файла не поддерживается.")
+        if not 0 < size_bytes <= 25_000_000:
+            raise ValueError("Размер вложения не должен превышать 25 МБ.")
+        if media_type == "document" and not file_name:
+            raise ValueError("Не удалось определить имя документа.")
+        if not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat:
+            raise ValueError("Чат не найден.")
+        if chat["type"] == "channel" and self.chat_member_role(con, chat_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Публиковать в канале могут только создатель и назначенные администраторы.")
+        extension = mimetypes.guess_extension(content_type, strict=False) or ""
+        if content_type == "video/quicktime":
+            extension = ".mov"
+        key = f"messages/{chat_id}/{uid('media')}{extension}"
+        expires_at = now() + 900
+        con.execute("DELETE FROM media_uploads WHERE expires_at < ?", (now(),))
+        con.execute(
+            "INSERT INTO media_uploads(key,user_id,chat_id,media_type,file_name,content_type,size_bytes,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (key, user["id"], chat_id, media_type, file_name, content_type, size_bytes, expires_at, now()),
+        )
+        upload_url, upload_headers = s3_presigned_url("PUT", key, expires_in=900, content_type=content_type)
+        return self.json({"ok": True, "mediaKey": key, "uploadUrl": upload_url, "uploadHeaders": upload_headers, "expiresAt": expires_at})
+
+    def add_message(self, con, user, body):
+        chat_id = body.get("chatId")
+        text = str(body.get("text", "")).strip()
+        media_type = str(body.get("mediaType", "")).strip() or None
+        media_data = str(body.get("mediaData", "")) or None
+        media_key = str(body.get("mediaKey", "")).strip()
+        raw_voice_waveform = body.get("voiceWaveform", [])
+        profile_user_id = str(body.get("profileUserId", "")).strip() or None
+        file_name = str(body.get("fileName", "")).strip()[:240]
+        reply_to_id = str(body.get("replyToId", "")).strip() or None
+        allowed_media = {None, "photo", "video", "voice", "circle", "document"}
+        if media_type not in allowed_media:
+            raise ValueError("Этот тип вложения не поддерживается.")
+        if not isinstance(raw_voice_waveform, list):
+            raise ValueError("Некорректные данные голосового сообщения.")
+        voice_waveform = [max(0, min(100, int(value))) for value in raw_voice_waveform[:64] if isinstance(value, (int, float))] if media_type == "voice" else []
+        if not text and not media_data and not media_key and not profile_user_id:
+            raise ValueError("Введите сообщение или прикрепите файл.")
+        if profile_user_id and not con.execute("SELECT 1 FROM users WHERE id = ?", (profile_user_id,)).fetchone():
+            raise ValueError("Профиль для отправки не найден.")
+        if media_data:
+            expected = {"photo": "data:image/", "video": "data:video/", "voice": "data:audio/", "circle": "data:video/", "document": "data:"}.get(media_type)
+            if not expected or not media_data.startswith(expected) or len(media_data) > 5_000_000:
+                raise ValueError("Файл слишком большой или неподходящего типа.")
+            if media_type == "document" and not file_name:
+                raise ValueError("Не удалось определить имя документа.")
+            if media_type == "document" and not media_data.startswith(("data:application/pdf;", "data:text/plain;", "data:application/msword;", "data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;")):
+                raise ValueError("Можно прикрепить PDF, TXT, DOC или DOCX.")
+        if not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        chat = con.execute("SELECT type, owner_id, settings_json FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if chat and chat["type"] == "channel" and self.chat_member_role(con, chat_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Публиковать в канале могут только создатель и назначенные администраторы.")
+        if reply_to_id and not con.execute("SELECT 1 FROM messages WHERE id = ? AND chat_id = ?", (reply_to_id, chat_id)).fetchone():
+            raise ValueError("Сообщение для ответа не найдено.")
+        if chat and chat["type"] == "channel":
+            self.enforce_post_limit(con, user["id"])
+        self.enforce_message_limit(con, user["id"])
+        msg_id = uid("msg")
+        if media_key:
+            if media_data:
+                raise ValueError("Передайте либо файл, либо ключ S3, но не оба сразу.")
+            upload = con.execute(
+                "SELECT * FROM media_uploads WHERE key = ? AND user_id = ? AND chat_id = ? AND expires_at >= ?",
+                (media_key, user["id"], chat_id, now()),
+            ).fetchone()
+            if not upload or upload["media_type"] != media_type:
+                raise ValueError("Ссылка на загрузку недействительна. Выберите файл ещё раз.")
+            actual_size, actual_content_type = s3_object_metadata(media_key)
+            if actual_size != upload["size_bytes"] or actual_content_type != upload["content_type"]:
+                raise ValueError("Загруженный файл не прошёл проверку.")
+            media_data = f"s3:{media_key}"
+            file_name = upload["file_name"] or file_name
+            con.execute("DELETE FROM media_uploads WHERE key = ?", (media_key,))
+        stored_text = f"Документ: {file_name}" if media_type == "document" and not text else text
+        con.execute("INSERT INTO messages(id,chat_id,sender_id,profile_user_id,text,media_type,media_data,voice_waveform_json,views,reply_to_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (msg_id, chat_id, user["id"], profile_user_id, stored_text, media_type, media_data, dumps(voice_waveform), 1, reply_to_id, now()))
+        con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), chat_id))
+        if chat and chat["type"] == "channel":
+            schedule_automated_comments(con, msg_id, chat_id)
+        if chat and chat["type"] == "channel":
+            link = con.execute("SELECT target_chat_id FROM channel_links WHERE channel_id = ?", (chat_id,)).fetchone()
+            if link:
+                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)", (uid("msg"), link["target_chat_id"], user["id"], text, media_type, media_data, 1, chat["title"], now()))
+                con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), link["target_chat_id"]))
+        with chat_activities_lock:
+            chat_activities.pop((chat_id, user["id"]), None)
+        return self.json({"ok": True, "messageId": msg_id})
+
+    def ai_agent_settings(self, con, user_id):
+        row = con.execute("SELECT * FROM ai_agent_settings WHERE user_id = ?", (user_id,)).fetchone()
+        channel_rule = con.execute("SELECT * FROM ai_agent_channel_rules WHERE user_id = ?", (user_id,)).fetchone()
+        channel_data = {
+            "enabled": bool(channel_rule["enabled"]) if channel_rule else False,
+            "targetChannelId": channel_rule["target_channel_id"] if channel_rule else "",
+            "sourceChannelIds": loads(channel_rule["source_channel_ids_json"], []) if channel_rule else [],
+        }
+        if not row:
+            return {"instruction": "", "style": "friendly", "autopilotEnabled": False, "allowedChatIds": [], "templateMessageIds": [], "channelRule": channel_data}
+        return {
+            "instruction": row["instruction"],
+            "style": row["style"],
+            "autopilotEnabled": bool(row["autopilot_enabled"]),
+            "allowedChatIds": loads(row["allowed_chat_ids_json"], []),
+            "templateMessageIds": loads(row["template_message_ids_json"], []),
+            "channelRule": channel_data,
+        }
+
+    def require_pro_account_level(self, con, user_id):
+        data = self.account_level_data(con, user_id)
+        pro_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == "pro"), None)
+        current_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == data["current"]["id"]), -1)
+        if pro_index is None or current_index < pro_index:
+            raise ValueError("Автопилот ИИ-агента доступен с уровня «Профи». Повысьте уровень аккаунта.")
+
+    def update_ai_agent_settings(self, con, user, body):
+        instruction = " ".join(str(body.get("instruction", "")).split())[:3_000]
+        style = str(body.get("style", "friendly"))
+        if style not in {"friendly", "business", "brief"}:
+            raise ValueError("Неизвестный стиль ИИ-агента.")
+        allowed_chat_ids = body.get("allowedChatIds", [])
+        template_message_ids = body.get("templateMessageIds", [])
+        if not isinstance(allowed_chat_ids, list) or not isinstance(template_message_ids, list):
+            raise ValueError("Некорректные настройки ИИ-агента.")
+        allowed_chat_ids = list(dict.fromkeys(str(value) for value in allowed_chat_ids if isinstance(value, str)))[:50]
+        template_message_ids = list(dict.fromkeys(str(value) for value in template_message_ids if isinstance(value, str)))[:30]
+        for chat_id in allowed_chat_ids:
+            chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+            if not chat or chat["type"] != "direct" or not self.has_chat_access(con, user["id"], chat_id):
+                raise ValueError("В автопилоте можно использовать только доступные личные диалоги.")
+        saved = con.execute("SELECT c.id FROM chats c JOIN chat_members m ON m.chat_id = c.id WHERE c.type = 'saved' AND m.user_id = ?", (user["id"],)).fetchone()
+        if template_message_ids and not saved:
+            raise ValueError("Не найден чат «Избранное».")
+        for message_id in template_message_ids:
+            template = con.execute("SELECT sender_id, chat_id, media_type FROM messages WHERE id = ?", (message_id,)).fetchone()
+            if not template or template["sender_id"] != user["id"] or template["chat_id"] != saved["id"]:
+                raise ValueError("Шаблоны можно выбирать только из собственных сообщений в «Избранном».")
+        autopilot_enabled = bool(body.get("autopilotEnabled", False))
+        if autopilot_enabled:
+            if not allowed_chat_ids:
+                raise ValueError("Для автопилота выберите хотя бы один личный диалог.")
+        con.execute(
+            """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET instruction=excluded.instruction, style=excluded.style, autopilot_enabled=excluded.autopilot_enabled, allowed_chat_ids_json=excluded.allowed_chat_ids_json, template_message_ids_json=excluded.template_message_ids_json, updated_at=excluded.updated_at""",
+            (user["id"], instruction, style, int(autopilot_enabled), dumps(allowed_chat_ids), dumps(template_message_ids), now()),
+        )
+        return self.json({"ok": True})
+
+    def ai_agent_private_search(self, con, user, query):
+        text = " ".join((query.get("q", [""])[0] or "").split())
+        if len(text) < 2:
+            raise ValueError("Введите не менее двух символов для поиска.")
+        if len(text) > 120:
+            raise ValueError("Поисковый запрос не должен быть длиннее 120 символов.")
+        rows = con.execute(
+            """SELECT m.id, m.chat_id, m.text, m.media_type, m.created_at, c.title AS chat_title
+               FROM messages m JOIN chats c ON c.id = m.chat_id
+               WHERE c.type = 'direct' AND m.deleted_by_admin = 0
+                 AND m.text IS NOT NULL AND trim(m.text) != '' AND casefold(m.text) LIKE ?
+                 AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)
+                 AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
+               ORDER BY m.created_at DESC LIMIT 50""",
+            (f"%{text.casefold()}%", user["id"], user["id"]),
+        ).fetchall()
+        return self.json({"ok": True, "messages": [dict(row) for row in rows]})
+
+    def update_ai_agent_channel_rule(self, con, user, body):
+        target_channel_id = str(body.get("targetChannelId", "")).strip()
+        source_channel_ids = body.get("sourceChannelIds", [])
+        if not isinstance(source_channel_ids, list):
+            raise ValueError("Некорректный список каналов-источников.")
+        source_channel_ids = list(dict.fromkeys(str(value) for value in source_channel_ids if isinstance(value, str)))[:30]
+        enabled = bool(body.get("enabled", False))
+        if target_channel_id:
+            target = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (target_channel_id,)).fetchone()
+            if not target or target["type"] != "channel" or target["owner_id"] != user["id"]:
+                raise ValueError("Выберите собственный канал для публикаций.")
+        for channel_id in source_channel_ids:
+            source = con.execute("SELECT type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+            if not source or source["type"] != "channel" or not self.has_chat_access(con, user["id"], channel_id):
+                raise ValueError("Источниками могут быть только доступные вам каналы.")
+            if channel_id == target_channel_id:
+                raise ValueError("Свой канал нельзя выбрать источником.")
+        if enabled and (not target_channel_id or not source_channel_ids):
+            raise ValueError("Выберите свой канал и хотя бы один канал-источник.")
+        con.execute(
+            """INSERT INTO ai_agent_channel_rules(user_id,enabled,target_channel_id,source_channel_ids_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,target_channel_id=excluded.target_channel_id,source_channel_ids_json=excluded.source_channel_ids_json,updated_at=excluded.updated_at""",
+            (user["id"], int(enabled), target_channel_id or None, dumps(source_channel_ids), now(), now()),
+        )
+        if source_channel_ids:
+            placeholders = ",".join("?" for _ in source_channel_ids)
+            con.execute(
+                f"""INSERT OR IGNORE INTO ai_agent_channel_processed_posts(rule_user_id,message_id,processed_at)
+                    SELECT ?, m.id, ? FROM messages m WHERE m.chat_id IN ({placeholders})""",
+                (user["id"], now(), *source_channel_ids),
+            )
+        return self.json({"ok": True})
+
+    def ai_completion(self, system, prompt, max_tokens=260):
+        api_key, base_url, model = genapi_configuration()
+        if not api_key:
+            raise ValueError("ИИ-агент пока не настроен на сервере.")
+        request = urlrequest.Request(
+            f"{base_url}/chat/completions",
+            data=dumps({"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}], "temperature": 0.55, "max_tokens": max_tokens}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}, method="POST",
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=40) as response:
+                payload = loads(response.read().decode("utf-8"), {})
+            text = payload["choices"][0]["message"]["content"]
+            if isinstance(text, list):
+                text = " ".join(str(part.get("text", "")) for part in text if isinstance(part, dict))
+            answer = " ".join(str(text or "").strip().strip('«»"').split())[:1_500]
+            if not answer or answer.casefold() == "none":
+                raise ValueError("ИИ-агент не сформировал ответ. Повторите запрос или сформулируйте его короче.")
+            return answer
+        except (KeyError, IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError("Не удалось получить ответ ИИ-агента. Повторите позже.")
+
+    def ask_ai_agent(self, con, user, body):
+        question = " ".join(str(body.get("question", "")).split())[:2_000]
+        if not question:
+            raise ValueError("Напишите вопрос ИИ-агенту.")
+        action_result = self.ai_agent_run_requested_action(con, user, question)
+        if action_result:
+            return self.json({"ok": True, "answer": action_result})
+        raw_history = body.get("history", [])
+        history = []
+        if isinstance(raw_history, list):
+            for item in raw_history[-10:]:
+                if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+                    continue
+                text = " ".join(str(item.get("text", "")).split())[:1_000]
+                if text:
+                    history.append((item["role"], text))
+        messages = self.ai_agent_messages_for_request(con, user["id"], question)
+        system = "Ты личный ИИ-помощник пользователя Chat-Pro. Помогаешь разобраться с функциями сайта и настройками. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Если найденные сообщения не подходят или запрос неоднозначен, задай короткий уточняющий вопрос: имя собеседника, слова из сообщения или период. Не придумывай найденные сообщения. Пользователь может дать прямую команду отправить сообщение, включить автопилот для личного диалога или настроить ведение собственного канала из доступных каналов-источников; такие команды выполняются сервером. Если команда не содержит получателя, название канала или текст, коротко попроси недостающие данные. Не выдумывай возможности. Отвечай по-русски, ясно и кратко."
+        history_text = "\n".join(f"{'Пользователь' if role == 'user' else 'ИИ-агент'}: {text}" for role, text in history)
+        found_text = "\n".join(f"Диалог «{item['chat_title']}»: {item['text'][:500]}" for item in messages)
+        prompt = f"Предыдущий разговор:\n{history_text or 'нет'}\n\nНовый запрос: {question}\n\nНайденные сервером сообщения:\n{found_text or 'нет'}\n\nОтветь на новый запрос."
+        answer = self.ai_completion(system, prompt, 320)
+        return self.json({"ok": True, "answer": answer, "messages": messages})
+
+    def ai_agent_run_requested_action(self, con, user, question):
+        result = self.ai_agent_publish_latest_saved_circle(con, user, question)
+        if result:
+            return result
+        result = self.ai_agent_publish_requested_message(con, user, question)
+        if result:
+            return result
+        result = self.ai_agent_send_requested_message(con, user, question)
+        if result:
+            return result
+        autopilot = re.match(r"^(?:включи|запусти)\s+(?:в\s+)?автопилот\s+(?:для|в)\s+(?P<recipient>.{2,80})$", question, re.IGNORECASE)
+        if autopilot:
+            chat = self.ai_agent_direct_chat_by_recipient(con, user["id"], autopilot.group("recipient"))
+            settings = self.ai_agent_settings(con, user["id"])
+            allowed = list(dict.fromkeys([*settings["allowedChatIds"], chat["id"]]))[:50]
+            con.execute(
+                """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
+                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET autopilot_enabled=excluded.autopilot_enabled,allowed_chat_ids_json=excluded.allowed_chat_ids_json,updated_at=excluded.updated_at""",
+                (user["id"], settings["instruction"], settings["style"], 1, dumps(allowed), dumps(settings["templateMessageIds"]), now()),
+            )
+            return f"Автопилот включён для личного диалога с {chat['name']}. Агент будет отвечать на новые сообщения в этом чате."
+        channel_rule = re.match(r"^(?:веди|настрой\s+ведение|включи\s+ведение)\s+(?:(?:мой\s+)?канал|канал\s+(?P<target>[^:]+?))\s*(?:из|от)\s+канал(?:а|ов)?\s*:\s*(?P<sources>.+)$", question, re.IGNORECASE)
+        if channel_rule:
+            target = self.ai_agent_owned_channel(con, user["id"], channel_rule.group("target"))
+            source_names = [item.strip() for item in channel_rule.group("sources").split(",") if item.strip()]
+            if not source_names:
+                raise ValueError("После двоеточия укажите хотя бы один канал-источник.")
+            sources = [self.ai_agent_channel_by_title(con, user["id"], name) for name in source_names[:30]]
+            source_ids = list(dict.fromkeys(item["id"] for item in sources))
+            if target["id"] in source_ids:
+                raise ValueError("Свой канал нельзя выбрать источником.")
+            con.execute(
+                """INSERT INTO ai_agent_channel_rules(user_id,enabled,target_channel_id,source_channel_ids_json,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,target_channel_id=excluded.target_channel_id,source_channel_ids_json=excluded.source_channel_ids_json,updated_at=excluded.updated_at""",
+                (user["id"], 1, target["id"], dumps(source_ids), now(), now()),
+            )
+            return f"Ведение канала «{target['title']}» включено. Новые публикации из выбранных каналов будут автоматически публиковаться в нём."
+        return None
+
+    def ai_agent_publish_latest_saved_circle(self, con, user, question):
+        normalized = " ".join(question.casefold().replace("ё", "е").split())
+        if not re.search(r"\b(опубликуй|опубликовать|размести|выложи|отправь|перешли|скопируй|сделай)\b", normalized):
+            return None
+        if not re.search(r"\b(?:видео)?круж\w*\b", normalized) or "избран" not in normalized:
+            return None
+        channel = self.ai_agent_owned_channel_from_request(con, user["id"], normalized)
+        saved_circle = con.execute(
+            """SELECT m.text, m.media_type, m.media_data, m.voice_waveform_json
+               FROM messages m JOIN chats c ON c.id = m.chat_id
+               JOIN chat_members member ON member.chat_id = c.id AND member.user_id = ?
+               WHERE c.type = 'saved' AND m.sender_id = ? AND m.media_type = 'circle'
+                 AND m.deleted_by_admin = 0 AND m.media_data IS NOT NULL
+               ORDER BY m.created_at DESC LIMIT 1""",
+            (user["id"], user["id"]),
+        ).fetchone()
+        if not saved_circle:
+            raise ValueError("В «Избранном» не нашёл ни одного видеокружка для публикации.")
+        self.enforce_post_limit(con, user["id"])
+        self.enforce_message_limit(con, user["id"])
+        message_id = uid("msg")
+        con.execute(
+            """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,voice_waveform_json,views,source_type,ai_agent,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (message_id, channel["id"], user["id"], saved_circle["text"], "circle", saved_circle["media_data"], saved_circle["voice_waveform_json"], 1, "ai_agent_saved_circle", 1, now()),
+        )
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), channel["id"]))
+        schedule_automated_comments(con, message_id, channel["id"])
+        return f"Опубликовал последний видеокружок из «Избранного» в канале «{channel['title']}»."
+
+    def ai_agent_publish_requested_message(self, con, user, question):
+        request = re.match(r"^(?:опубликуй|опубликовать|размести|выложи|отправь|напиши|сделай\s+пост)\s+(?:в\s+)?(?:(?:мой\s+)?канал|канал\s+(?P<target>[^:]+))\s*:\s*(?P<text>.+)$", question, re.IGNORECASE)
+        if not request:
+            return None
+        channel = self.ai_agent_owned_channel(con, user["id"], request.group("target"))
+        text = " ".join(request.group("text").split())[:2_000]
+        if not text:
+            raise ValueError("После двоеточия напишите текст публикации.")
+        self.enforce_post_limit(con, user["id"])
+        self.enforce_message_limit(con, user["id"])
+        message_id = uid("msg")
+        con.execute(
+            "INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)",
+            (message_id, channel["id"], user["id"], f"🤖 Помощник: {text}", 1, 1, now()),
+        )
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), channel["id"]))
+        schedule_automated_comments(con, message_id, channel["id"])
+        return f"Опубликовал в канале «{channel['title']}»."
+
+    def ai_agent_owned_channel(self, con, user_id, title=None):
+        normalized_title = " ".join(str(title or "").split())
+        if normalized_title:
+            return self.ai_agent_channel_by_title(con, user_id, normalized_title, own=True)
+        rows = con.execute("SELECT id, title FROM chats WHERE type = 'channel' AND owner_id = ? ORDER BY updated_at DESC", (user_id,)).fetchall()
+        if not rows:
+            raise ValueError("У вас пока нет собственного канала для публикации.")
+        if len(rows) > 1:
+            raise ValueError("У вас несколько собственных каналов. Укажите название: «Опубликуй в канал Название: текст».")
+        return rows[0]
+
+    def ai_agent_owned_channel_from_request(self, con, user_id, request):
+        rows = con.execute("SELECT id, title FROM chats WHERE type = 'channel' AND owner_id = ? ORDER BY updated_at DESC", (user_id,)).fetchall()
+        if not rows:
+            raise ValueError("У вас пока нет собственного канала для публикации.")
+        matches = [row for row in rows if row["title"].casefold() in request]
+        if len(matches) == 1:
+            return matches[0]
+        if len(rows) == 1:
+            return rows[0]
+        names = ", ".join(f"«{row['title']}»" for row in rows[:5])
+        raise ValueError(f"Не понял, в какой из ваших каналов отправить кружок. Укажите название канала в запросе: {names}.")
+
+    def ai_agent_direct_chat_by_recipient(self, con, user_id, recipient):
+        recipient_key = " ".join(str(recipient).replace("@", "").split()).casefold()
+        chats = con.execute(
+            """SELECT c.id, u.name, u.username FROM chats c JOIN chat_members mine ON mine.chat_id = c.id AND mine.user_id = ?
+               JOIN chat_members peer ON peer.chat_id = c.id AND peer.user_id != ? JOIN users u ON u.id = peer.user_id
+               WHERE c.type = 'direct' AND (casefold(u.name) = ? OR casefold(u.username) = ?) ORDER BY c.updated_at DESC""",
+            (user_id, user_id, recipient_key, recipient_key),
+        ).fetchall()
+        unique_chats = {row["id"]: row for row in chats}
+        if not unique_chats:
+            raise ValueError(f"Не нашёл доступный личный диалог с «{recipient}». Укажите точное имя или @username.")
+        if len(unique_chats) > 1:
+            raise ValueError(f"Нашёл несколько личных диалогов с «{recipient}». Укажите точный @username.")
+        return next(iter(unique_chats.values()))
+
+    def ai_agent_channel_by_title(self, con, user_id, title, own=False):
+        title_key = " ".join(str(title).split()).casefold()
+        rows = con.execute(
+            """SELECT c.id, c.title FROM chats c JOIN chat_members member ON member.chat_id = c.id AND member.user_id = ?
+               WHERE c.type = 'channel' AND casefold(c.title) = ?""" + (" AND c.owner_id = ?" if own else ""),
+            (user_id, title_key, user_id) if own else (user_id, title_key),
+        ).fetchall()
+        if not rows:
+            raise ValueError(f"Не нашёл {'ваш' if own else 'доступный'} канал «{title}». Укажите точное название.")
+        if len(rows) > 1:
+            raise ValueError(f"Нашёл несколько каналов «{title}». Переименуйте один из них или используйте уникальное название.")
+        return rows[0]
+
+    def control_ai_agent(self, con, user, body):
+        enabled = bool(body.get("enabled", False))
+        settings = self.ai_agent_settings(con, user["id"])
+        allowed_chat_ids = settings["allowedChatIds"]
+        channel_rule = settings["channelRule"]
+        autopilot_enabled = enabled and bool(allowed_chat_ids)
+        channel_enabled = enabled and bool(channel_rule["targetChannelId"] and channel_rule["sourceChannelIds"])
+        con.execute(
+            """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
+               VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET autopilot_enabled=excluded.autopilot_enabled,updated_at=excluded.updated_at""",
+            (user["id"], settings["instruction"], settings["style"], int(autopilot_enabled), dumps(allowed_chat_ids), dumps(settings["templateMessageIds"]), now()),
+        )
+        if channel_rule["targetChannelId"] or channel_rule["sourceChannelIds"]:
+            con.execute(
+                """INSERT INTO ai_agent_channel_rules(user_id,enabled,target_channel_id,source_channel_ids_json,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at""",
+                (user["id"], int(channel_enabled), channel_rule["targetChannelId"] or None, dumps(channel_rule["sourceChannelIds"]), now(), now()),
+            )
+        if enabled and not autopilot_enabled and not channel_enabled:
+            raise ValueError("Сначала включите автопилот для диалога или настройте ведение канала через запрос агенту.")
+        return self.json({"ok": True, "running": bool(autopilot_enabled or channel_enabled)})
+
+    def ai_agent_send_requested_message(self, con, user, question):
+        request = re.match(r"^(?:напиши|отправь|передай)\s+(?:сообщение\s+)?(?P<recipient>[^:]{2,80})\s*:\s*(?P<text>.+)$", question, re.IGNORECASE)
+        if not request:
+            return None
+        recipient = " ".join(request.group("recipient").replace("@", "").split())
+        text = " ".join(request.group("text").split())[:2_000]
+        if not text:
+            raise ValueError("После двоеточия напишите текст сообщения.")
+        recipient_key = recipient.casefold()
+        chats = con.execute(
+            """SELECT c.id, u.name, u.username FROM chats c
+               JOIN chat_members mine ON mine.chat_id = c.id AND mine.user_id = ?
+               JOIN chat_members peer ON peer.chat_id = c.id AND peer.user_id != ?
+               JOIN users u ON u.id = peer.user_id
+               WHERE c.type = 'direct' AND (casefold(u.name) = ? OR casefold(u.username) = ?)
+               ORDER BY c.updated_at DESC""",
+            (user["id"], user["id"], recipient_key, recipient_key),
+        ).fetchall()
+        unique_chats = {row["id"]: row for row in chats}
+        if not unique_chats:
+            raise ValueError(f"Не нашёл доступный личный диалог с «{recipient}». Укажите точное имя или @username после команды.")
+        if len(unique_chats) > 1:
+            raise ValueError(f"Нашёл несколько личных диалогов с «{recipient}». Укажите точный @username получателя.")
+        self.enforce_message_limit(con, user["id"])
+        chat = next(iter(unique_chats.values()))
+        con.execute(
+            "INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)",
+            (uid("msg"), chat["id"], user["id"], f"🤖 Помощник: {text}", 1, 1, now()),
+        )
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), chat["id"]))
+        return f"Отправил сообщение пользователю {chat['name']} от вашего имени."
+
+    def ai_agent_messages_for_request(self, con, user_id, question):
+        if not re.search(r"\b(найд|ищ|поиск|покаж|пришл|отправ|сообщени|диалог|переписк)\w*", question, re.IGNORECASE):
+            return []
+        ignored = {"найди", "найти", "покажи", "пришли", "отправь", "сообщение", "сообщения", "сообщений", "диалог", "диалоге", "переписке", "личных", "личной", "чат", "чате", "мне", "где", "которое", "которые", "про", "или", "что", "это", "вот", "было", "был", "была", "есть", "из", "для", "с", "по", "и", "а", "у"}
+        terms = [word.casefold() for word in re.findall(r"[\wёЁ-]{3,}", question) if word.casefold() not in ignored][:6]
+        if not terms:
+            return []
+        conditions = " AND ".join("(casefold(m.text) LIKE ? OR casefold(c.title) LIKE ?)" for _ in terms)
+        params = [value for term in terms for value in (f"%{term}%", f"%{term}%")]
+        rows = con.execute(
+            f"""SELECT m.id, m.chat_id, m.text, m.created_at, c.title AS chat_title
+                FROM messages m JOIN chats c ON c.id = m.chat_id
+                WHERE c.type = 'direct' AND m.deleted_by_admin = 0 AND trim(m.text) != ''
+                  AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)
+                  AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
+                  AND {conditions}
+                ORDER BY m.created_at DESC LIMIT 10""",
+            (user_id, user_id, *params),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def draft_ai_agent_reply(self, con, user, body):
+        chat_id = str(body.get("chatId", ""))
+        chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] != "direct" or not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        settings = self.ai_agent_settings(con, user["id"])
+        recent = con.execute("SELECT sender_id,text FROM messages WHERE chat_id = ? ORDER BY created_at DESC LIMIT 8", (chat_id,)).fetchall()
+        if not recent:
+            raise ValueError("В диалоге пока нет сообщений для подготовки ответа.")
+        context = "\n".join(f"{'Пользователь' if item['sender_id'] == user['id'] else 'Собеседник'}: {item['text'][:500]}" for item in reversed(recent))
+        system = "Ты создаёшь черновик ответа для владельца аккаунта в личном диалоге. Не рекламируй Chat-Pro, его уровни или подписки. Не утверждай, что являешься человеком. Не добавляй пометку об ИИ: её добавит интерфейс. Не обещай то, чего нет в инструкции."
+        prompt = f"Инструкция владельца: {settings['instruction'] or 'Вежливо помогай собеседнику.'}\nСтиль: {settings['style']}\n\nДиалог:\n{context}\n\nВерни только один короткий ответ на последнее сообщение собеседника."
+        return self.json({"ok": True, "draft": self.ai_completion(system, prompt, 220)})
+
+    def process_ai_agent_autopilots(self, con):
+        rows = []
+        for settings in con.execute("SELECT * FROM ai_agent_settings WHERE autopilot_enabled = 1").fetchall():
+            allowed_chat_ids = loads(settings["allowed_chat_ids_json"], [])
+            if not isinstance(allowed_chat_ids, list):
+                continue
+            allowed_chat_ids = [str(chat_id) for chat_id in allowed_chat_ids[:50] if isinstance(chat_id, str)]
+            if not allowed_chat_ids:
+                continue
+            placeholders = ",".join("?" for _ in allowed_chat_ids)
+            rows.extend(con.execute(
+                f"""SELECT ? AS user_id, ? AS instruction, ? AS style, ? AS template_message_ids_json,
+                           ? AS allowed_chat_ids_json, m.id AS message_id, m.chat_id, m.sender_id, m.text, m.created_at
+                    FROM messages m JOIN chats c ON c.id = m.chat_id
+                    WHERE m.chat_id IN ({placeholders}) AND c.type = 'direct' AND m.sender_id != ?
+                      AND m.ai_agent = 0 AND NOT EXISTS(SELECT 1 FROM ai_agent_processed_messages p WHERE p.message_id = m.id)
+                    ORDER BY m.created_at ASC LIMIT 10""",
+                (settings["user_id"], settings["instruction"], settings["style"], settings["template_message_ids_json"], settings["allowed_chat_ids_json"], *allowed_chat_ids, settings["user_id"]),
+            ).fetchall())
+        rows.sort(key=lambda row: row["created_at"])
+        for row in rows:
+            con.execute("INSERT OR IGNORE INTO ai_agent_processed_messages(message_id,processed_at) VALUES (?,?)", (row["message_id"], now()))
+            owner_id = row["user_id"]
+            try:
+                text = " ".join(str(row["text"] or "").split())
+                if not text or re.search(r"\b(оператор|человек|стоп|не пишите|отключи)\b", text, re.IGNORECASE):
+                    continue
+                sent_today = con.execute("SELECT COUNT(*) AS total FROM messages WHERE sender_id = ? AND ai_agent = 1 AND created_at >= ?", (owner_id, now() - 86400)).fetchone()["total"]
+                if sent_today >= 40:
+                    continue
+                recent = con.execute("SELECT sender_id,text FROM messages WHERE chat_id = ? ORDER BY created_at DESC LIMIT 8", (row["chat_id"],)).fetchall()
+                context = "\n".join(f"{'Владелец' if item['sender_id'] == owner_id else 'Собеседник'}: {item['text'][:500]}" for item in reversed(recent))
+                template_ids = loads(row["template_message_ids_json"], [])
+                templates = [item["text"] for item in con.execute(f"SELECT text FROM messages WHERE id IN ({','.join('?' for _ in template_ids)})", template_ids).fetchall()] if template_ids else []
+                system = "Ты рабочий ИИ-помощник в личном диалоге. Создаёшь безопасный короткий ответ по инструкции владельца. Никогда не рекламируй Chat-Pro, его подписки, уровни или функции. Не выдавай себя за человека. Не обещай невозможное."
+                prompt = f"Инструкция владельца: {row['instruction'] or 'Вежливо ответь по теме.'}\nСтиль: {row['style']}\nРазрешённые текстовые шаблоны: {' | '.join(templates[:5]) or 'нет'}\n\nДиалог:\n{context}\n\nВерни только один ответ на последнее сообщение собеседника."
+                with chat_activities_lock:
+                    chat_activities[(row["chat_id"], owner_id)] = ("typing", time.monotonic() + CHAT_ACTIVITY_TTL)
+                reply = self.ai_completion(system, prompt, 220)
+                if len(reply) < 2:
+                    continue
+                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), row["chat_id"], owner_id, f"🤖 Помощник: {reply}", 1, 1, now()))
+                con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), row["chat_id"]))
+            except Exception:
+                continue
+            finally:
+                with chat_activities_lock:
+                    chat_activities.pop((row["chat_id"], owner_id), None)
+
+    def process_ai_agent_channel_rules(self, con):
+        for rule in con.execute("SELECT * FROM ai_agent_channel_rules WHERE enabled = 1").fetchall():
+            source_ids = loads(rule["source_channel_ids_json"], [])
+            if not isinstance(source_ids, list) or not source_ids or not rule["target_channel_id"]:
+                continue
+            source_ids = [str(item) for item in source_ids[:30] if isinstance(item, str)]
+            target = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (rule["target_channel_id"],)).fetchone()
+            if not target or target["type"] != "channel" or target["owner_id"] != rule["user_id"]:
+                continue
+            placeholders = ",".join("?" for _ in source_ids)
+            posts = con.execute(
+                f"""SELECT m.*, c.title AS source_title FROM messages m JOIN chats c ON c.id = m.chat_id
+                    WHERE m.chat_id IN ({placeholders}) AND c.type = 'channel' AND m.deleted_by_admin = 0
+                      AND NOT EXISTS(SELECT 1 FROM ai_agent_channel_processed_posts p WHERE p.rule_user_id = ? AND p.message_id = m.id)
+                    ORDER BY m.created_at ASC LIMIT 10""",
+                (*source_ids, rule["user_id"]),
+            ).fetchall()
+            for post in posts:
+                con.execute("INSERT OR IGNORE INTO ai_agent_channel_processed_posts(rule_user_id,message_id,processed_at) VALUES (?,?,?)", (rule["user_id"], post["id"], now()))
+                if not self.has_chat_access(con, rule["user_id"], post["chat_id"]):
+                    continue
+                con.execute(
+                    "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,voice_waveform_json,views,forwarded_from,forwarded_from_user_id,source_type,source_id,ai_agent,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (uid("msg"), rule["target_channel_id"], rule["user_id"], post["text"], post["media_type"], post["media_data"], post["voice_waveform_json"], 1, post["source_title"], post["sender_id"], "ai_agent_repost", post["id"], 1, now()),
+                )
+                con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), rule["target_channel_id"]))
+
+    def update_chat_activity(self, con, user, body):
+        chat_id = str(body.get("chatId", "")).strip()
+        activity = str(body.get("activity", "")).strip()
+        if activity not in {"typing", "recording", "sending", ""}:
+            raise ValueError("Неизвестный статус активности.")
+        chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] != "direct" or not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        key = (chat_id, user["id"])
+        with chat_activities_lock:
+            if activity:
+                chat_activities[key] = (activity, time.monotonic() + CHAT_ACTIVITY_TTL)
+            else:
+                chat_activities.pop(key, None)
+        return self.json({"ok": True})
+
+    def schedule_channel_post(self, con, user, body):
+        chat_id = str(body.get("chatId", ""))
+        publish_at = int(body.get("publishAt", 0) or 0)
+        text = str(body.get("text", "")).strip()
+        media_type = str(body.get("mediaType", "")).strip() or None
+        media_data = str(body.get("mediaData", "")) or None
+        chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] != "channel" or self.chat_member_role(con, chat_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Планировать публикации могут только создатель и администраторы канала.")
+        if not text and not media_data:
+            raise ValueError("Пост должен содержать текст или фото.")
+        if publish_at <= now():
+            raise ValueError("Укажите будущие дату и время публикации.")
+        if media_data and (media_type != "photo" or not media_data.startswith("data:image/") or len(media_data) > 5_000_000):
+            raise ValueError("Для отложенного поста доступно фото до 3,5 МБ.")
+        con.execute("INSERT INTO scheduled_posts(id,chat_id,sender_id,text,media_type,media_data,publish_at,created_at) VALUES (?,?,?,?,?,?,?,?)", (uid("scheduled"), chat_id, user["id"], text, media_type, media_data, publish_at, now()))
+        return self.json({"ok": True})
+
+    def update_channel_link(self, con, user, body):
+        channel_id = str(body.get("channelId", ""))
+        target_chat_id = str(body.get("targetChatId", ""))
+        channel = con.execute("SELECT type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+        target = con.execute("SELECT type FROM chats WHERE id = ?", (target_chat_id,)).fetchone() if target_chat_id else None
+        if not channel or channel["type"] != "channel" or self.chat_member_role(con, channel_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Привязать беседу может только создатель или администратор канала.")
+        if not target_chat_id:
+            con.execute("DELETE FROM channel_links WHERE channel_id = ?", (channel_id,))
+            return self.json({"ok": True})
+        if not target or target["type"] not in {"group", "community"} or self.chat_member_role(con, target_chat_id, user["id"]) not in {"owner", "admin"}:
+            raise ValueError("Можно привязать только группу или беседу, которой вы управляете.")
+        con.execute("INSERT OR REPLACE INTO channel_links(channel_id,target_chat_id,created_at) VALUES (?,?,?)", (channel_id, target_chat_id, now()))
+        return self.json({"ok": True})
+
+    def update_telegram_channel_link(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        disconnect = bool(body.get("disconnect"))
+        channel = con.execute("SELECT owner_id, type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+        if not channel or channel["type"] != "channel" or channel["owner_id"] != user["id"]:
+            raise PermissionError("Подключить Telegram может только создатель канала.")
+        if disconnect:
+            con.execute("DELETE FROM telegram_channel_links WHERE channel_id = ?", (channel_id,))
+            return self.json({"ok": True, "connected": False})
+        if not con.execute("SELECT 1 FROM telegram_channel_links WHERE channel_id = ?", (channel_id,)).fetchone():
+            self.enforce_autopost_source_limit(con, user["id"], channel_id)
+        source_ref = str(body.get("sourceChat", "")).strip()
+        bot_token = str(body.get("botToken", "")).strip()
+        if not re.fullmatch(r"@[A-Za-z0-9_]{5,64}|-?\d{5,20}", source_ref):
+            raise ValueError("Укажите @username исходного канала или его числовой ID.")
+        if not re.fullmatch(r"\d{6,12}:[A-Za-z0-9_-]{20,80}", bot_token):
+            raise ValueError("Введите корректный токен Telegram Bot API.")
+        bot = telegram_api(bot_token, "getMe")
+        source_chat = telegram_api(bot_token, "getChat", {"chat_id": source_ref})
+        source_chat_id = str(source_chat.get("id", ""))
+        bot_id = int(bot.get("id", 0) or 0)
+        if not source_chat_id or not bot_id:
+            raise ValueError("Telegram не вернул данные бота или исходного канала.")
+        bot_membership = telegram_api(bot_token, "getChatMember", {"chat_id": source_chat_id, "user_id": bot_id})
+        if str(bot_membership.get("status", "")) not in {"administrator", "creator"}:
+            raise ValueError("Добавьте бота администратором исходного Telegram-канала и повторите попытку.")
+        con.execute(
+            """INSERT INTO telegram_channel_links(channel_id,source_chat_ref,source_chat_id,bot_token,last_update_id,next_poll_at,last_sync_at,last_error,created_by,created_at)
+               VALUES (?,?,?,?,0,0,NULL,NULL,?,?)
+               ON CONFLICT(channel_id) DO UPDATE SET source_chat_ref=excluded.source_chat_ref, source_chat_id=excluded.source_chat_id,
+                   bot_token=excluded.bot_token, last_update_id=0, next_poll_at=0, last_sync_at=NULL, last_error=NULL,
+                   created_by=excluded.created_by, created_at=excluded.created_at""",
+            (channel_id, source_ref.lower() if source_ref.startswith("@") else source_ref, source_chat_id, bot_token, user["id"], now()),
+        )
+        return self.json({"ok": True, "connected": True})
+
+    def update_rss_channel_link(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        source_id = str(body.get("sourceId", "")).strip()
+        channel = con.execute("SELECT owner_id, type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+        if not channel or channel["type"] != "channel" or channel["owner_id"] != user["id"]:
+            raise PermissionError("Подключить RSS может только создатель канала.")
+        if bool(body.get("disconnect")):
+            if not source_id:
+                raise ValueError("Не выбран RSS-источник для отключения.")
+            deleted = con.execute("DELETE FROM rss_channel_sources WHERE id = ? AND channel_id = ?", (source_id, channel_id)).rowcount
+            if not deleted:
+                raise ValueError("RSS-источник не найден.")
+            return self.json({"ok": True, "connected": False})
+        self.enforce_autopost_source_limit(con, user["id"], channel_id)
+        count = con.execute("SELECT count(*) FROM rss_channel_sources WHERE channel_id = ?", (channel_id,)).fetchone()[0]
+        feed_url = validate_rss_url(body.get("feedUrl"))
+        feed_title, entries = fetch_rss_feed(feed_url)
+        current = now()
+        existing = con.execute("SELECT id FROM rss_channel_sources WHERE channel_id = ? AND feed_url = ?", (channel_id, feed_url)).fetchone()
+        if existing:
+            raise ValueError("Этот RSS-источник уже подключён к каналу.")
+        source_id = uid("rss")
+        con.executemany(
+            "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
+            [(source_id, entry["id"], current) for entry in entries],
+        )
+        con.execute(
+            """INSERT INTO rss_channel_sources(id,channel_id,feed_url,feed_title,next_poll_at,last_sync_at,last_error,created_by,created_at)
+               VALUES (?,?,?,?,?,?,NULL,?,?)""",
+            (source_id, channel_id, feed_url, feed_title, current + RSS_POLL_INTERVAL, current, user["id"], current),
+        )
+        return self.json({"ok": True, "connected": True, "sourceId": source_id, "feedTitle": feed_title})
+
+    def update_vk_channel_link(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        source_id = str(body.get("sourceId", "")).strip()
+        channel = con.execute("SELECT owner_id, type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+        if not channel or channel["type"] != "channel" or channel["owner_id"] != user["id"]:
+            raise PermissionError("Подключить VK может только создатель канала.")
+        if bool(body.get("disconnect")):
+            if not source_id:
+                raise ValueError("Не выбран VK-источник для отключения.")
+            deleted = con.execute("DELETE FROM vk_channel_sources WHERE id = ? AND channel_id = ?", (source_id, channel_id)).rowcount
+            if not deleted:
+                raise ValueError("VK-источник не найден.")
+            return self.json({"ok": True, "connected": False})
+        self.enforce_autopost_source_limit(con, user["id"], channel_id)
+        count = con.execute("SELECT count(*) FROM vk_channel_sources WHERE channel_id = ?", (channel_id,)).fetchone()[0]
+        access_token = str(body.get("accessToken", "")).strip()
+        if len(access_token) < 20 or len(access_token) > 512:
+            raise ValueError("Введите корректный токен доступа VK API.")
+        source_url, source_ref = validate_vk_group_url(body.get("sourceUrl"))
+        keywords = normalize_vk_keywords(body.get("keywords", ""))
+        existing = con.execute("SELECT id FROM vk_channel_sources WHERE channel_id = ? AND source_url = ?", (channel_id, source_url)).fetchone()
+        if existing:
+            raise ValueError("Эта VK-группа уже подключена к каналу.")
+        owner_id, source_title = vk_group_data(access_token, source_ref)
+        wall = vk_api(access_token, "wall.get", {"owner_id": owner_id, "count": 30, "filter": "owner"})
+        posts = wall.get("items", []) if isinstance(wall, dict) else []
+        current = now()
+        source_id = uid("vk")
+        con.executemany(
+            "INSERT OR IGNORE INTO vk_source_imported_posts(source_id,post_id,imported_at) VALUES (?,?,?)",
+            [(source_id, int(post.get("id", 0)), current) for post in posts if isinstance(post, dict) and int(post.get("id", 0) or 0)],
+        )
+        con.execute(
+            """INSERT INTO vk_channel_sources(id,channel_id,source_url,source_ref,source_title,owner_id,access_token,keywords_json,next_poll_at,last_sync_at,last_error,created_by,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?)""",
+            (source_id, channel_id, source_url, source_ref, source_title, owner_id, access_token, dumps(keywords), current + VK_POLL_INTERVAL, current, user["id"], current),
+        )
+        return self.json({"ok": True, "connected": True, "sourceId": source_id, "sourceTitle": source_title})
+
+    def update_channel_appearance(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        chat = con.execute("SELECT type, settings_json FROM chats WHERE id = ?", (channel_id,)).fetchone()
+        if not chat or chat["type"] != "channel" or self.chat_member_role(con, channel_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Оформление могут менять только создатель и администраторы канала.")
+        settings = loads(chat["settings_json"], {}) or {}
+        if bool(body.get("reset")):
+            settings.pop("appearance", None)
+            con.execute("UPDATE chats SET settings_json = ?, updated_at = ? WHERE id = ?", (dumps(settings), now(), channel_id))
+            return self.json({"ok": True})
+        appearance = body.get("appearance", {})
+        if not isinstance(appearance, dict):
+            raise ValueError("Оформление канала должно быть объектом.")
+        wallpaper = str(appearance.get("wallpaper", "default"))
+        allowed_wallpapers = {"default", "whatsapp", "mint", "aurora", "noir", "cyan", "mist", "sunset", "ocean", "lavender", "forest", "midnight", "ember", "iris", "custom"}
+        if wallpaper not in allowed_wallpapers:
+            raise ValueError("Выберите допустимый фон канала.")
+        background_data = str(appearance.get("backgroundData", "")) or None
+        if wallpaper == "custom":
+            if not background_data.startswith("data:image/") or len(background_data) > 3_500_000:
+                raise ValueError("Загрузите фоновое изображение до 2,5 МБ.")
+        else:
+            background_data = None
+        colors = {key: str(appearance.get(key, "")) for key in ("ownBubble", "otherBubble", "panelColor") if appearance.get(key)}
+        if any(not re.fullmatch(r"#[0-9a-fA-F]{6}", color) for color in colors.values()):
+            raise ValueError("Цвета оформления должны быть в формате #RRGGBB.")
+        font = str(appearance.get("font", ""))
+        if font and font not in {"system", "business", "classic", "script", "rounded", "serif", "mono", "humanist", "condensed", "typewriter", "elegant"}:
+            raise ValueError("Выберите допустимый шрифт канала.")
+        settings["appearance"] = {"wallpaper": wallpaper, "backgroundData": background_data, **colors, **({"font": font} if font else {})}
+        con.execute("UPDATE chats SET settings_json = ?, updated_at = ? WHERE id = ?", (dumps(settings), now(), channel_id))
+        return self.json({"ok": True})
+
+    def add_channel_comment(self, con, user, body):
+        message_id = str(body.get("messageId", ""))
+        text = str(body.get("text", "")).strip()
+        media_data = str(body.get("mediaData", ""))
+        message = con.execute(
+            "SELECT m.chat_id, c.settings_json FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id = ? AND c.type IN ('channel', 'group', 'community')",
+            (message_id,),
+        ).fetchone()
+        if not message or not self.has_chat_access(con, user["id"], message["chat_id"]):
+            raise PermissionError("Нет доступа к публикации.")
+        if not loads(message["settings_json"], {}).get("commentsEnabled", True):
+            raise PermissionError("Комментарии отключены автором чата.")
+        if (not text and not media_data) or len(text) > 1000:
+            raise ValueError("Комментарий должен содержать текст до 1000 символов или фото.")
+        if media_data and (not media_data.startswith("data:image/") or len(media_data) > 2_500_000):
+            raise ValueError("К комментарию можно прикрепить изображение PNG, JPG или WebP до 1,8 МБ.")
+        con.execute("INSERT INTO channel_comments(id,message_id,user_id,text,media_data,created_at) VALUES (?,?,?,?,?,?)", (uid("comment"), message_id, user["id"], text, media_data or None, now()))
+        return self.json({"ok": True})
+
+    def create_automated_commenter(self, con, body):
+        name = " ".join(str(body.get("name", "")).strip().split())[:80]
+        if not name:
+            raise ValueError("Введите имя автокомментатора.")
+        username = normalize_username(body.get("username"))
+        validate_username(username)
+        if username_taken(con, username):
+            raise ValueError("Этот логин уже занят. Выберите другой.")
+        password = str(body.get("password", ""))
+        if len(password) < 8:
+            raise ValueError("Пароль должен содержать не менее 8 символов.")
+        avatar_data = str(body.get("avatarData", "") or "")
+        if avatar_data and (not avatar_data.startswith("data:image/") or len(avatar_data) > 2_500_000):
+            raise ValueError("Аватар должен быть изображением PNG, JPG или WebP до 1,8 МБ.")
+        user_id = uid("user")
+        current = now()
+        con.execute(
+            """INSERT INTO users(id,name,username,password,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,avatar_data,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, name, username, hash_password(password), 0, "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", avatar_data or None, current),
+        )
+        commenter_id = uid("autocommenter")
+        con.execute("INSERT INTO automated_commenters(id,user_id,created_at) VALUES (?,?,?)", (commenter_id, user_id, current))
+        return self.json({"ok": True, "commenterId": commenter_id})
+
+    def create_automated_commenter_pool(self, con):
+        existing = con.execute("SELECT count(*) AS count FROM automated_commenters").fetchone()["count"]
+        to_create = max(0, 100 - int(existing))
+        if not to_create:
+            return self.json({"ok": True, "created": 0, "total": existing})
+        current = now()
+        names = [
+            "Алекс", "Уля", "Арт", "Лера", "Даня", "Саша", "Мила", "Ник", "Соня", "Тим",
+            "Вика", "Егор", "Алиса", "Кир", "Полина", "Марк", "Алина", "Глеб", "Настя", "Рома",
+            "Яна", "Макс", "Ксю", "Даша", "Лина", "Женя", "Миша", "Тая", "Стас", "Влад",
+            "Рина", "Лёша", "Ника", "Вера", "Оля", "Илья", "Ася", "Паша", "Адольф",
+            "Алекс Морозов", "Уля Белова", "Арт Лисов", "Лера Соколова", "Даня Крылов", "Мила Рэй",
+            "Ник Орлов", "Соня Лайт", "Тим Ковалёв", "Вика Мэй", "Егор Ветров", "Алиса Нова",
+            "Кир Волков", "Полина Скай", "Марк Левин", "Алина Фокс", "Глеб Север", "Настя Роу",
+            "Рома Дэн", "Яна Вэй",
+            "Геркулес", "Джин", "Хорошая девочка", "Жан-Клод Ван Дамм", "Джеки Чан", "Люкс Авто МСК",
+            "Sherlock Holmes", "Luna Lovegood", "Tony Stark", "Harley Quinn", "Neo", "Trinity", "Loki", "Thor",
+            "Wonder Woman", "Batman", "Black Panther", "Spiderman", "Catwoman", "Sonic", "Zelda", "Mario",
+            "Pikachu", "Wolverine", "Deadpool", "Iron Man", "Doctor Strange", "Obi-Wan Kenobi", "Princess Leia",
+            "Indiana Jones", "Lara Croft", "Jack Sparrow", "Wednesday Addams", "Eleven", "The Joker",
+            "Daenerys Stormborn", "Geralt of Rivia", "Yennefer", "Hermione Granger", "Mr Bean", "Maverick",
+        ]
+        for position in range(to_create):
+            number = int(existing) + position + 1
+            username = f"channel_reader_{number:03d}"
+            while username_taken(con, username):
+                number += 100
+                username = f"channel_reader_{number:03d}"
+            user_id = uid("user")
+            con.execute(
+                """INSERT INTO users(id,name,username,password,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (user_id, names[position % len(names)], username, hash_password(secrets.token_urlsafe(32)), 0,
+                 "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", current),
+            )
+            con.execute("INSERT INTO automated_commenters(id,user_id,created_at) VALUES (?,?,?)", (uid("autocommenter"), user_id, current))
+        return self.json({"ok": True, "created": to_create, "total": int(existing) + to_create})
+
+    def reset_automated_commenter_password(self, con, body):
+        commenter_id = str(body.get("commenterId", "")).strip()
+        password = str(body.get("password", ""))
+        if len(password) < 8:
+            raise ValueError("Пароль должен содержать не менее 8 символов.")
+        commenter = con.execute("SELECT user_id FROM automated_commenters WHERE id = ?", (commenter_id,)).fetchone()
+        if not commenter:
+            raise ValueError("Автокомментатор не найден.")
+        con.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(password), commenter["user_id"]))
+        return self.json({"ok": True})
+
+    def create_automated_comment_rule(self, con, body):
+        channel_id = str(body.get("channelId", ""))
+        target_scope = str(body.get("targetScope", "future"))
+        target_message_id = str(body.get("targetMessageId", "")).strip() or None
+        channel = con.execute("SELECT id FROM chats WHERE id = ? AND type = 'channel'", (channel_id,)).fetchone()
+        if not channel:
+            raise ValueError("Выберите канал.")
+        if target_scope not in {"selected", "existing", "future"}:
+            raise ValueError("Выберите, к каким публикациям применять правило.")
+        if target_scope == "selected" and not target_message_id:
+            raise ValueError("Выберите публикацию.")
+        if target_scope != "selected":
+            target_message_id = None
+        commenter_ids = list(dict.fromkeys(str(item) for item in body.get("commenterIds", []) if item))
+        if not commenter_ids or len(commenter_ids) > 100:
+            raise ValueError("Выберите от 1 до 100 автокомментаторов.")
+        found_commenters = con.execute(
+            f"SELECT id FROM automated_commenters WHERE id IN ({','.join('?' for _ in commenter_ids)})",
+            commenter_ids,
+        ).fetchall()
+        if len(found_commenters) != len(commenter_ids):
+            raise ValueError("Один из автокомментаторов не найден.")
+        comment_mode = str(body.get("commentMode", "manual")).strip()
+        if comment_mode not in {"manual", "local", "ai"}:
+            raise ValueError("Выберите режим комментариев.")
+        texts = [" ".join(str(text).strip().split())[:1000] for text in body.get("texts", []) if str(text).strip()]
+        categories = list(dict.fromkeys(str(category) for category in body.get("categories", []) if str(category) in AUTOMATED_COMMENT_CATEGORIES))
+        if comment_mode == "manual" and (not texts or len(texts) > 30):
+            raise ValueError("Добавьте от 1 до 30 текстов комментариев.")
+        if comment_mode == "local" and not categories:
+            raise ValueError("Выберите хотя бы одну категорию локальных комментариев.")
+        minimum = nonnegative_int(body.get("minDelayMinutes", 5), "minDelayMinutes", 10_080) * 60
+        maximum = nonnegative_int(body.get("maxDelayMinutes", 30), "maxDelayMinutes", 10_080) * 60
+        if minimum > maximum:
+            raise ValueError("Минимальная задержка не может быть больше максимальной.")
+        distribution_hours = nonnegative_int(body.get("distributionHours", 12), "distributionHours", 24)
+        if not distribution_hours:
+            raise ValueError("Укажите окно публикации от 1 до 24 часов.")
+        duration_days = nonnegative_int(body.get("durationDays", 2), "durationDays", 30)
+        if not duration_days:
+            raise ValueError("Укажите срок работы от 1 до 30 дней.")
+        current = now()
+        if target_message_id:
+            target = con.execute(
+                "SELECT id FROM messages WHERE id = ? AND chat_id = ? AND media_type != 'system'",
+                (target_message_id, channel_id),
+            ).fetchone()
+            if not target:
+                raise ValueError("Выберите публикацию указанного канала.")
+        rule_id = uid("autocommentrule")
+        con.execute(
+            """INSERT INTO automated_comment_rules(id,channel_id,target_message_id,target_scope,commenter_ids_json,texts_json,comment_mode,categories_json,min_delay_seconds,max_delay_seconds,distribution_seconds,starts_at,ends_at,active,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (rule_id, channel_id, target_message_id, target_scope, dumps(commenter_ids), dumps(texts), comment_mode, dumps(categories), minimum, maximum, distribution_hours * 3600, current, current + duration_days * 86400, 1, current),
+        )
+        if target_scope == "selected":
+            schedule_automated_comments(con, target_message_id, channel_id, current)
+        elif target_scope == "existing":
+            posts = con.execute("SELECT id FROM messages WHERE chat_id = ? AND media_type != 'system' ORDER BY created_at", (channel_id,)).fetchall()
+            for post in posts:
+                schedule_automated_comments(con, post["id"], channel_id, current, include_existing=True)
+        return self.json({"ok": True, "ruleId": rule_id})
+
+    def edit_message(self, con, user, body):
+        message_id = body.get("messageId")
+        text = str(body.get("text", "")).strip()
+        if not text:
+            raise ValueError("Введите текст сообщения.")
+        row = con.execute("SELECT id, chat_id, sender_id, media_type FROM messages WHERE id = ?", (message_id,)).fetchone()
+        if not row or not self.has_chat_access(con, user["id"], row["chat_id"]):
+            raise PermissionError()
+        if row["sender_id"] != user["id"] or row["media_type"] == "system":
+            raise PermissionError("Редактировать можно только свои сообщения.")
+        con.execute("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?", (text, now(), message_id))
+        con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), row["chat_id"]))
+        return self.json({"ok": True})
+
+    def mark_messages_read(self, con, user, chat_id):
+        if not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        latest = con.execute(
+            "SELECT COALESCE(MAX(rowid), 0) AS rowid, COALESCE(MAX(created_at), 0) AS created_at FROM messages WHERE chat_id = ? AND sender_id != ?",
+            (chat_id, user["id"]),
+        ).fetchone()
+        con.execute(
+            """INSERT INTO chat_read_states(chat_id, user_id, read_at, read_rowid) VALUES (?,?,?,?)
+               ON CONFLICT(chat_id, user_id) DO UPDATE SET read_at = excluded.read_at, read_rowid = excluded.read_rowid""",
+            (chat_id, user["id"], latest["created_at"], latest["rowid"]),
+        )
+        return self.json({"ok": True})
+
+    def send_message_media(self, con, user, message_id):
+        row = con.execute(
+            """SELECT m.media_data FROM messages m
+               JOIN chats c ON c.id = m.chat_id
+                WHERE m.id = ? AND (
+                     EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = m.chat_id AND cm.user_id = ?)
+                     OR (c.type = 'channel' AND (
+                         EXISTS(SELECT 1 FROM recommended_groups rg WHERE rg.chat_id = c.id)
+                         OR COALESCE(json_extract(c.settings_json, '$.isPublic'), 1) = 1
+                     ))
+                   )
+                  AND (c.type != 'secret' OR EXISTS(
+                    SELECT 1 FROM secret_chat_unlocks scu
+                    WHERE scu.chat_id = c.id AND scu.user_id = ?
+                 ))""",
+            (message_id, user["id"], user["id"]),
+        ).fetchone()
+        if not row or not row["media_data"]:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if str(row["media_data"]).startswith("s3:"):
+            download_url, _ = s3_presigned_url("GET", str(row["media_data"])[3:], expires_in=300)
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", download_url)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            return
+        header, separator, encoded = row["media_data"].partition(";base64,")
+        if not separator or not header.startswith("data:"):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except (ValueError, base64.binascii.Error):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        content_type = header[5:].split(";", 1)[0]
+        start, end = 0, len(data) - 1
+        range_header = self.headers.get("Range", "")
+        if range_header.startswith("bytes="):
+            requested_start, _, requested_end = range_header[6:].partition("-")
+            try:
+                start = int(requested_start) if requested_start else 0
+                end = int(requested_end) if requested_end else end
+            except ValueError:
+                start, end = 0, len(data) - 1
+            start = max(0, start)
+            end = min(len(data) - 1, end)
+        if start > end:
+            self.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+            return
+        partial = range_header.startswith("bytes=")
+        self.send_response(HTTPStatus.PARTIAL_CONTENT if partial else HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        if content_type == "application/pdf" or content_type.startswith("text/"):
+            self.send_header("Content-Disposition", "inline")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Cache-Control", "private, max-age=86400")
+        if partial:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{len(data)}")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        try:
+            self.wfile.write(data[start:end + 1])
+        except ConnectionError:
+            return
+
+    def toggle_message_pin(self, con, user, message_id):
+        message = con.execute("SELECT m.id, m.chat_id, m.pinned, c.type FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id = ?", (message_id,)).fetchone()
+        if not message:
+            raise ValueError("Сообщение не найдено.")
+        if not self.has_chat_access(con, user["id"], message["chat_id"]):
+            raise PermissionError()
+        if message["type"] == "channel" and self.chat_member_role(con, message["chat_id"], user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Закреплять публикации могут только создатель и администраторы канала.")
+        pinned = not bool(message["pinned"])
+        con.execute("UPDATE messages SET pinned = ? WHERE id = ?", (pinned, message_id))
+        if not pinned:
+            con.execute("DELETE FROM hidden_pinned_messages WHERE message_id = ?", (message_id,))
+        return self.json({"ok": True, "pinned": pinned})
+
+    def hide_pinned_message(self, con, user, message_id):
+        message = con.execute("SELECT id, chat_id, pinned FROM messages WHERE id = ?", (message_id,)).fetchone()
+        if not message:
+            raise ValueError("Сообщение не найдено.")
+        if not bool(message["pinned"]):
+            raise ValueError("Это сообщение уже не закреплено.")
+        if not self.has_chat_access(con, user["id"], message["chat_id"]):
+            raise PermissionError()
+        con.execute(
+            "INSERT OR IGNORE INTO hidden_pinned_messages(message_id,user_id,created_at) VALUES (?,?,?)",
+            (message_id, user["id"], now()),
+        )
+        return self.json({"ok": True})
+
+    def delete_message(self, con, user, body):
+        message_id = body.get("messageId")
+        scope = body.get("scope")
+        message = con.execute("SELECT id, chat_id, sender_id FROM messages WHERE id = ?", (message_id,)).fetchone()
+        if not message:
+            raise ValueError("Сообщение не найдено.")
+        if not self.has_chat_access(con, user["id"], message["chat_id"]):
+            raise PermissionError()
+        if scope == "me":
+            con.execute("INSERT OR IGNORE INTO hidden_messages(message_id,user_id,created_at) VALUES (?,?,?)", (message_id, user["id"], now()))
+            return self.json({"ok": True})
+        if scope == "everyone":
+            if message["sender_id"] != user["id"] and not self.can_manage_group_messages(con, user["id"], message["chat_id"]):
+                raise PermissionError("Удалить сообщение для всех может автор, создатель или администратор беседы.")
+            con.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+            return self.json({"ok": True})
+        raise ValueError("Неизвестный вариант удаления.")
+
+    def bulk_messages(self, con, user, body):
+        action = str(body.get("action", ""))
+        raw_message_ids = body.get("messageIds", [])
+        if not isinstance(raw_message_ids, list):
+            raise ValueError("Некорректный список сообщений.")
+        message_ids = list(dict.fromkeys(str(message_id) for message_id in raw_message_ids if message_id))
+        if not message_ids:
+            raise ValueError("Выберите хотя бы одно сообщение.")
+        if len(message_ids) > 100:
+            raise ValueError("За один раз можно обработать до 100 сообщений.")
+
+        placeholders = ",".join("?" for _ in message_ids)
+        messages = con.execute(
+            f"""SELECT id, chat_id, sender_id, text, media_type, media_data, forwarded_from, forwarded_from_user_id FROM messages
+                WHERE id IN ({placeholders})
+                  AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = messages.id AND hm.user_id = ?)
+                ORDER BY created_at, rowid""",
+            [*message_ids, user["id"]],
+        ).fetchall()
+        if len(messages) != len(message_ids):
+            raise ValueError("Одно или несколько сообщений не найдены.")
+        if any(not self.has_chat_access(con, user["id"], message["chat_id"]) for message in messages):
+            raise PermissionError()
+
+        if action == "delete":
+            scope = str(body.get("scope", "me"))
+            if scope == "everyone":
+                if any(
+                    message["sender_id"] != user["id"]
+                    and not self.can_manage_group_messages(con, user["id"], message["chat_id"])
+                    for message in messages
+                ):
+                    raise PermissionError("Удалить у всех можно свои сообщения или сообщения в управляемой беседе.")
+                con.execute(f"DELETE FROM messages WHERE id IN ({placeholders})", message_ids)
+                return self.json({"ok": True, "count": len(messages), "scope": scope})
+            if scope != "me":
+                raise ValueError("Неизвестный вариант удаления.")
+            for message in messages:
+                con.execute(
+                    "INSERT OR IGNORE INTO hidden_messages(message_id,user_id,created_at) VALUES (?,?,?)",
+                    (message["id"], user["id"], now()),
+                )
+            return self.json({"ok": True, "count": len(messages)})
+
+        if action == "forward":
+            target_chat_id = str(body.get("targetChatId", ""))
+            target = con.execute("SELECT id, type FROM chats WHERE id = ?", (target_chat_id,)).fetchone()
+            if not target or target["type"] == "secret" or not self.has_chat_access(con, user["id"], target_chat_id):
+                raise PermissionError("Выберите доступный обычный чат.")
+            if any(message["chat_id"] == target_chat_id for message in messages):
+                raise ValueError("Нельзя переслать сообщения в тот же чат.")
+            self.copy_messages(con, user["id"], messages, target_chat_id)
+            return self.json({"ok": True, "count": len(messages), "targetChatId": target_chat_id})
+
+        if action == "forward_confidential":
+            password = str(body.get("password", ""))
+            if not re.fullmatch(r"\d{4}", password):
+                raise ValueError("Введите код из 4 цифр.")
+            targets = con.execute(
+                """SELECT sc.chat_id FROM secret_chats sc
+                   JOIN chat_members cm ON cm.chat_id = sc.chat_id
+                   WHERE cm.user_id = ? AND sc.password_hash = ?""",
+                (user["id"], secret_password_hash(password)),
+            ).fetchall()
+            if not targets:
+                raise ValueError("По данному запросу чатов нет.")
+            if len(targets) > 1:
+                raise ValueError("По этому коду найдено несколько чатов. Выберите другой код.")
+            target_chat_id = targets[0]["chat_id"]
+            if any(message["chat_id"] == target_chat_id for message in messages):
+                raise ValueError("Нельзя переслать сообщения в тот же чат.")
+            con.execute("INSERT OR REPLACE INTO secret_chat_unlocks(chat_id,user_id,unlocked_at) VALUES (?,?,?)", (target_chat_id, user["id"], now()))
+            self.copy_messages(con, user["id"], messages, target_chat_id)
+            return self.json({"ok": True, "count": len(messages), "targetChatId": target_chat_id})
+
+        if action == "move_confidential":
+            password = str(body.get("password", ""))
+            recipient_id = str(body.get("recipientUserId", ""))
+            if not re.fullmatch(r"\d{4}", password):
+                raise ValueError("Введите пароль из 4 цифр.")
+            if not recipient_id or recipient_id == user["id"]:
+                raise ValueError("Выберите собеседника.")
+            is_direct_contact = con.execute(
+                """SELECT 1 FROM chats c
+                   JOIN chat_members own_member ON own_member.chat_id = c.id
+                   JOIN chat_members contact_member ON contact_member.chat_id = c.id
+                   WHERE c.type = 'direct' AND own_member.user_id = ? AND contact_member.user_id = ?
+                   LIMIT 1""",
+                (user["id"], recipient_id),
+            ).fetchone()
+            if not is_direct_contact:
+                raise ValueError("Собеседник должен быть в ваших личных диалогах.")
+
+            password_hash = secret_password_hash(password)
+            target = con.execute(
+                """SELECT c.id FROM chats c
+                   JOIN secret_chats sc ON sc.chat_id = c.id
+                   JOIN chat_members own_member ON own_member.chat_id = c.id AND own_member.user_id = ?
+                   JOIN chat_members contact_member ON contact_member.chat_id = c.id AND contact_member.user_id = ?
+                   WHERE c.type = 'secret' AND sc.password_hash = ?
+                     AND (SELECT count(*) FROM chat_members WHERE chat_id = c.id) = 2
+                   ORDER BY c.created_at DESC LIMIT 1""",
+                (user["id"], recipient_id, password_hash),
+            ).fetchone()
+            created = False
+            if target:
+                target_chat_id = target["id"]
+                con.execute(
+                    "INSERT OR REPLACE INTO secret_chat_unlocks(chat_id,user_id,unlocked_at) VALUES (?,?,?)",
+                    (target_chat_id, user["id"], now()),
+                )
+            else:
+                target_chat_id = uid("chat")
+                created = True
+                con.execute(
+                    "INSERT INTO chats(id,type,title,description,owner_id,settings_json,subscriber_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                    (target_chat_id, "secret", "Скрытый чат", "", user["id"], dumps({"showViews": True, "showSubscribers": False, "showReactions": True}), 2, now(), now()),
+                )
+                con.execute("INSERT INTO secret_chats(chat_id,password_hash,created_at) VALUES (?,?,?)", (target_chat_id, password_hash, now()))
+                for member_id in (user["id"], recipient_id):
+                    con.execute(
+                        "INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)",
+                        (target_chat_id, member_id, "owner" if member_id == user["id"] else "member", now()),
+                    )
+                con.execute(
+                    "INSERT INTO secret_chat_unlocks(chat_id,user_id,unlocked_at) VALUES (?,?,?)",
+                    (target_chat_id, user["id"], now()),
+                )
+            self.copy_messages(con, user["id"], messages, target_chat_id)
+            for message in messages:
+                con.execute(
+                    "INSERT OR IGNORE INTO hidden_messages(message_id,user_id,created_at) VALUES (?,?,?)",
+                    (message["id"], user["id"], now()),
+                )
+            return self.json({"ok": True, "count": len(messages), "targetChatId": target_chat_id, "created": created})
+
+        raise ValueError("Неизвестное групповое действие.")
+
+    def copy_messages(self, con, sender_id, messages, target_chat_id):
+        for message in messages:
+            source_chat = con.execute("SELECT type, title FROM chats WHERE id = ?", (message["chat_id"],)).fetchone()
+            forwarded_from = message["forwarded_from"]
+            forwarded_from_user_id = message["forwarded_from_user_id"]
+            if not forwarded_from and source_chat and source_chat["type"] != "saved":
+                original_sender = con.execute("SELECT name FROM users WHERE id = ?", (message["sender_id"],)).fetchone()
+                forwarded_from = original_sender["name"] if original_sender else source_chat["title"]
+                forwarded_from_user_id = message["sender_id"] if original_sender else None
+            con.execute(
+                "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,forwarded_from_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (uid("msg"), target_chat_id, sender_id, message["text"], message["media_type"], message["media_data"], 1, forwarded_from, forwarded_from_user_id, now()),
+            )
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), target_chat_id))
+
+    def react(self, con, user, body):
+        emoji = str(body.get("emoji", "👍"))[:32]
+        if not emoji:
+            raise ValueError("Выберите реакцию.")
+        row = con.execute(
+            "SELECT m.chat_id, c.type AS chat_type, c.settings_json FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id=?",
+            (body.get("messageId"),),
+        ).fetchone()
+        if not row:
+            raise ValueError("Пост не найден.")
+        if not self.has_chat_access(con, user["id"], row["chat_id"]):
+            raise PermissionError()
+        message_id = body.get("messageId")
+        existing = con.execute(
+            "SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+            (message_id, user["id"], emoji),
+        ).fetchone()
+        if row["chat_type"] == "channel":
+            if not loads(row["settings_json"], {}).get("showReactions", True):
+                raise PermissionError("Реакции отключены автором канала.")
+            if not existing and emoji not in channel_reaction_emojis(con):
+                raise ValueError("Эта реакция недоступна в каналах.")
+        if existing:
+            con.execute(
+                "DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+                (message_id, user["id"], emoji),
+            )
+        else:
+            con.execute(
+                "INSERT INTO message_reactions(message_id,user_id,emoji,created_at) VALUES (?,?,?,?)",
+                (message_id, user["id"], emoji, now()),
+            )
+        reactions = {
+            item["emoji"]: item["count"]
+            for item in con.execute(
+                "SELECT emoji, count(*) AS count FROM message_reactions WHERE message_id = ? GROUP BY emoji",
+                (message_id,),
+            ).fetchall()
+        }
+        con.execute("UPDATE messages SET reactions_json=? WHERE id=?", (dumps(reactions), message_id))
+        return self.json({"ok": True, "active": not bool(existing)})
+
+    def donate(self, con, user, body):
+        amount = nonnegative_int(body.get("amount", 0), "amount")
+        if amount <= 0:
+            raise ValueError("Введите количество звёзд.")
+        message = con.execute(
+            """SELECT m.sender_id, m.chat_id, c.type, u.name
+               FROM messages m
+               JOIN chats c ON c.id = m.chat_id
+               JOIN users u ON u.id = m.sender_id
+               WHERE m.id = ? AND m.media_type IS NOT 'system'""",
+            (body.get("messageId"),),
+        ).fetchone()
+        if not message or message["type"] != "channel":
+            raise ValueError("Звёзды можно подарить только за публикацию в канале.")
+        if not self.has_chat_access(con, user["id"], message["chat_id"]):
+            raise PermissionError()
+        target_user_id = message["sender_id"]
+        if target_user_id == user["id"]:
+            raise ValueError("Нельзя отправить звёзды самому себе.")
+        debited = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (amount, user["id"], amount)).rowcount
+        if not debited:
+            raise ValueError("Недостаточно звёзд.")
+        self.credit_stars(con, target_user_id, amount)
+        self.record_star_transaction(con, user["id"], -amount, "donation_sent", f"Донат за публикацию {message['name']}")
+        self.record_star_transaction(con, target_user_id, amount, "donation_received", f"Донат за публикацию от {user['name']}")
+        return self.json({"ok": True})
+
+    def record_star_transaction(self, con, user_id, amount, kind, description):
+        con.execute(
+            "INSERT INTO star_transactions(id,user_id,amount,kind,description,created_at) VALUES (?,?,?,?,?,?)",
+            (uid("stars"), user_id, amount, kind, description, now()),
+        )
+
+    def create_yookassa_payment(self, con, user, body):
+        if not yookassa_configured():
+            raise ValueError("Оплата ЮKassa пока не настроена. Попробуйте позже.")
+        if body.get("purchaseTermsAccepted") is not True and str(body.get("purchaseTermsAccepted", "")).lower() != "true":
+            raise ValueError("Для покупки необходимо принять условия покупки.")
+        package_id = str(body.get("packageId", "")).strip().lower()
+        package = next((item for item in yookassa_star_packages(con) if item["id"] == package_id), None)
+        if not package:
+            raise ValueError("Выбранный пакет звёзд недоступен.")
+        discount_percent = self.star_package_discount_percent(con, user["id"])
+        amount_value = discounted_price(package["price"], discount_percent)
+        maximum = int(self.account_level_data(con, user["id"]).get("limits", {}).get("maxStars", 0) or 0)
+        if maximum and int(user["stars"] or 0) + package["stars"] > maximum:
+            raise ValueError(f"Этот пакет превышает лимит баланса: {maximum} звёзд.")
+        channel_id = str(body.get("channelId", "")).strip() or None
+        channel_bonus_type = None
+        channel_bonus_amount = None
+        if channel_id:
+            channel = con.execute("SELECT id, type, owner_id, settings_json FROM chats WHERE id = ?", (channel_id,)).fetchone()
+            if not channel or channel["type"] != "channel" or not channel["owner_id"]:
+                raise ValueError("Канал для покупки не найден.")
+            if not self.has_chat_access(con, user["id"], channel_id):
+                raise PermissionError("Подпишитесь на канал, чтобы купить звёзды через него.")
+            settings = loads(channel["settings_json"], {}) or {}
+            channel_bonus_type = str(settings.get("starBonusType", "stars")).lower()
+            bonus_percent = nonnegative_int(settings.get("starBonusPercent", 10), "starBonusPercent", 100)
+            if channel_bonus_type not in {"stars", "money"} or not bonus_percent:
+                raise ValueError("Владелец канала ещё не настроил бонус за покупку.")
+            if channel_bonus_type == "stars":
+                channel_bonus_amount = str(max(1, package["stars"] * bonus_percent // 100))
+            else:
+                channel_bonus_amount = f"{(float(amount_value) * bonus_percent / 100):.2f}"
+        order_id = uid("yookassa")
+        current = now()
+        con.execute(
+            """INSERT INTO yookassa_payments(id,user_id,package_id,stars,amount_value,channel_id,channel_bonus_type,channel_bonus_amount,status,terms_accepted_at,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,'creating',?,?,?)""",
+            (order_id, user["id"], package["id"], package["stars"], amount_value, channel_id, channel_bonus_type, channel_bonus_amount, current, current, current),
+        )
+        payment = yookassa_request(
+            "/payments",
+            "POST",
+            {
+                "amount": {"value": amount_value, "currency": "RUB"},
+                "capture": True,
+                "confirmation": {"type": "redirect", "return_url": f"{YOOKASSA_RETURN_URL}/payment-return?order={order_id}"},
+                "description": f"Chat-Pro: {package['stars']} звёзд" + (f" со скидкой {discount_percent}%" if discount_percent else "") + (f" через канал" if channel_id else ""),
+                "metadata": {"chat_pro_order_id": order_id},
+            },
+            idempotence_key=order_id,
+        )
+        payment_id = str(payment.get("id", ""))
+        confirmation_url = str((payment.get("confirmation") or {}).get("confirmation_url", ""))
+        if not payment_id or not confirmation_url:
+            con.execute("UPDATE yookassa_payments SET status = 'failed', updated_at = ? WHERE id = ?", (now(), order_id))
+            raise ValueError("ЮKassa не вернула ссылку для оплаты. Попробуйте ещё раз.")
+        con.execute(
+            "UPDATE yookassa_payments SET yookassa_payment_id = ?, status = ?, updated_at = ? WHERE id = ?",
+            (payment_id, str(payment.get("status", "pending")), now(), order_id),
+        )
+        return self.json({"ok": True, "orderId": order_id, "confirmationUrl": confirmation_url})
+
+    def check_yookassa_payment(self, con, user, body):
+        order_id = str(body.get("orderId", "")).strip()
+        payment_order = con.execute("SELECT * FROM yookassa_payments WHERE id = ? AND user_id = ?", (order_id, user["id"])).fetchone()
+        if not payment_order:
+            raise ValueError("Заказ на оплату не найден.")
+        return self.json({"ok": True, **self.finalize_yookassa_payment(con, payment_order)})
+
+    def handle_yookassa_webhook(self, con, body):
+        if not isinstance(body, dict) or body.get("event") != "payment.succeeded":
+            return self.json({"ok": True})
+        payment_id = str((body.get("object") or {}).get("id", "")).strip()
+        if not payment_id:
+            return self.json({"ok": True})
+        payment_order = con.execute("SELECT * FROM yookassa_payments WHERE yookassa_payment_id = ?", (payment_id,)).fetchone()
+        if payment_order:
+            self.finalize_yookassa_payment(con, payment_order)
+        return self.json({"ok": True})
+
+    def finalize_yookassa_payment(self, con, payment_order):
+        if payment_order["credited_at"]:
+            return {"status": "succeeded", "credited": True, "stars": payment_order["stars"]}
+        if not payment_order["yookassa_payment_id"]:
+            raise ValueError("Платёж ещё создаётся. Попробуйте обновить страницу.")
+        payment = yookassa_request(f"/payments/{payment_order['yookassa_payment_id']}")
+        status = str(payment.get("status", ""))
+        con.execute("UPDATE yookassa_payments SET status = ?, updated_at = ? WHERE id = ?", (status or "unknown", now(), payment_order["id"]))
+        if status != "succeeded" or payment.get("paid") is not True:
+            return {"status": status or "pending", "credited": False}
+        metadata = payment.get("metadata") or {}
+        amount = payment.get("amount") or {}
+        if (
+            metadata.get("chat_pro_order_id") != payment_order["id"]
+            or amount.get("currency") != "RUB"
+            or amount.get("value") != payment_order["amount_value"]
+        ):
+            raise ValueError("Данные оплаченного заказа не прошли проверку.")
+        claimed = con.execute(
+            "UPDATE yookassa_payments SET credited_at = -1, status = 'succeeded', updated_at = ? WHERE id = ? AND credited_at IS NULL",
+            (now(), payment_order["id"]),
+        ).rowcount
+        if not claimed:
+            return {"status": "succeeded", "credited": True, "stars": payment_order["stars"]}
+        self.credit_stars(con, payment_order["user_id"], payment_order["stars"])
+        self.record_star_transaction(con, payment_order["user_id"], payment_order["stars"], "yookassa_purchase", f"Покупка {payment_order['stars']} звёзд через ЮKassa")
+        if payment_order["channel_id"]:
+            channel = con.execute("SELECT title, owner_id, settings_json FROM chats WHERE id = ? AND type = 'channel'", (payment_order["channel_id"],)).fetchone()
+            if channel and payment_order["channel_bonus_type"] in {"stars", "money"} and payment_order["channel_bonus_amount"]:
+                bonus_type = payment_order["channel_bonus_type"]
+                bonus_amount = payment_order["channel_bonus_amount"]
+                settings = loads(channel["settings_json"], {}) or {}
+                requested_gift = nonnegative_int(settings.get("buyerGiftStars", 0), "buyerGiftStars", 100_000)
+                buyer_message = str(settings.get("buyerPurchaseMessage", "")).strip()[:500]
+                owner = con.execute("SELECT stars FROM users WHERE id = ?", (channel["owner_id"],)).fetchone()
+                gift_stars = requested_gift if owner and owner["stars"] >= requested_gift else 0
+                buyer = con.execute("SELECT name, username FROM users WHERE id = ?", (payment_order["user_id"],)).fetchone()
+                buyer_label = buyer["name"] if buyer else "Пользователь"
+                if bonus_type == "stars":
+                    self.credit_stars(con, channel["owner_id"], int(bonus_amount))
+                    self.record_star_transaction(con, channel["owner_id"], int(bonus_amount), "channel_purchase_bonus", f"Бонус канала «{channel['title']}» за покупку {payment_order['stars']} звёзд")
+                    bonus_label = f"★ {bonus_amount}"
+                else:
+                    bonus_label = f"{bonus_amount} ₽ к выплате"
+                if gift_stars:
+                    debited = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (gift_stars, channel["owner_id"], gift_stars)).rowcount
+                    if debited:
+                        self.credit_stars(con, payment_order["user_id"], gift_stars)
+                        self.record_star_transaction(con, channel["owner_id"], -gift_stars, "channel_buyer_gift_sent", f"Подарок покупателю через канал «{channel['title']}»")
+                        self.record_star_transaction(con, payment_order["user_id"], gift_stars, "channel_buyer_gift_received", f"Подарок за покупку через канал «{channel['title']}»")
+                    else:
+                        gift_stars = 0
+                con.execute(
+                    """INSERT OR IGNORE INTO channel_star_purchases(id,payment_id,channel_id,buyer_user_id,stars,bonus_type,bonus_amount,buyer_gift_stars,buyer_message,created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (uid("channel_purchase"), payment_order["id"], payment_order["channel_id"], payment_order["user_id"], payment_order["stars"], bonus_type, bonus_amount, gift_stars, buyer_message, now()),
+                )
+                if buyer_message:
+                    direct = con.execute(
+                        """SELECT c.id FROM chats c JOIN chat_members owner_member ON owner_member.chat_id = c.id
+                           JOIN chat_members buyer_member ON buyer_member.chat_id = c.id
+                           WHERE c.type = 'direct' AND owner_member.user_id = ? AND buyer_member.user_id = ? LIMIT 1""",
+                        (channel["owner_id"], payment_order["user_id"]),
+                    ).fetchone()
+                    direct_id = direct["id"] if direct else uid("chat")
+                    if not direct:
+                        con.execute("INSERT INTO chats(id,type,title,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (direct_id, "direct", "Личный чат", channel["owner_id"], now(), now()))
+                        for member_id in (channel["owner_id"], payment_order["user_id"]):
+                            con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (direct_id, member_id, "member", now()))
+                    con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), direct_id, channel["owner_id"], buyer_message, "system", 1, now()))
+                    con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), direct_id))
+                notice = f"{buyer_label} купил(а) {payment_order['stars']} звёзд через канал «{channel['title']}». Бонус: {bonus_label}."
+                con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), channel["owner_id"], "channel_star_purchase", notice, payment_order["channel_id"], now()))
+                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), payment_order["channel_id"], channel["owner_id"], f"{buyer_label} купил(а) ★ {payment_order['stars']} через этот канал.", "system", 1, now()))
+                con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), payment_order["channel_id"]))
+        con.execute("UPDATE yookassa_payments SET credited_at = ?, status = 'succeeded', updated_at = ? WHERE id = ?", (now(), now(), payment_order["id"]))
+        return {"status": "succeeded", "credited": True, "stars": payment_order["stars"]}
+
+    def add_review(self, con, user, body):
+        url = normalize_review_source(body.get("url"))
+        if not url:
+            raise ValueError("Укажите ссылку, @username или название источника.")
+        is_url = is_review_url(url)
+        is_phone = is_review_phone(url)
+        is_telegram = is_review_telegram(url)
+        if len(url) > (2048 if is_url else 120):
+            raise ValueError("Название или ссылка источника слишком длинные.")
+        source_type = "website" if is_url else "phone" if is_phone else "telegram" if is_telegram else " ".join(str(body.get("sourceType", "")).strip().split())
+        if not (is_url or is_phone or is_telegram) and not source_type:
+            raise ValueError("Выберите площадку для источника без ссылки.")
+        if len(source_type) > 80:
+            raise ValueError("Название площадки не должно превышать 80 символов.")
+        source_type = source_type.lower() if source_type in {"telegram", "instagram", "other"} else source_type
+        rating = 1 if int(body.get("rating", 1)) >= 0 else -1
+        comment = str(body.get("comment", "")).strip()
+        if len(comment) > 3000:
+            raise ValueError("Текст отзыва не должен превышать 3000 символов.")
+        city = " ".join(str(body.get("city", "")).strip().split())
+        if len(city) > 120:
+            raise ValueError("Название города не должно превышать 120 символов.")
+        links = list(dict.fromkeys(normalize_review_source(link) for link in str(body.get("links", "")).split("\n") if link.strip()))
+        if len(links) > 20 or any(not link or len(link) > (2048 if is_review_url(link) else 120) for link in links):
+            raise ValueError("Укажите до 20 связанных ссылок, номеров, @username или названий.")
+        media_data = str(body.get("mediaData", "") or "")
+        if media_data and (not media_data.startswith(("data:image/", "data:video/")) or len(media_data) > 5_000_000):
+            raise ValueError("Прикрепите изображение или видео размером до 3,6 МБ.")
+        con.execute(
+            "INSERT INTO reviews(id,url,source_type,rating,comment,city,links_json,media_data,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (uid("review"), url, source_type, rating, comment, city, dumps(links), media_data or None, user["id"], now()),
+        )
+        return self.json({"ok": True})
+
+    def add_report(self, con, user, body):
+        target_type = str(body.get("targetType", "")).strip()[:40]
+        target_id = str(body.get("targetId", "")).strip()[:2048]
+        reason = str(body.get("reason", "")).strip()[:1000]
+        if target_type not in {"profile", "profile-post", "review-page", "review", "story", "group-post", "channel"} or not target_id:
+            raise ValueError("Не удалось отправить жалобу.")
+        if target_type == "profile-post":
+            post = con.execute("SELECT id FROM profile_posts WHERE id = ?", (target_id,)).fetchone()
+            if not post:
+                raise ValueError("Публикация не найдена.")
+        if target_type == "group-post":
+            post = con.execute("SELECT m.id, c.owner_id, c.title FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id = ? AND c.type = 'channel'", (target_id,)).fetchone()
+            if not post:
+                raise ValueError("Публикация не найдена.")
+            if post["owner_id"] and post["owner_id"] != user["id"]:
+                notice = "Поступила жалоба на пост «{}». Просим обратить внимание: за нарушение правил площадки и прав человека публикация удаляется.".format(post["title"])
+                con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), post["owner_id"], "group_post_report", notice, target_id, now()))
+        if target_type == "channel":
+            channel = con.execute("SELECT owner_id, title FROM chats WHERE id = ? AND type = 'channel'", (target_id,)).fetchone()
+            if not channel:
+                raise ValueError("Канал не найден.")
+            if channel["owner_id"] and channel["owner_id"] != user["id"]:
+                con.execute(
+                    "INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)",
+                    (uid("notice"), channel["owner_id"], "channel_report", f"Поступила жалоба на канал «{channel['title']}».", target_id, now()),
+                )
+        con.execute(
+            "INSERT INTO reports(id,target_type,target_id,reason,created_by,created_at) VALUES (?,?,?,?,?,?)",
+            (uid("report"), target_type, target_id, reason, user["id"], now()),
+        )
+        return self.json({"ok": True})
+
+    def share_content_to_group(self, con, user, body):
+        target_chat_id = str(body.get("targetChatId", ""))
+        source_type = str(body.get("sourceType", ""))
+        source_id = str(body.get("sourceId", ""))
+        comment = str(body.get("comment", "")).strip()
+        if len(comment) > 1000:
+            raise ValueError("Комментарий к репосту не должен быть длиннее 1000 символов.")
+        target = con.execute("SELECT type FROM chats WHERE id = ?", (target_chat_id,)).fetchone()
+        if not target or target["type"] not in {"direct", "group", "community", "channel"} or not self.has_chat_access(con, user["id"], target_chat_id):
+            raise PermissionError("Нет доступа к выбранному диалогу.")
+        if target["type"] == "channel" and self.chat_member_role(con, target_chat_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Публиковать в этом канале могут только администраторы.")
+        if source_type == "profile-post":
+            source = con.execute("SELECT * FROM profile_posts WHERE id = ?", (source_id,)).fetchone()
+            author_id = source["user_id"] if source else None
+            text, media_type, media_data = (source["text"], "photo" if source["media_data"] else None, source["media_data"]) if source else (None, None, None)
+        elif source_type == "story":
+            source = con.execute("SELECT * FROM stories WHERE id = ?", (source_id,)).fetchone()
+            author_id = source["user_id"] if source else None
+            text, media_type, media_data = (source["caption"], "photo", source["media_data"]) if source else (None, None, None)
+        else:
+            raise ValueError("Неизвестный источник публикации.")
+        if not source or not text and not media_data:
+            raise ValueError("Исходная публикация не найдена.")
+        author = con.execute("SELECT name, username FROM users WHERE id = ?", (author_id,)).fetchone()
+        source_label = f"{author['name']} (@{author['username']})" if author else "удалённый автор"
+        text = "\n\n".join(part for part in (comment, text) if part)
+        message_id = uid("msg")
+        con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (message_id, target_chat_id, user["id"], text, media_type, media_data, 1, f"Источник: {source_label}", source_type, source_id, now()))
+        if target["type"] == "channel":
+            schedule_automated_comments(con, message_id, target_chat_id)
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), target_chat_id))
+        return self.json({"ok": True, "messageId": message_id})
+
+    def delete_source_repost(self, con, user, message_id):
+        message = con.execute("SELECT id, source_type, source_id FROM messages WHERE id = ?", (message_id,)).fetchone()
+        if not message or not message["source_type"]:
+            raise ValueError("Это не репост из источника.")
+        owner_column = "user_id"
+        table = "profile_posts" if message["source_type"] == "profile-post" else "stories" if message["source_type"] == "story" else ""
+        if not table:
+            raise ValueError("Неизвестный источник публикации.")
+        owner = con.execute(f"SELECT {owner_column} FROM {table} WHERE id = ?", (message["source_id"],)).fetchone()
+        if not owner or owner[owner_column] != user["id"]:
+            raise PermissionError("Удалить этот репост может только автор исходного материала.")
+        con.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        return self.json({"ok": True})
+
+    def moderate_message_admin(self, con, body):
+        message_id = str(body.get("messageId", ""))
+        restore = bool(body.get("restore"))
+        message = con.execute(
+            """SELECT m.id FROM messages m
+               JOIN chats c ON c.id = m.chat_id
+               WHERE m.id = ? AND c.type IN ('group', 'community', 'channel')""",
+            (message_id,),
+        ).fetchone()
+        if not message:
+            raise ValueError("Публикация не найдена.")
+        con.execute("UPDATE messages SET deleted_by_admin = ? WHERE id = ?", (0 if restore else 1, message_id))
+        return self.json({"ok": True})
+
+    def claim_promotion(self, con, user, promotion_id):
+        promo = con.execute("SELECT * FROM promotions WHERE id=? AND active=1", (promotion_id,)).fetchone()
+        if not promo:
+            raise ValueError("Акция не найдена.")
+        claim = con.execute("SELECT * FROM promotion_claims WHERE promotion_id=? AND user_id=?", (promotion_id, user["id"])).fetchone()
+        if claim and claim["count"] >= promo["daily_limit"]:
+            raise ValueError("Лимит награды по акции уже получен.")
+        self.credit_stars(con, user["id"], promo["reward_amount"])
+        if promo["reward_amount"]:
+            self.record_star_transaction(con, user["id"], promo["reward_amount"], "promotion", f"Награда за акцию «{promo['title']}»")
+        if promo["premium_days"]:
+            con.execute("UPDATE users SET premium_until = ? WHERE id=?", (now() + promo["premium_days"] * 86400, user["id"]))
+        con.execute("INSERT OR REPLACE INTO promotion_claims(promotion_id,user_id,count,claimed_at) VALUES (?,?,COALESCE((SELECT count FROM promotion_claims WHERE promotion_id=? AND user_id=?),0)+1,?)", (promotion_id, user["id"], promotion_id, user["id"], now()))
+        return self.json({"ok": True})
+
+    def normalize_activity_criteria(self, criteria):
+        if not isinstance(criteria, dict):
+            return {}
+        normalized = {}
+        for key, value in criteria.items():
+            if key not in ACTIVITY_METRIC_KEYS:
+                continue
+            try:
+                target = max(0, int(value))
+            except (TypeError, ValueError):
+                continue
+            if target:
+                normalized[key] = target
+        return normalized
+
+    def activity_metrics(self, con, user_id):
+        def count(query, params=()):
+            return int(con.execute(query, params).fetchone()["count"] or 0)
+
+        def audience(chat_type):
+            row = con.execute(
+                "SELECT MAX(subscriber_count + subscriber_boost) AS count FROM chats WHERE owner_id = ? AND type = ?",
+                (user_id, chat_type),
+            ).fetchone()
+            return int(row["count"] or 0)
+
+        user = con.execute("SELECT stars, login_streak FROM users WHERE id = ?", (user_id,)).fetchone()
+        review_marker = re.compile(r"(?:чат[\s\-_‑–—]*про|chat[\s\-_‑–—]*pro)[\s\-_‑–—]*обзор", re.IGNORECASE)
+        review_video = any(
+            review_marker.search(str(row["text"] or ""))
+            for row in con.execute(
+                """SELECT m.text FROM messages m JOIN chats c ON c.id = m.chat_id
+                   WHERE c.owner_id = ? AND c.type = 'channel' AND m.sender_id = ? AND m.media_type = 'video'""",
+                (user_id, user_id),
+            ).fetchall()
+        )
+        return {
+            "stars_balance": int(user["stars"] or 0) if user else 0,
+            "direct_chats": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'direct'", (user_id,)),
+            "channels_joined": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'channel' AND c.owner_id != ?", (user_id, user_id)),
+            "communities_joined": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'community'", (user_id,)),
+            "groups_joined": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'group'", (user_id,)),
+            "channels_created": count("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = 'channel'", (user_id,)),
+            "communities_created": count("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = 'community'", (user_id,)),
+            "groups_created": count("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = 'group'", (user_id,)),
+            "channel_subscribers": audience("channel"),
+            "community_subscribers": audience("community"),
+            "group_subscribers": audience("group"),
+            "messages": count("SELECT count(*) AS count FROM messages WHERE sender_id = ?", (user_id,)),
+            "posts": count("SELECT count(*) AS count FROM profile_posts WHERE user_id = ?", (user_id,)),
+            "stories": count("SELECT count(*) AS count FROM stories WHERE user_id = ?", (user_id,)),
+            "reviews": count("SELECT count(*) AS count FROM reviews WHERE created_by = ?", (user_id,)),
+            "donations_sent": count("SELECT count(*) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_sent'", (user_id,)),
+            "stars_donated": count("SELECT COALESCE(SUM(ABS(amount)), 0) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_sent'", (user_id,)),
+            "donations_received": count("SELECT count(*) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_received'", (user_id,)),
+            "login_streak": int(user["login_streak"] or 0) if user else 0,
+            "completed_calls": count("SELECT count(*) AS count FROM calls WHERE (caller_id = ? OR receiver_id = ?) AND answer_sdp IS NOT NULL", (user_id, user_id)),
+            "call_partners": count("SELECT count(DISTINCT CASE WHEN caller_id = ? THEN receiver_id ELSE caller_id END) AS count FROM calls WHERE (caller_id = ? OR receiver_id = ?) AND answer_sdp IS NOT NULL", (user_id, user_id, user_id)),
+            "chat_pro_review_video": int(review_video),
+        }
+
+    def activity_rewards_data(self, con, user_id):
+        metrics = self.activity_metrics(con, user_id)
+        account_level = self.account_level_data(con, user_id)
+        level_indexes = {level["id"]: index for index, level in enumerate(account_level["levels"])}
+        current_level_index = level_indexes.get(account_level["current"]["id"], -1)
+        rewards = []
+        for row in con.execute("SELECT * FROM activity_rewards WHERE active = 1 ORDER BY created_at DESC").fetchall():
+            reward = dict(row)
+            criteria = self.normalize_activity_criteria(loads(reward.pop("criteria_json"), {}))
+            reward_data = loads(reward.get("reward_json"), {})
+            try:
+                reward["reward"] = normalize_level_reward(reward_data or {
+                    "stars": reward["reward_stars"],
+                    "premiumDays": reward["premium_days"],
+                }, "reward")
+            except ValueError:
+                reward["reward"] = {"stars": reward["reward_stars"], "premiumDays": reward["premium_days"], "limits": {}, "recurringStars": 0, "recurringIntervalDays": 0, "recurringDurationDays": 0, "accountLevelId": "", "recommendOwnChannel": False}
+            reward["criteria"] = criteria
+            reward["progress"] = {key: min(metrics.get(key, 0), target) for key, target in criteria.items()}
+            reward["claimed"] = bool(con.execute("SELECT 1 FROM activity_reward_claims WHERE reward_id = ? AND user_id = ?", (reward["id"], user_id)).fetchone())
+            target_level_index = level_indexes.get(reward["reward"]["accountLevelId"], -1)
+            reward["levelAvailable"] = not reward["reward"]["accountLevelId"] or target_level_index >= current_level_index
+            reward["available"] = not reward["claimed"] and reward["levelAvailable"] and all(metrics.get(key, 0) >= target for key, target in criteria.items())
+            rewards.append(reward)
+        return rewards
+
+    def claim_activity_reward(self, con, user, reward_id, channel_id=None):
+        reward = con.execute("SELECT * FROM activity_rewards WHERE id = ? AND active = 1", (str(reward_id or ""),)).fetchone()
+        if not reward:
+            raise ValueError("Награда не найдена.")
+        already_claimed = con.execute("SELECT 1 FROM activity_reward_claims WHERE reward_id = ? AND user_id = ?", (reward["id"], user["id"])).fetchone()
+        if already_claimed:
+            raise ValueError("Эта награда уже получена.")
+        criteria = self.normalize_activity_criteria(loads(reward["criteria_json"], {}))
+        metrics = self.activity_metrics(con, user["id"])
+        unmet = [key for key, target in criteria.items() if metrics.get(key, 0) < target]
+        if unmet:
+            raise ValueError("Условия награды ещё не выполнены.")
+        reward_data = loads(reward["reward_json"], {})
+        reward_benefits = normalize_level_reward(reward_data or {
+            "stars": reward["reward_stars"],
+            "premiumDays": reward["premium_days"],
+        }, "reward")
+        account_level_id = reward_benefits["accountLevelId"]
+        if account_level_id:
+            account_level = self.account_level_data(con, user["id"])
+            target_index = next((index for index, level in enumerate(account_level["levels"]) if level["id"] == account_level_id), None)
+            current_index = next((index for index, level in enumerate(account_level["levels"]) if level["id"] == account_level["current"]["id"]), -1)
+            if target_index is None:
+                raise ValueError("Уровень этой награды больше не существует.")
+            if target_index < current_index:
+                raise ValueError("Нельзя получить уровень ниже текущего.")
+        selected_channel_id = str(channel_id or "").strip()
+        if reward_benefits["recommendOwnChannel"]:
+            channel = con.execute(
+                "SELECT id FROM chats WHERE id = ? AND type = 'channel' AND owner_id = ?",
+                (selected_channel_id, user["id"]),
+            ).fetchone()
+            if not channel:
+                raise ValueError("Выберите свой канал для добавления в рекомендации.")
+            if con.execute("SELECT 1 FROM recommended_groups WHERE chat_id = ?", (selected_channel_id,)).fetchone():
+                raise ValueError("Этот канал уже находится в рекомендациях.")
+        con.execute("INSERT INTO activity_reward_claims(reward_id,user_id,claimed_at) VALUES (?,?,?)", (reward["id"], user["id"], now()))
+        if account_level_id:
+            con.execute(
+                "INSERT INTO account_level_reward_grants(user_id,level_id,reward_id,granted_at) VALUES (?,?,?,?)",
+                (user["id"], account_level_id, reward["id"], now()),
+            )
+        if reward_benefits["recommendOwnChannel"]:
+            con.execute(
+                "INSERT INTO recommended_groups(chat_id,position,created_at) VALUES (?,?,?)",
+                (selected_channel_id, 100, now()),
+            )
+        if reward_benefits["stars"]:
+            self.credit_stars(con, user["id"], reward_benefits["stars"])
+            self.record_star_transaction(con, user["id"], reward_benefits["stars"], "activity_reward", f"Награда за активность «{reward['title']}»")
+        self.apply_reward_benefits(con, user["id"], "activity_reward", reward["id"], reward["title"], reward_benefits)
+        return self.json({"ok": True})
+
+    def account_level_data(self, con, user_id, configured_levels=None):
+        if configured_levels is None:
+            row = con.execute("SELECT value FROM settings WHERE key='account_levels'").fetchone()
+            configured_levels = loads(row["value"], []) if row else []
+        try:
+            levels = normalize_account_levels(configured_levels)
+        except ValueError:
+            levels = []
+        activity = self.activity_metrics(con, user_id)
+        activity.update({
+            "communities": activity["communities_created"],
+            "channels": activity["channels_created"],
+        })
+        purchased_ids = {
+            row["level_id"] for row in con.execute("SELECT level_id FROM account_level_purchases WHERE user_id = ?", (user_id,)).fetchall()
+        }
+        granted_ids = {
+            row["level_id"] for row in con.execute("SELECT level_id FROM account_level_reward_grants WHERE user_id = ?", (user_id,)).fetchall()
+        }
+        granted_index = max((index for index, level in enumerate(levels) if level["id"] in granted_ids), default=-1)
+        current_index = -1
+        level_states = []
+        for index, level in enumerate(levels):
+            criteria = level.get("criteria", {}) or {}
+            earned = all(activity.get(key, 0) >= value for key, value in criteria.items())
+            purchased = level["id"] in purchased_ids
+            granted = index <= granted_index
+            unlocked = granted or index == 0 or (current_index == index - 1 and (earned or purchased))
+            if unlocked:
+                current_index = index
+            claimed = bool(con.execute("SELECT 1 FROM account_level_rewards WHERE user_id = ? AND level_id = ?", (user_id, level["id"])).fetchone())
+            level_states.append({**level, "earned": earned, "purchased": purchased, "granted": granted, "unlocked": unlocked, "rewardClaimed": claimed, "rewardAvailable": unlocked and not claimed})
+        current = level_states[current_index] if current_index >= 0 else {"id": "regular", "title": "Обычный", "description": "Стандартный аккаунт.", "limits": {}, "reward": {"stars": 0}}
+        next_level = level_states[current_index + 1] if current_index + 1 < len(level_states) else None
+        return {
+            "current": current,
+            "next": next_level,
+            "levels": level_states,
+            "activity": activity,
+            "limits": self.effective_limits(con, user_id, current),
+            "rewardClaimed": bool(current.get("rewardClaimed", False)),
+        }
+
+    def claim_account_level_reward(self, con, user, level_id):
+        data = self.account_level_data(con, user["id"])
+        level = next((item for item in data["levels"] if item["id"] == str(level_id or "")), None)
+        if not level or not level["unlocked"]:
+            raise ValueError("Награда доступна только за открытый уровень.")
+        if level["rewardClaimed"]:
+            raise ValueError("Награда за этот уровень уже получена.")
+        reward = level.get("reward", {}) or {}
+        stars = max(0, int(reward.get("stars", 0) or 0))
+        con.execute("INSERT INTO account_level_rewards(user_id,level_id,claimed_at) VALUES (?,?,?)", (user["id"], level["id"], now()))
+        if stars:
+            self.credit_stars(con, user["id"], stars)
+            self.record_star_transaction(con, user["id"], stars, "level_reward", f"Награда за уровень «{level['title']}»")
+        self.apply_reward_benefits(con, user["id"], "account_level_reward", level["id"], level["title"], reward)
+        return self.json({"ok": True})
+
+    def buy_account_level(self, con, user, level_id):
+        data = self.account_level_data(con, user["id"])
+        next_level = data["next"]
+        if not next_level or next_level["id"] != str(level_id or ""):
+            raise ValueError("Купить можно только следующий уровень аккаунта.")
+        price = int(next_level.get("starsPrice", 0) or 0)
+        if price <= 0:
+            raise ValueError("Этот уровень нельзя купить за звёзды.")
+        debited = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (price, user["id"], price)).rowcount
+        if not debited:
+            raise ValueError("Недостаточно звёзд для покупки уровня.")
+        con.execute("INSERT INTO account_level_purchases(user_id,level_id,purchased_at) VALUES (?,?,?)", (user["id"], next_level["id"], now()))
+        self.record_star_transaction(con, user["id"], -price, "account_level_purchase", f"Покупка уровня «{next_level['title']}»")
+        reward = next_level.get("purchaseReward", {})
+        stars = int(reward.get("stars", 0) or 0)
+        if stars:
+            self.credit_stars(con, user["id"], stars)
+            self.record_star_transaction(con, user["id"], stars, "account_level_purchase_reward", f"Награда за покупку уровня «{next_level['title']}»")
+        self.apply_reward_benefits(con, user["id"], "account_level_purchase", next_level["id"], next_level["title"], reward)
+        return self.json({"ok": True})
+
+    def start_call(self, con, user, body):
+        chat_id = body.get("chatId")
+        call_type = body.get("callType")
+        offer_sdp = body.get("offerSdp")
+        if call_type not in ("audio", "video") or not isinstance(offer_sdp, dict):
+            raise ValueError("Некорректные данные звонка.")
+        chat = con.execute("SELECT * FROM chats WHERE id = ? AND type = 'direct'", (chat_id,)).fetchone()
+        if not chat or not con.execute("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"])).fetchone():
+            raise PermissionError()
+        receiver = con.execute("SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id != ?", (chat_id, user["id"])).fetchone()
+        if not receiver:
+            raise ValueError("Собеседник не найден.")
+        con.execute("UPDATE calls SET status = 'ended', updated_at = ? WHERE chat_id = ? AND status IN ('ringing','accepted')", (now(), chat_id))
+        call_id = uid("call")
+        con.execute(
+            """INSERT INTO calls(id,chat_id,caller_id,receiver_id,call_type,offer_sdp,status,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (call_id, chat_id, user["id"], receiver["user_id"], call_type, dumps(offer_sdp), "ringing", now(), now()),
+        )
+        return self.json({"ok": True, "callId": call_id})
+
+    def require_active_account_level(self, con, user_id):
+        data = self.account_level_data(con, user_id)
+        active_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == "active"), None)
+        current_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == data["current"]["id"]), -1)
+        if active_index is None or current_index < active_index:
+            raise ValueError("Эта функция доступна с уровня «Активный». Повысьте уровень аккаунта.")
+
+    def poll_calls(self, con, user):
+        rows = con.execute(
+            """SELECT * FROM calls WHERE (caller_id = ? OR receiver_id = ?) AND status IN ('ringing','accepted')
+               ORDER BY created_at DESC""",
+            (user["id"], user["id"]),
+        ).fetchall()
+        calls = []
+        for row in rows:
+            caller = con.execute("SELECT name,username,call_ringtone FROM users WHERE id=?", (row["caller_id"],)).fetchone()
+            calls.append({
+                "id": row["id"], "chatId": row["chat_id"], "callerId": row["caller_id"], "receiverId": row["receiver_id"],
+                "callType": row["call_type"], "offerSdp": loads(row["offer_sdp"], {}), "answerSdp": loads(row["answer_sdp"], None),
+                "status": row["status"], "callerName": caller["name"] if caller else "Пользователь", "callerRingtone": caller["call_ringtone"] if caller else "classic", "createdAt": row["created_at"],
+            })
+        return self.json({"ok": True, "calls": calls})
+
+    def answer_call(self, con, user, body):
+        call_id = body.get("callId")
+        answer_sdp = body.get("answerSdp")
+        row = con.execute("SELECT * FROM calls WHERE id = ?", (call_id,)).fetchone()
+        if not row or row["receiver_id"] != user["id"] or row["status"] != "ringing":
+            raise ValueError("Этот звонок больше недоступен.")
+        con.execute("UPDATE calls SET answer_sdp = ?, status = 'accepted', updated_at = ? WHERE id = ?", (dumps(answer_sdp), now(), call_id))
+        return self.json({"ok": True})
+
+    def end_call(self, con, user, body):
+        call_id = body.get("callId")
+        row = con.execute("SELECT * FROM calls WHERE id = ?", (call_id,)).fetchone()
+        if not row or user["id"] not in (row["caller_id"], row["receiver_id"]):
+            raise PermissionError()
+        con.execute("UPDATE calls SET status = 'ended', updated_at = ? WHERE id = ?", (now(), call_id))
+        return self.json({"ok": True})
+
+    def ensure_saved(self, con, user_id):
+        existing = con.execute("SELECT 1 FROM chats c JOIN chat_members m ON m.chat_id=c.id WHERE c.type='saved' AND m.user_id=?", (user_id,)).fetchone()
+        if existing:
+            return
+        chat_id = uid("chat")
+        con.execute("INSERT INTO chats(id,type,title,owner_id,subscriber_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (chat_id, "saved", "Избранное", user_id, 1, now(), now()))
+        con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, user_id, "owner", now()))
+
+    def evaluate_statuses(self, con, user_id):
+        user = con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        statuses = con.execute("SELECT * FROM statuses WHERE active=1").fetchall()
+        for status in statuses:
+            criteria = loads(status["criteria_json"], {}) or {}
+            ok = True
+            if criteria.get("minStars") and user["stars"] < int(criteria["minStars"]):
+                ok = False
+            if criteria.get("minReviews"):
+                count = con.execute("SELECT count(*) c FROM reviews WHERE created_by=?", (user_id,)).fetchone()["c"]
+                ok = ok and count >= int(criteria["minReviews"])
+            if ok:
+                con.execute("INSERT OR IGNORE INTO user_statuses(status_id,user_id,created_at) VALUES (?,?,?)", (status["id"], user_id, now()))
+
+    def admin_bootstrap(self, con):
+        settings = {r["key"]: loads(r["value"], {}) for r in con.execute("SELECT * FROM settings").fetchall()}
+        users = [public_user(r) for r in con.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()]
+        chats = [chat_to_dict(r) for r in con.execute("SELECT * FROM chats ORDER BY updated_at DESC").fetchall()]
+        members = [dict(r) for r in con.execute("SELECT * FROM chat_members").fetchall()]
+        messages = []
+        for row in con.execute("SELECT * FROM messages ORDER BY created_at DESC LIMIT 200").fetchall():
+            item = message_to_dict(row)
+            item["deletedByAdmin"] = bool(row["deleted_by_admin"])
+            messages.append(item)
+        promos = [dict(r) for r in con.execute("SELECT * FROM promotions ORDER BY created_at DESC").fetchall()]
+        recommended = [dict(r) for r in con.execute("SELECT * FROM recommended_groups ORDER BY position, created_at").fetchall()]
+        activity_rewards = []
+        for row in con.execute("SELECT * FROM activity_rewards ORDER BY created_at DESC").fetchall():
+            reward = dict(row)
+            reward["criteria"] = self.normalize_activity_criteria(loads(reward.pop("criteria_json"), {}))
+            reward_data = loads(reward.get("reward_json"), {})
+            try:
+                reward["reward"] = normalize_level_reward(reward_data or {
+                    "stars": reward["reward_stars"],
+                    "premiumDays": reward["premium_days"],
+                }, "reward")
+            except ValueError:
+                reward["reward"] = {"stars": reward["reward_stars"], "premiumDays": reward["premium_days"], "limits": {}, "recurringStars": 0, "recurringIntervalDays": 0, "recurringDurationDays": 0}
+            reward["claimsCount"] = con.execute("SELECT count(*) AS count FROM activity_reward_claims WHERE reward_id = ?", (reward["id"],)).fetchone()["count"]
+            activity_rewards.append(reward)
+        statuses = [dict(r) for r in con.execute("SELECT * FROM statuses ORDER BY created_at DESC").fetchall()]
+        boosts = [dict(r) for r in con.execute("SELECT * FROM boost_jobs ORDER BY created_at DESC").fetchall()]
+        demo_activity_packages = [dict(r) for r in con.execute("SELECT * FROM demo_activity_packages ORDER BY created_at DESC").fetchall()]
+        demo_activity_subscriptions = [dict(r) for r in con.execute(
+            """SELECT subscription.*, package.title AS package_title, chat.title AS channel_title
+               FROM demo_activity_subscriptions subscription
+               JOIN demo_activity_packages package ON package.id = subscription.package_id
+               JOIN chats chat ON chat.id = subscription.channel_id
+               ORDER BY subscription.created_at DESC LIMIT 50"""
+        ).fetchall()]
+        channel_growth_jobs = [dict(r) for r in con.execute(
+            """SELECT job.*, chat.title AS channel_title FROM channel_growth_jobs job
+               JOIN chats chat ON chat.id = job.channel_id ORDER BY job.created_at DESC LIMIT 50"""
+        ).fetchall()]
+        automated_commenters = [dict(r) for r in con.execute(
+            """SELECT ac.id, ac.user_id, ac.created_at, u.name, u.username, u.avatar_data
+               FROM automated_commenters ac JOIN users u ON u.id = ac.user_id
+               ORDER BY ac.created_at DESC"""
+        ).fetchall()]
+        automated_comment_rules = [dict(r) for r in con.execute(
+            """SELECT rule.*, c.title AS channel_title,
+                      message.text AS target_message_text,
+                      (SELECT count(*) FROM automated_comment_jobs job WHERE job.rule_id = rule.id) AS pending_count
+               FROM automated_comment_rules rule
+               JOIN chats c ON c.id = rule.channel_id
+               LEFT JOIN messages message ON message.id = rule.target_message_id
+               ORDER BY rule.created_at DESC"""
+        ).fetchall()]
+        reports = [dict(r) for r in con.execute(
+            """SELECT r.*, u.name AS reporter_name, u.username AS reporter_username,
+                      s.caption AS story_caption, s.media_data AS story_media_data,
+                      m.text AS message_text, m.media_type AS message_media_type, m.deleted_by_admin AS message_deleted_by_admin,
+                      c.title AS group_title, reported_channel.title AS channel_title
+               FROM reports r
+               LEFT JOIN users u ON u.id = r.created_by
+               LEFT JOIN stories s ON r.target_type = 'story' AND s.id = r.target_id
+               LEFT JOIN messages m ON r.target_type = 'group-post' AND m.id = r.target_id
+               LEFT JOIN chats c ON c.id = m.chat_id
+               LEFT JOIN chats reported_channel ON r.target_type = 'channel' AND reported_channel.id = r.target_id
+               ORDER BY r.created_at DESC LIMIT 200"""
+        ).fetchall()]
+        return self.json({"ok": True, "settings": settings, "users": users, "chats": chats, "members": members, "messages": messages, "promotions": promos, "recommended": recommended, "activityRewards": activity_rewards, "statuses": statuses, "boosts": boosts, "channelGrowthJobs": channel_growth_jobs, "demoActivityPackages": demo_activity_packages, "demoActivitySubscriptions": demo_activity_subscriptions, "reports": reports, "automatedCommenters": automated_commenters, "automatedCommentRules": automated_comment_rules, "adminKeyHint": "По умолчанию: admin123"})
+
+    def read_json(self):
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length == 0:
+            return {}
+        return json.loads(self.rfile.read(length).decode("utf-8"))
+
+    def require_user(self, user):
+        if not user:
+            raise PermissionError()
+
+    def require_admin(self):
+        if self.headers.get("X-Admin-Key") != ADMIN_KEY:
+            raise PermissionError()
+
+    def json(self, payload, status=HTTPStatus.OK):
+        data = dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_file(self, path: Path):
+        if not path.resolve().is_relative_to(ROOT) or not path.exists() or path.is_dir():
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        data = path.read_bytes()
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, fmt, *args):
+        print(f"{self.address_string()} - {fmt % args}")
+
+
+def normalize_username(value) -> str:
+    return str(value or "").strip().lower().removeprefix("@")
+
+
+def is_review_url(value) -> bool:
+    return str(value or "").strip().lower().startswith(("http://", "https://"))
+
+
+def is_review_phone(value) -> bool:
+    digits = re.sub(r"\D", "", str(value or ""))
+    return 7 <= len(digits) <= 15 and bool(re.fullmatch(r"[+\d()\-\s.]+", str(value or "").strip()))
+
+
+def is_review_telegram(value) -> bool:
+    return bool(re.fullmatch(r"@?[A-Za-z0-9_]{3,64}", str(value or "").strip()))
+
+
+def normalize_review_source(value) -> str:
+    source = " ".join(str(value or "").strip().split())
+    if is_review_url(source):
+        return source
+    if is_review_phone(source):
+        return "+" + re.sub(r"\D", "", source)
+    if is_review_telegram(source):
+        return f"@{source.removeprefix('@').lower()}"
+    return source.casefold()
+
+
+def validate_username(username: str) -> None:
+    if len(username) < 3 or len(username) > 20:
+        raise ValueError("Username должен быть от 3 до 20 символов.")
+    if not all(ch.isalnum() or ch == "_" for ch in username) or not username.isascii():
+        raise ValueError("Username может содержать только латиницу, цифры и подчёркивание.")
+
+
+def run_background_worker() -> None:
+    reward_processor = object.__new__(Handler)
+    while True:
+        try:
+            with connect() as con:
+                tick_boosts(con)
+                tick_channel_growth(con)
+                tick_demo_activity(con)
+                publish_scheduled_posts(con)
+                poll_telegram_channels(con)
+                poll_rss_channels(con)
+                poll_vk_channels(con)
+                publish_automated_comments(con)
+                reward_processor.process_recurring_star_rewards(con)
+                reward_processor.process_ai_agent_autopilots(con)
+                reward_processor.process_ai_agent_channel_rules(con)
+        except sqlite3.Error as error:
+            print(f"Ошибка фоновой обработки: {error}")
+        time.sleep(5)
+
+
+def main():
+    init_db()
+    threading.Thread(target=run_background_worker, name="background-worker", daemon=True).start()
+    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    print(f"Chat-Pro запущен: http://{HOST}:{PORT}")
+    print(f"Админка: http://{HOST}:{PORT}/admin")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
