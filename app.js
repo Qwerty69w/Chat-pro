@@ -38,6 +38,31 @@ let EMOJI_SET = `
 `.trim().split(/\s+/);
 const FIRST_FACE_EMOJI = EMOJI_SET.indexOf("😀");
 if (FIRST_FACE_EMOJI > 0) EMOJI_SET = [...EMOJI_SET.slice(FIRST_FACE_EMOJI), ...EMOJI_SET.slice(0, FIRST_FACE_EMOJI)];
+const CHANNEL_REACTION_OPTIONS = ["👍", "❤️", "🔥", "👏", "🤩", "⚡", "🎉", "😍", "😢", "🤔", "👎", "💯"];
+const DEFAULT_CHANNEL_REACTIONS = ["👍", "❤️", "🔥", "👏", "🤩", "⚡"];
+const CALL_RINGTONES = [
+  { id: "classic", title: "Классический", description: "Спокойный стандартный сигнал" },
+  { id: "pulse", title: "Пульс", description: "Ритмичный двойной сигнал" },
+  { id: "bright", title: "Яркий", description: "Более высокий и заметный сигнал" },
+];
+
+function channelReactionEmojis() {
+  const configured = state?.settings?.channel_reactions;
+  return Array.isArray(configured) && configured.length
+    ? configured.filter((emoji) => CHANNEL_REACTION_OPTIONS.includes(emoji))
+    : DEFAULT_CHANNEL_REACTIONS;
+}
+
+function availableMessageReactions(chat) {
+  return chat?.type === "channel" ? channelReactionEmojis() : ["❤️", ...EMOJI_SET.filter((emoji) => emoji !== "❤️")];
+}
+
+function hasActiveAccountLevel() {
+  const levels = state?.accountLevel?.levels || [];
+  const activeIndex = levels.findIndex((level) => level.id === "active");
+  const currentIndex = levels.findIndex((level) => level.id === state?.accountLevel?.current?.id);
+  return activeIndex >= 0 && currentIndex >= activeIndex;
+}
 
 const app = document.querySelector("#app");
 let token = localStorage.getItem(TOKEN_KEY) || "";
@@ -65,6 +90,13 @@ let publicLegal = null;
 let publicBranding = null;
 let chatActivityPingTimer = null;
 let lastChatActivity = { chatId: null, activity: "", sentAt: 0 };
+let globalSearchTimer = null;
+let globalSearchRequest = 0;
+let activeChatSearchOpen = false;
+let activeChatSearchQuery = "";
+let activeChatSearchTimer = null;
+let highlightedMessageSearch = { chatId: null, query: "" };
+let aiAgentConversation = [];
 const pendingOutgoingMessages = new Map();
 
 function pinIcon(className = "") {
@@ -226,17 +258,20 @@ async function start() {
         }
       } catch (error) { toast(error.message, true); }
     }
-    const inviteCode = window.location.pathname.match(/^\/invite\/([^/]+)$/)?.[1];
+    const channelMatch = window.location.pathname.match(/^\/channel\/([^/]+)(?:\/post\/[^/]+)?$/);
+    const inviteCode = channelMatch?.[1] || window.location.pathname.match(/^\/invite\/([^/]+)$/)?.[1];
+    const linkedPostId = channelMatch && window.location.pathname.match(/^\/channel\/[^/]+\/post\/([^/]+)$/)?.[1];
     if (inviteCode) {
       window.history.replaceState({}, "", "/");
       try {
         const result = await api("/api/invites/join", { method: "POST", body: { code: inviteCode } });
         activeChatId = result.chatId || null;
         await loadState();
-        toast("Вы вступили в группу по ссылке.");
+        toast(channelMatch ? "Вы открыли канал по ссылке." : "Вы вступили в группу по ссылке.");
       } catch (error) { toast(error.message, true); }
     }
     renderApp();
+    if (linkedPostId) requestAnimationFrame(() => document.querySelector(`#message-${CSS.escape(linkedPostId)}`)?.scrollIntoView({ block: "center" }));
     beginCallPolling();
     beginMessagePolling();
   } catch {
@@ -277,6 +312,27 @@ async function api(path, options = {}) {
   const data = await response.json();
   if (!response.ok || data.ok === false) throw new Error(data.error || "Ошибка запроса");
   return data;
+}
+
+async function uploadMessageAttachment(chatId, file) {
+  const mediaType = file.type.startsWith("image/") ? "photo" : file.type.startsWith("video/") ? "video" : "document";
+  const upload = await api("/api/media/messages/upload", {
+    method: "POST",
+    body: {
+      chatId,
+      mediaType,
+      fileName: file.name,
+      contentType: file.type,
+      sizeBytes: file.size,
+    },
+  });
+  const response = await fetch(upload.uploadUrl, {
+    method: "PUT",
+    headers: upload.uploadHeaders || {},
+    body: file,
+  });
+  if (!response.ok) throw new Error("Не удалось загрузить файл в хранилище.");
+  return { mediaType, mediaKey: upload.mediaKey, fileName: file.name, previewUrl: URL.createObjectURL(file) };
 }
 
 async function loadState() {
@@ -522,11 +578,12 @@ function renderApp() {
             <span class="profile-menu-arrow" aria-hidden="true">⌄</span>
           </button>
           <nav class="nav menu-drawer${menuOpen ? " open" : ""}" aria-hidden="${!menuOpen}">
-            ${navButton("chats", "Чаты", "💬")}${navButton("profile", "Профиль", "◉")}${navButton("channels", "Создать канал", "")}${navButton("autoposting", "Автопостинг в соцсети", "")}${navButton("community", "Создать беседу", "👥")}${navButton("secret-chat", "Скрытый чат", "")}${navButton("stars", "Звёзды", "★")}${navButton("account-level", "Уровень аккаунта", "✦")}${navButton("reviews", "Отзывы о действиях людей", "★")}${navButton("activity-rewards", "Награды за активность", "✧")}${navButton("wallpapers", "Оформление диалогов", "")}${navButton("settings", "Настройки", "⚙")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a>
+            ${navButton("chats", "Чаты", "💬")}${navButton("profile", "Профиль", "◉")}${navButton("ai-agent", "ИИ-агент", "")}${navButton("channels", "Создать канал", "")}${navButton("autoposting", "Автопостинг в соцсети", "")}${navButton("community", "Создать беседу", "👥")}${navButton("secret-chat", "Скрытый чат", "")}${navButton("stars", "Звёзды", "★")}${navButton("account-level", "Уровень аккаунта", "✦")}${navButton("reviews", "Отзывы о действиях людей", "★")}${navButton("activity-rewards", "Награды за активность", "✧")}${navButton("wallpapers", "Оформление диалогов", "")}${navButton("settings", "Настройки", "⚙")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a>
           </nav>
         </header>
         <div class="list" id="leftList"></div>
       </aside>
+      <div class="sidebar-resize-handle" data-resize-sidebar role="separator" aria-orientation="vertical" aria-label="Изменить ширину списка чатов"></div>
       <section class="chat-panel" id="chatPanel"></section>
 
     </main>`;
@@ -545,8 +602,52 @@ function renderApp() {
     menu.classList.toggle("open", menuOpen);
     menu.setAttribute("aria-hidden", String(!menuOpen));
   });
+  bindSidebarResize(app.querySelector(".app-shell"), app.querySelector("[data-resize-sidebar]"));
   renderLeft();
   renderChat();
+}
+
+function syncMobileViewportHeight() {
+  const viewport = window.visualViewport;
+  const height = Math.round(viewport?.height || window.innerHeight);
+  document.documentElement.style.setProperty("--mobile-viewport-height", `${height}px`);
+}
+
+syncMobileViewportHeight();
+window.addEventListener("resize", syncMobileViewportHeight, { passive: true });
+window.visualViewport?.addEventListener("resize", syncMobileViewportHeight, { passive: true });
+window.visualViewport?.addEventListener("scroll", syncMobileViewportHeight, { passive: true });
+
+function bindSidebarResize(shell, handle) {
+  if (!shell || !handle || !window.matchMedia("(min-width: 761px)").matches) return;
+  const storageKey = "chatpro_sidebar_width_v1";
+  const minimum = 240;
+  const maximum = 520;
+  const savedWidth = Number(localStorage.getItem(storageKey));
+  const setWidth = (width) => {
+    const available = Math.max(minimum, shell.clientWidth - 280);
+    const value = Math.round(Math.min(Math.max(width, minimum), Math.min(maximum, available)));
+    shell.style.setProperty("--sidebar-width", `${value}px`);
+    return value;
+  };
+  if (Number.isFinite(savedWidth)) setWidth(savedWidth);
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handle.setPointerCapture(event.pointerId);
+    document.body.classList.add("is-resizing-sidebar");
+    const move = (moveEvent) => setWidth(moveEvent.clientX - shell.getBoundingClientRect().left);
+    const finish = () => {
+      document.body.classList.remove("is-resizing-sidebar");
+      localStorage.setItem(storageKey, String(Math.round(parseFloat(shell.style.getPropertyValue("--sidebar-width")) || 330)));
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish, { once: true });
+    window.addEventListener("pointercancel", finish, { once: true });
+  });
 }
 
 function openMenuSection(section) {
@@ -568,7 +669,7 @@ function openMenuSection(section) {
 function openMobileChatMenu() {
   const overlay = document.createElement("div");
   overlay.className = "mobile-chat-menu-overlay";
-  overlay.innerHTML = `<section class="mobile-chat-menu" role="dialog" aria-modal="true" aria-label="Меню чата"><header><div><b>Меню</b><small>Навигация по Chat-Pro</small></div><button type="button" data-close-mobile-chat-menu aria-label="Закрыть меню">×</button></header><div class="mobile-chat-menu__actions"><button class="mobile-chat-menu__chats" type="button" data-mobile-chat-list>${navIcon("chats")}<span>Все чаты</span></button>${["profile", "channels", "autoposting", "community", "secret-chat", "stars", "account-level", "reviews", "activity-rewards", "wallpapers", "settings"].map((section) => navButton(section, ({ profile: "Профиль", channels: "Создать канал", autoposting: "Автопостинг в соцсети", community: "Создать беседу", "secret-chat": "Скрытый чат", stars: "Звёзды", "account-level": "Уровень аккаунта", reviews: "Отзывы о действиях людей", "activity-rewards": "Награды за активность", wallpapers: "Оформление диалогов", settings: "Настройки" })[section], "")).join("")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a></div></section>`;
+  overlay.innerHTML = `<section class="mobile-chat-menu" role="dialog" aria-modal="true" aria-label="Меню чата"><header><div><b>Меню</b><small>Навигация по Chat-Pro</small></div><button type="button" data-close-mobile-chat-menu aria-label="Закрыть меню">×</button></header><div class="mobile-chat-menu__actions"><button class="mobile-chat-menu__chats" type="button" data-mobile-chat-list>${navIcon("chats")}<span>Все чаты</span></button>${["profile", "ai-agent", "channels", "autoposting", "community", "secret-chat", "stars", "account-level", "reviews", "activity-rewards", "wallpapers", "settings"].map((section) => navButton(section, ({ profile: "Профиль", "ai-agent": "ИИ-агент", channels: "Создать канал", autoposting: "Автопостинг в соцсети", community: "Создать беседу", "secret-chat": "Скрытый чат", stars: "Звёзды", "account-level": "Уровень аккаунта", reviews: "Отзывы о действиях людей", "activity-rewards": "Награды за активность", wallpapers: "Оформление диалогов", settings: "Настройки" })[section], "")).join("")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a></div></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-mobile-chat-menu]").addEventListener("click", close);
@@ -594,6 +695,7 @@ function navIcon(id) {
     "secret-chat": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="10" width="13" height="10" rx="2.5"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"/><path d="M12 14v2"/></svg>',
     profile: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.25"/><circle cx="12" cy="12" r="4.7"/></svg>',
     autoposting: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.68"/><path d="M20 4.5v4.18h-4.18"/><path d="M20 12a8 8 0 0 1-13.66 5.66L4 15.32"/><path d="M4 19.5v-4.18h4.18"/><path d="M9 12h6M12 9v6"/></svg>',
+    "ai-agent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="4"/><path d="M12 2.5v2M9 12h.01M15 12h.01M9 15.25c1.8 1.15 4.2 1.15 6 0M2.5 11.5H4M20 11.5h1.5"/></svg>',
     stars: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.7 5.55 6.12.88-4.43 4.31 1.05 6.1L12 16.77l-5.44 2.86 1.05-6.1-4.43-4.31 6.12-.88L12 2.8Z"/></svg>',
     "account-level": '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2 14.2 9.8 20.8 12l-6.6 2.2L12 20.8l-2.2-6.6L3.2 12l6.6-2.2L12 3.2Z"/></svg>',
     reviews: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3" width="17" height="18" rx="3"/><path d="m12 7 1.05 2.13 2.35.34-1.7 1.65.4 2.33L12 12.35l-2.1 1.1.4-2.33-1.7-1.65 2.35-.34L12 7Z"/><path d="M7.5 17h9"/></svg>',
@@ -616,6 +718,7 @@ function renderLeft() {
   if (activeSection === "community") return renderGroupsList(box, "community");
   if (activeSection === "channels") return renderGroupsList(box, "channel");
   if (activeSection === "autoposting") return renderAutopostingPanel(box);
+  if (activeSection === "ai-agent") return renderAiAgentPanel(box);
   if (activeSection === "stars") return renderStarsPanel(box);
   if (activeSection === "account-level") return renderAccountLevelPanel(box);
   if (activeSection === "reviews") return renderReviewsPanel(box);
@@ -636,11 +739,11 @@ function renderChatsList(box) {
   const channelsHtml = chats.map(chatRow).join("") || (recommendedChannels.length ? '<p class="muted">Здесь появятся ваши диалоги. А пока — интересные каналы.</p>' : '<p class="muted">Пока нет диалогов.</p>');
   const recommendationsHtml = recommendedChannels.length ? `<section class="recommended-channels"><div class="recommended-channels__title"><b>Рекомендованные каналы</b><span>Подборка для вас</span></div>${recommendedChannels.map(recommendedChannelRow).join("")}</section>` : "";
   const activityPromoHtml = hasOnlySavedChats ? `<section class="activity-rewards-promo"><b>Проявляйте активность и получайте звёзды!</b><button class="button small" type="button" data-open-activity-rewards>Подробнее</button></section>` : "";
-  box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="userSearch" placeholder="username"></label><div id="searchResults"></div>${channelsHtml}${recommendationsHtml}${activityPromoHtml}`;
+  box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск сообщений и людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="globalSearch" placeholder="Поиск сообщений и людей"></label><div id="searchResults"></div>${channelsHtml}${recommendationsHtml}${activityPromoHtml}`;
   box.querySelectorAll("[data-chat-filter]").forEach((button) => button.addEventListener("click", () => { chatFilter = button.dataset.chatFilter; renderChatsList(box); }));
   bindChatRows(box);
   bindStoriesStrip(box);
-  box.querySelector("#userSearch").addEventListener("input", searchUsers);
+  box.querySelector("#globalSearch").addEventListener("input", searchGlobal);
   box.querySelector("[data-open-activity-rewards]")?.addEventListener("click", () => openMenuSection("activity-rewards"));
   box.querySelectorAll("[data-open-recommended-channel]").forEach((button) => button.addEventListener("click", () => {
     activeChatId = button.dataset.openRecommendedChannel;
@@ -657,6 +760,36 @@ function renderArchiveList(box) {
   const chats = visibleChats(true);
   box.innerHTML = `<div class="panel-title"><b>Архив</b><span class="muted">${chats.length}</span></div><p class="muted">Здесь находятся чаты, которые вы убрали из общего списка.</p>${chats.map(chatRow).join("") || '<p class="muted">Архив пока пуст.</p>'}`;
   bindChatRows(box);
+}
+
+function renderAiAgentPanel(box) {
+  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-агент</b><small>Ваш личный помощник в Chat‑Pro.</small></div><span class="badge">Полный доступ</span></div>
+    <section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><ul class="ai-agent-capabilities"><li>Объяснить возможности Chat‑Pro, настройки и уровни аккаунта.</li><li>Подсказать, как искать нужные сообщения и подготовить ответ собеседнику.</li><li>Рассказать, как настроить автопилот личных диалогов и шаблоны из «Избранного».</li><li>Объяснить ведение собственного канала и репосты из доступных подписок.</li></ul><p class="muted">Опишите задачу своими словами — я подскажу подходящий способ и следующий шаг.</p></section>
+    <section class="card ai-agent-help"><b>Напишите агенту</b><div class="ai-agent-conversation${aiAgentConversation.length ? "" : " hidden"}" data-ai-agent-conversation></div><form data-ai-agent-ask><textarea name="question" maxlength="2000" placeholder="Например: найди сообщение о встрече с Анной в личных диалогах."></textarea><button class="button primary small" type="submit">Отправить</button></form></section></section>`;
+  const conversation = box.querySelector("[data-ai-agent-conversation]");
+  const renderConversation = () => {
+    conversation.innerHTML = aiAgentConversation.map((item) => `<article class="ai-agent-message ai-agent-message--${item.role}"><b>${item.role === "user" ? "Вы" : "ИИ-агент"}</b><span>${esc(item.text)}</span>${item.messages?.length ? `<div class="ai-agent-found-messages">${item.messages.map((message) => `<button type="button" data-ai-agent-open-message="${esc(message.id)}" data-ai-agent-chat="${esc(message.chat_id)}"><b>${esc(message.chat_title)}</b><span>${esc(message.text).slice(0, 220)}</span></button>`).join("")}</div>` : ""}</article>`).join("");
+    conversation.classList.toggle("hidden", !aiAgentConversation.length);
+    conversation.querySelectorAll("[data-ai-agent-open-message]").forEach((item) => item.addEventListener("click", () => openSearchMessage(item.dataset.aiAgentChat, item.dataset.aiAgentOpenMessage, item.textContent)));
+    conversation.scrollTop = conversation.scrollHeight;
+  };
+  renderConversation();
+  box.querySelector("[data-ai-agent-ask]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector("button");
+    const question = String(new FormData(form).get("question") || "").trim();
+    if (!question) return;
+    try {
+      button.disabled = true;
+      aiAgentConversation.push({ role: "user", text: question });
+      renderConversation();
+      const result = await api("/api/ai-agent/ask", { method: "POST", body: { question, history: aiAgentConversation.slice(-10, -1) } });
+      aiAgentConversation.push({ role: "assistant", text: result.answer, messages: result.messages || [] });
+      form.reset();
+      renderConversation();
+    } catch (error) { aiAgentConversation.push({ role: "assistant", text: error.message }); renderConversation(); } finally { button.disabled = false; }
+  });
 }
 
 function renderAutopostingPanel(box) {
@@ -700,15 +833,82 @@ function bindChatRows(box) {
   box.querySelectorAll("[data-chat-menu]").forEach((button) => button.addEventListener("click", () => openChatMenu(button.dataset.chatMenu)));
 }
 
-async function searchUsers(event) {
+function highlightedText(value, query = "") {
+  const text = String(value ?? "");
+  const needle = String(query || "").trim();
+  if (!needle) return esc(text);
+  const escapedNeedle = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.split(new RegExp(`(${escapedNeedle})`, "gi")).map((part, index) => index % 2 ? `<mark class="search-highlight">${esc(part)}</mark>` : esc(part)).join("");
+}
+
+function messageSearchResultHtml(message, query, compact = false) {
+  const title = message.chat_title || state.chats.find((chat) => chat.id === message.chat_id)?.title || "Диалог";
+  const timestamp = message.created_at || message.createdAt;
+  return `<button class="message-search-result${compact ? " message-search-result--compact" : ""}" type="button" data-open-search-message="${esc(message.id)}" data-search-chat="${esc(message.chat_id || message.chatId)}"><span class="message-search-result__body"><small>${esc(title)}</small><b>${highlightedText(message.text, query)}</b></span><time>${timestamp ? starDateFmt(timestamp) : ""}</time></button>`;
+}
+
+function bindMessageSearchResults(target, query) {
+  target.querySelectorAll("[data-open-search-message]").forEach((button) => button.addEventListener("click", () => {
+    openSearchMessage(button.dataset.searchChat, button.dataset.openSearchMessage, query);
+  }));
+}
+
+function openSearchMessage(chatId, messageId, query) {
+  activeSection = "chats";
+  activeChatId = chatId;
+  activeChatSearchOpen = false;
+  activeChatSearchQuery = "";
+  highlightedMessageSearch = { chatId, query };
+  renderApp();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const message = app.querySelector(`#message-${CSS.escape(messageId)}`);
+    if (message) {
+      message.scrollIntoView({ block: "center", behavior: "smooth" });
+      message.classList.add("message--search-match");
+      setTimeout(() => message.classList.remove("message--search-match"), 1800);
+    } else toast("Сообщение больше недоступно.", true);
+  }));
+}
+
+async function searchGlobal(event) {
   const q = event.target.value.trim();
   const target = app.querySelector("#searchResults");
+  clearTimeout(globalSearchTimer);
   if (!q) { target.innerHTML = ""; return; }
+  if (q.length < 2) { target.innerHTML = '<p class="muted search-hint">Введите ещё один символ для поиска сообщений.</p>'; return; }
+  const request = ++globalSearchRequest;
+  target.innerHTML = '<p class="muted search-hint">Ищем сообщения…</p>';
+  globalSearchTimer = setTimeout(async () => {
   try {
-    const data = await api(`/api/users?q=${encodeURIComponent(q)}`);
-    target.innerHTML = data.users.map((u) => `<button class="row" data-open-profile="${u.id}">${avatarHtml(u)}<div class="row__body"><div class="row__title">${esc(u.name)}</div><div class="row__sub">@${esc(u.username)}</div></div><span class="badge">Профиль</span></button>`).join("") || '<p class="muted">Никого не нашли.</p>';
+    const [messageData, userData] = await Promise.all([
+      api(`/api/messages/search?q=${encodeURIComponent(q)}`),
+      api(`/api/users?q=${encodeURIComponent(q)}`),
+    ]);
+    if (request !== globalSearchRequest || !target.isConnected) return;
+    const messages = messageData.messages || [];
+    const users = userData.users || [];
+    target.innerHTML = `${messages.length ? `<section class="search-results-section"><b>Сообщения</b>${messages.map((message) => messageSearchResultHtml(message, q)).join("")}</section>` : ""}${users.length ? `<section class="search-results-section"><b>Люди</b>${users.map((u) => `<button class="row" data-open-profile="${u.id}">${avatarHtml(u)}<div class="row__body"><div class="row__title">${highlightedText(u.name, q)}</div><div class="row__sub">@${highlightedText(u.username, q)}</div></div><span class="badge">Профиль</span></button>`).join("")}</section>` : ""}` || '<p class="muted search-hint">Ничего не найдено.</p>';
+    bindMessageSearchResults(target, q);
     target.querySelectorAll("[data-open-profile]").forEach((btn) => btn.addEventListener("click", () => openProfile(btn.dataset.openProfile)));
   } catch (error) { toast(error.message, true); }
+  }, 220);
+}
+
+async function runChatMessageSearch(chat, query, target, count) {
+  const text = query.trim();
+  if (!text) { target.innerHTML = ""; count.textContent = ""; return; }
+  if (text.length < 2) { target.innerHTML = '<p class="chat-search-empty">Введите ещё один символ.</p>'; count.textContent = ""; return; }
+  target.innerHTML = '<p class="chat-search-empty">Ищем…</p>';
+  try {
+    const response = await api(`/api/messages/search?chatId=${encodeURIComponent(chat.id)}&q=${encodeURIComponent(text)}`);
+    if (!target.isConnected) return;
+    const results = response.messages || [];
+    count.textContent = results.length ? `${results.length}` : "";
+    target.innerHTML = results.length ? results.map((message) => messageSearchResultHtml(message, text, true)).join("") : '<p class="chat-search-empty">Совпадений нет.</p>';
+    bindMessageSearchResults(target, text);
+  } catch (error) {
+    if (target.isConnected) target.innerHTML = `<p class="chat-search-empty">${esc(error.message || "Поиск недоступен.")}</p>`;
+  }
 }
 
 
@@ -717,7 +917,8 @@ function renderProfileScreen() {
   const ownProfile = profileUser.id === state.me.id;
   const posts = (state.posts || []).filter((post) => post.user_id === profileUser.id);
   const stories = (state.stories || []).filter((story) => story.user_id === profileUser.id);
-  app.innerHTML = `<main class="profile-screen"><header class="profile-screen__head"><button class="back-button" data-close-profile aria-label="Вернуться">←</button><b>${ownProfile ? "Мой профиль" : "Профиль"}</b><button class="profile-more" type="button" data-profile-menu="${profileUser.id}" aria-label="Действия с профилем">⋯</button></header><section class="profile-screen__content"><div class="profile-hero"><button class="profile-avatar-button" data-open-media="${esc(profileUser.avatarData || "")}" ${profileUser.avatarData ? "" : "disabled"}>${avatarHtml(profileUser, "avatar profile-avatar")}</button><div><h1>${esc(profileUser.name)} ${premiumBadge(profileUser)}</h1><p class="muted">@${esc(profileUser.username)}</p>${!ownProfile ? `<button class="button primary small" data-message-user="${profileUser.id}">Написать</button>` : ""}</div></div>
+  const avatarSources = [profileUser.avatarData, ...(profileUser.avatarHistory || [])].filter(Boolean);
+  app.innerHTML = `<main class="profile-screen"><header class="profile-screen__head"><button class="back-button" data-close-profile aria-label="Вернуться">←</button><b>${ownProfile ? "Мой профиль" : "Профиль"}</b><button class="profile-more" type="button" data-profile-menu="${profileUser.id}" aria-label="Действия с профилем">⋯</button></header><section class="profile-screen__content"><div class="profile-hero"><button class="profile-avatar-button" data-open-avatar="${profileUser.id}" ${avatarSources.length ? "" : "disabled"}>${avatarHtml(profileUser, "avatar profile-avatar")}</button><div><h1>${esc(profileUser.name)} ${premiumBadge(profileUser)}</h1><p class="muted">@${esc(profileUser.username)}</p>${!ownProfile ? `<button class="button primary small" data-message-user="${profileUser.id}">Написать</button>` : ""}</div></div>
     ${ownProfile ? `<section class="profile-actions"><div class="profile-action-grid"><button class="profile-action-button" type="button" data-profile-action="avatar"><span class="profile-action-button__icon">◉</span><span><b>Аватар</b><small>Фото профиля</small></span></button><button class="profile-action-button" type="button" data-profile-action="post"><span class="profile-action-button__icon">▤</span><span><b>Публикация</b><small>Текст или фото</small></span></button><button class="profile-action-button" type="button" data-profile-action="story"><span class="profile-action-button__icon">◌</span><span><b>История</b><small>На 48 часов</small></span></button></div><form class="card form profile-edit-card" id="avatarForm" data-profile-action-panel="avatar" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">◉</span><div><b>Фото профиля</b><p class="muted">Обновите аватар, который видят друзья.</p></div></div><label>Аватар<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" data-image-preview-input="avatar-preview"></label><img class="profile-upload-preview profile-upload-preview--avatar" data-image-preview="avatar-preview" alt="Предпросмотр нового аватара" hidden><button class="button primary">Загрузить аватар</button></form><form class="card form profile-edit-card" id="postForm" data-profile-action-panel="post" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">▤</span><div><b>Новая публикация</b><p class="muted">Добавьте текст или фото в профиль.</p></div></div><label>Подпись<textarea name="text" placeholder="Что у вас нового?"></textarea></label><label>Фото<input name="photo" type="file" accept="image/png,image/jpeg,image/webp" data-image-preview-input="post-preview"></label><img class="profile-upload-preview" data-image-preview="post-preview" alt="Предпросмотр фото для публикации" hidden><button class="button primary">Опубликовать пост</button></form><form class="card form profile-edit-card" id="storyForm" data-profile-action-panel="story" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">◌</span><div><b>История на 48 часов</b><p class="muted">После выбора фото откроется редактор с текстом и вторым изображением.</p></div></div><label>Основное фото<input name="media" type="file" accept="image/png,image/jpeg,image/webp" required data-image-preview-input="story-preview"></label><img class="profile-upload-preview profile-upload-preview--story" data-image-preview="story-preview" alt="Предпросмотр истории" hidden><label>Подпись<input name="caption" placeholder="Можно оставить пустым"></label><button class="button primary">Открыть редактор</button></form></section>${state.notifications.length ? `<section class="card owner-notifications"><b>Уведомления владельца</b>${state.notifications.map((notice) => `<p>${esc(notice.text)}</p>`).join("")}</section>` : ""}` : ""}<div class="profile-publications"><section class="card"><b>Сторис</b><div class="stories-row">${stories.map(storyHtml).join("") || '<p class="muted">Сторис пока нет.</p>'}</div></section>${posts.some((post) => post.media_data) ? `<section class="card"><b>Фотографии</b><div class="post-gallery">${posts.filter((post) => post.media_data).map(galleryPostHtml).join("")}</div></section>` : ""}${posts.some((post) => post.text) ? `<section class="card"><b>Публикации</b>${posts.filter((post) => post.text).map(postHtml).join("")}</section>` : ""}${posts.length ? "" : '<section class="card"><p class="muted">Постов пока нет.</p></section>'}</div></section></main>`;
   app.querySelector("#avatarForm")?.addEventListener("submit", submitAvatar);
   app.querySelector("#postForm")?.addEventListener("submit", submitProfilePost);
@@ -738,7 +939,7 @@ function renderProfileScreen() {
   app.querySelector("[data-close-profile]").addEventListener("click", closeProfile);
   app.querySelector("[data-message-user]")?.addEventListener("click", async (event) => { await openDirectChat(event.currentTarget.dataset.messageUser); });
   app.querySelector("[data-profile-menu]")?.addEventListener("click", (event) => openSimpleActions(event.currentTarget, profileMenuActions(profileUser)));
-  app.querySelectorAll("[data-open-media]").forEach((item) => item.addEventListener("click", () => openMedia(item.dataset.openMedia)));
+  app.querySelectorAll("[data-open-avatar]").forEach((item) => item.addEventListener("click", () => openMedia(avatarSources[0], "photo", avatarSources)));
   app.querySelectorAll("[data-open-profile-post]").forEach((item) => item.addEventListener("click", () => openProfilePost(item.dataset.openProfilePost)));
   app.querySelectorAll("[data-open-story]").forEach((item) => item.addEventListener("click", () => openStory(item.dataset.openStory)));
   app.querySelectorAll("[data-share-profile-post]").forEach((item) => item.addEventListener("click", () => openGroupContentShare("profile-post", item.dataset.shareProfilePost)));
@@ -1167,6 +1368,10 @@ function channelStarBonus(channel) {
   return { type, percent };
 }
 
+function channelBuyerGift(channel) {
+  return Math.max(0, Number(channel?.settings?.buyerGiftStars) || 0);
+}
+
 function channelBonusDescription(bonus) {
   return bonus.type === "money"
     ? `Владелец получит ${bonus.percent}% от суммы покупки к выплате.`
@@ -1188,9 +1393,10 @@ function openChannelStarPurchase(channel) {
     return;
   }
   const bonus = channelStarBonus(channel);
+  const gift = channelBuyerGift(channel);
   const overlay = document.createElement("div");
   overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Купить звёзды через канал"><header><div><b>Купить звёзды</b><small>${esc(channel.title)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-purchase-note"><b>Бонус каналу</b><span>${esc(channelBonusDescription(bonus))}</span></div><p class="muted">Оплата пройдёт на защищённой странице ЮKassa. Звёзды начислятся после проверки оплаты сервером.</p><div class="star-packages">${packages.map((item) => starPackageButtonHtml(item, "data-channel-star-package")).join("")}</div></section>`;
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Купить звёзды через канал"><header><div><b>Купить звёзды</b><small>${esc(channel.title)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-purchase-note"><b>Бонус каналу</b><span>${esc(channelBonusDescription(bonus))}</span>${gift ? `<span>После оплаты вы получите подарок: ★ ${gift} от владельца канала.</span>` : ""}${channel.settings?.buyerPurchaseMessage ? `<span>${esc(channel.settings.buyerPurchaseMessage)}</span>` : ""}</div><p class="muted">Оплата пройдёт на защищённой странице ЮKassa. Звёзды начислятся после проверки оплаты сервером.</p><div class="star-packages">${packages.map((item) => starPackageButtonHtml(item, "data-channel-star-package")).join("")}</div></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector(".member-manager__close").addEventListener("click", close);
@@ -1232,6 +1438,9 @@ function renderAccountLevelPanel(box) {
 
 function renderSettingsPanel(box, section = "general") {
   if (section === "wallpapers") return renderWallpaperSettings(box);
+  if (section === "privacy") return renderPrivacySettings(box);
+  if (section === "reactions") return renderMyReactionsSettings(box);
+  if (section === "ringtone") return renderCallRingtoneSettings(box);
   const hidden = new Set(state.me.hiddenStatusIds || []);
   const hiddenStoryAuthors = new Set(state.me.hiddenStoryAuthorIds || []);
   const storyHiddenFrom = new Set(state.me.storyHiddenFromIds || []);
@@ -1242,6 +1451,9 @@ function renderSettingsPanel(box, section = "general") {
     <form class="card form" id="accountSettingsForm"><label>Username<input name="username" value="${esc(state.me.username)}" maxlength="20" autocomplete="username"></label><p class="muted">Используйте от 3 до 20 латинских символов, цифр или подчёркиваний.</p><button class="button primary">Сохранить username</button><button class="button danger" type="button" data-logout>Выйти из аккаунта</button></form>
     <section class="settings-cards" aria-label="Разделы настроек">
       <button class="settings-card settings-card--archive" type="button" data-open-archive><span class="settings-card__art" aria-hidden="true"><i></i><i></i></span><span><b>Архив чатов</b><small>В архиве: ${visibleChats(true).length}</small></span><em>›</em></button>
+      <button class="settings-card settings-card--privacy" type="button" data-settings-section="privacy"><span class="settings-card__art" aria-hidden="true">⌁</span><span><b>Приватность</b><small>Приглашения в беседы и новые сообщения</small></span><em>›</em></button>
+      <button class="settings-card settings-card--reactions" type="button" data-settings-section="reactions"><span class="settings-card__art" aria-hidden="true">❤</span><span><b>Мои реакции</b><small>Сообщения, истории и публикации</small></span><em>›</em></button>
+      <button class="settings-card settings-card--ringtone" type="button" data-settings-section="ringtone"><span class="settings-card__art" aria-hidden="true">♪</span><span><b>Мелодия звонка</b><small>Её услышит собеседник при вашем звонке</small></span><em>›</em></button>
     </section>
     <form class="card form" id="statusSettingsForm"><b>Мои статусы</b>${myStatuses().map((status) => `<label><input type="checkbox" data-hide-status="${status.id}" ${hidden.has(status.id) ? "checked" : ""}> Скрыть ${esc(status.icon)} ${esc(status.title)}</label>`).join("") || '<p class="muted">Статусов пока нет.</p>'}<button class="button small" type="submit">Сохранить видимость статусов</button></form>
     <section class="card story-privacy-card">
@@ -1284,6 +1496,69 @@ function renderSettingsPanel(box, section = "general") {
   box.querySelectorAll("[data-unhide-story-from]").forEach((btn) => btn.addEventListener("click", () => setStoryPrivacyHidden(btn.dataset.unhideStoryFrom, false)));
 }
 
+function renderPrivacySettings(box) {
+  const privacy = state.me;
+  const option = (name, value, checked, title, description) => `<label class="privacy-option"><input type="radio" name="${name}" value="${value}" ${checked === value ? "checked" : ""}><span><b>${title}</b><small>${description}</small></span></label>`;
+  box.innerHTML = `<div class="panel-title"><button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button><b>Приватность</b></div><form class="card form privacy-settings-form" id="privacySettingsForm"><fieldset><legend>Кто может приглашать меня в беседы и группы</legend>${option("groupInvitePrivacy", "everyone", privacy.groupInvitePrivacy || "contacts", "Все", "Любой пользователь может добавить вас.")}${option("groupInvitePrivacy", "contacts", privacy.groupInvitePrivacy || "contacts", "Только из личных диалогов", "Только люди, с которыми уже есть личный чат.")}${option("groupInvitePrivacy", "nobody", privacy.groupInvitePrivacy || "contacts", "Никто", "Добавление в беседы и группы запрещено.")}</fieldset><fieldset><legend>Кто может написать мне первым</legend>${option("directMessagePrivacy", "everyone", privacy.directMessagePrivacy || "everyone", "Все", "Любой пользователь может начать личный диалог.")}${option("directMessagePrivacy", "contacts", privacy.directMessagePrivacy || "everyone", "Только из личных диалогов", "Новые сообщения запрещены; в уже существующих диалогах писать можно.")}${option("directMessagePrivacy", "nobody", privacy.directMessagePrivacy || "everyone", "Никто", "Новый диалог можете начать только вы сами.")}</fieldset><button class="button primary">Сохранить приватность</button></form>`;
+  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box); });
+  box.querySelector("#privacySettingsForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = new FormData(event.currentTarget);
+    const groupInvitePrivacy = values.get("groupInvitePrivacy");
+    const directMessagePrivacy = values.get("directMessagePrivacy");
+    await api("/api/preferences", { method: "POST", body: preferencePayload({ groupInvitePrivacy, directMessagePrivacy }) });
+    Object.assign(state.me, { groupInvitePrivacy, directMessagePrivacy });
+    toast("Настройки приватности сохранены.");
+  });
+}
+
+async function renderMyReactionsSettings(box) {
+  box.innerHTML = `<div class="panel-title"><button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button><b>Мои реакции</b></div><div class="card reaction-history"><p class="muted">Загружаем реакции…</p></div>`;
+  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box); });
+  try {
+    const response = await api("/api/my-reactions");
+    if (!box.isConnected) return;
+    const labels = { message: "Сообщение", story: "История", post: "Публикация" };
+    const reactionBox = box.querySelector(".reaction-history");
+    const reactions = response.reactions || [];
+    const renderReactions = (query = "") => {
+      const normalized = query.trim().toLocaleLowerCase("ru-RU");
+      const filtered = reactions.filter((reaction) => !normalized || [reaction.emoji, labels[reaction.type], reaction.title, reaction.text].some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(normalized)));
+      reactionBox.innerHTML = `<label class="reaction-history__search"><span>⌕</span><input type="search" placeholder="Поиск по моим реакциям" value="${esc(query)}"></label>${filtered.length ? filtered.map((reaction) => `<article class="reaction-history__item"><span class="reaction-history__emoji">${esc(reaction.emoji)}</span><span><small>${highlightedText(`${labels[reaction.type] || "Реакция"} · ${reaction.title || "Без названия"}`, query)}</small><b>${highlightedText(reaction.text || "Без текста", query)}</b></span><time>${new Date(reaction.createdAt * 1000).toLocaleDateString("ru-RU")}</time></article>`).join("") : `<p class="muted">${reactions.length ? "По вашему запросу ничего не найдено." : "Вы ещё не оставляли реакций."}</p>`}`;
+      reactionBox.querySelector("input")?.addEventListener("input", (event) => renderReactions(event.target.value));
+    };
+    renderReactions();
+  } catch (error) {
+    if (box.isConnected) box.querySelector(".reaction-history").innerHTML = `<p class="muted">${esc(error.message || "Не удалось загрузить реакции.")}</p>`;
+  }
+}
+
+function renderCallRingtoneSettings(box) {
+  const currentRingtone = CALL_RINGTONES.some((ringtone) => ringtone.id === state.me.callRingtone) ? state.me.callRingtone : "classic";
+  const canChooseCustom = hasActiveAccountLevel();
+  box.innerHTML = `<div class="panel-title"><button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button><b>Мелодия звонка</b></div><form class="card form ringtone-settings-form" id="ringtoneSettingsForm"><p class="muted">Эту мелодию услышит собеседник, пока ожидает ваш звонок.</p>${CALL_RINGTONES.map((ringtone) => `<button class="ringtone-option${currentRingtone === ringtone.id ? " is-selected" : ""}${ringtone.id !== "classic" && !canChooseCustom ? " is-locked" : ""}" type="button" data-select-ringtone="${ringtone.id}"><span class="ringtone-option__icon" aria-hidden="true">${ringtone.id === "classic" ? "♪" : ringtone.id === "pulse" ? "♫" : "✦"}</span><span><b>${ringtone.title}</b><small>${ringtone.description}${ringtone.id !== "classic" ? " · Уровень «Активный»" : ""}</small></span><em>${ringtone.id !== "classic" && !canChooseCustom ? "🔒" : currentRingtone === ringtone.id ? "✓" : ""}</em></button>`).join("")}<button class="button primary" type="submit">Сохранить мелодию</button>${canChooseCustom ? "" : '<p class="muted">Дополнительные мелодии доступны с уровня «Активный».</p><button class="button small" type="button" data-open-account-level>Уровень аккаунта</button>'}</form>`;
+  let selectedRingtone = currentRingtone;
+  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box); });
+  box.querySelectorAll("[data-select-ringtone]").forEach((button) => button.addEventListener("click", () => {
+    const ringtone = button.dataset.selectRingtone;
+    if (ringtone !== "classic" && !canChooseCustom) {
+      toast("Эта функция доступна с уровня «Активный». Повысьте уровень аккаунта.", true);
+      return;
+    }
+    selectedRingtone = ringtone;
+    box.querySelectorAll("[data-select-ringtone]").forEach((option) => option.classList.toggle("is-selected", option.dataset.selectRingtone === ringtone));
+  }));
+  box.querySelector("[data-open-account-level]")?.addEventListener("click", () => openMenuSection("account-level"));
+  box.querySelector("#ringtoneSettingsForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await api("/api/preferences", { method: "POST", body: preferencePayload({ callRingtone: selectedRingtone }) });
+      state.me.callRingtone = selectedRingtone;
+      toast("Мелодия звонка сохранена.");
+    } catch (error) { toast(error.message, true); }
+  });
+}
+
 function preferencePayload(overrides = {}) {
   return {
     theme: state.me.theme || "light",
@@ -1306,6 +1581,8 @@ function preferencePayload(overrides = {}) {
     nightGlowIntensity: state.me.nightGlowIntensity ?? defaultNightAppearance().glowIntensity,
     hiddenStatusIds: state.me.hiddenStatusIds || [],
     groupInvitePrivacy: state.me.groupInvitePrivacy || "contacts",
+    directMessagePrivacy: state.me.directMessagePrivacy || "everyone",
+    callRingtone: state.me.callRingtone || "classic",
     ...overrides,
   };
 }
@@ -1494,7 +1771,8 @@ function renderChat() {
   const canPublish = chat.type !== "channel" || isChannelManagerRole(chatMemberRole(chat.id));
   const channelNeedsMediaBar = chat.type === "channel" && !canPublish;
   const mediaButton = '<button class="call-button" data-open-chat-media title="Вложения" aria-label="Вложения">▦</button>';
-  const callButtons = `${channelNeedsMediaBar ? "" : mediaButton}${chat.type === "secret" && chat.ownerId === state.me.id ? '<button class="call-button" data-add-secret-member title="Пригласить участника" aria-label="Пригласить участника">+</button>' : ""}${chat.type === "direct" ? '<button class="call-button" data-call="audio" title="Аудиозвонок" aria-label="Аудиозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.1 3.8 8.2 3l1.7 4.2-2 1.8a15.2 15.2 0 0 0 7.1 7.1l1.8-2 4.2 1.7-.8 3.1c-.2.8-1 1.3-1.8 1.2C10.5 19.1 4.9 13.5 3.9 5.6 3.8 4.8 4.3 4 5.1 3.8Z"/></svg></button><button class="call-button" data-call="video" title="Видеозвонок" aria-label="Видеозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3Z"/></svg></button>' : ""}`;
+  const searchButton = '<button class="call-button" type="button" data-toggle-chat-search title="Поиск в диалоге" aria-label="Поиск в диалоге">⌕</button>';
+  const callButtons = `${channelNeedsMediaBar ? "" : `${mediaButton}${searchButton}`}${chat.type === "secret" && chat.ownerId === state.me.id ? '<button class="call-button" data-add-secret-member title="Пригласить участника" aria-label="Пригласить участника">+</button>' : ""}${chat.type === "direct" ? '<button class="call-button" data-call="audio" title="Аудиозвонок" aria-label="Аудиозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.1 3.8 8.2 3l1.7 4.2-2 1.8a15.2 15.2 0 0 0 7.1 7.1l1.8-2 4.2 1.7-.8 3.1c-.2.8-1 1.3-1.8 1.2C10.5 19.1 4.9 13.5 3.9 5.6 3.8 4.8 4.3 4 5.1 3.8Z"/></svg></button><button class="call-button" data-call="video" title="Видеозвонок" aria-label="Видеозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3Z"/></svg></button>' : ""}`;
   const chatIdentity = chat.type === "direct" && meta.user
     ? `<div class="chat-identity"><button class="chat-profile-avatar" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}" aria-label="Открыть профиль ${esc(meta.title)}">${avatarHtml(meta.user)}</button><button class="chat-profile-name" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}"><div class="chat-head__body"><strong>${esc(meta.title)}</strong>${chatActivityHtml(chat, meta.subtitle)}</div></button></div>`
     : `${meta.user ? avatarHtml(meta.user) : chatAvatarHtml(chat)}<div class="chat-head__body"><strong>${esc(meta.title)}</strong><span>${esc(meta.subtitle)}</span></div>`;
@@ -1503,12 +1781,13 @@ function renderChat() {
   panel.innerHTML = `
     <header class="chat-head${["group", "community", "channel"].includes(chat.type) ? " chat-head--group" : ""}${chat.type === "channel" ? " chat-head--channel" : ""}${activePinnedMessage && !selectedMessageIds.size ? " chat-head--with-pinned" : ""}"${["group", "community", "channel"].includes(chat.type) ? ` data-open-group-profile="${chat.id}"` : ""}><button class="chat-back-button chat-head-action" type="button" data-back-to-chats title="Вернуться к списку чатов" aria-label="Вернуться к списку чатов">←</button><button class="chat-mobile-menu-button chat-head-action" type="button" data-open-mobile-chat-menu title="Открыть меню" aria-label="Открыть меню"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>${chatIdentity}${callButtons}${channelJoinButton}${chat.type === "channel" && chat.ownerId !== state.me.id ? `<button class="call-button" type="button" data-report-channel="${chat.id}" aria-label="Пожаловаться на канал">${actionIcon("report")}</button>` : ""}</header>
     ${selectedMessageIds.size ? `<div class="message-selection-toolbar"><b class="message-selection-toolbar__count">Выбрано: ${selectedMessageIds.size}</b><div class="message-selection-toolbar__actions"><button type="button" data-bulk-forward>${actionIcon("forward")}<span>Переслать</span></button><button type="button" data-bulk-confidential>${actionIcon("confidential")}<span>В скрытый чат</span></button><button type="button" data-bulk-delete>${actionIcon("delete")}<span>Удалить</span></button><button type="button" data-bulk-clear>${actionIcon("cancel")}<span>Отмена</span></button></div></div>` : ""}
+    ${activeChatSearchOpen ? `<div class="chat-search-panel"><input type="search" data-chat-search-input placeholder="Поиск в «${esc(meta.title)}»" value="${esc(activeChatSearchQuery)}" autofocus><span data-chat-search-count></span><button type="button" data-close-chat-search aria-label="Закрыть поиск">×</button><div class="chat-search-panel__results" data-chat-search-results></div></div>` : ""}
     <div class="chat-body${activePinnedMessage && !selectedMessageIds.size ? " chat-body--with-pinned" : ""}${channelNeedsMediaBar ? " chat-body--channel-viewer" : ""}">
       ${activePinnedMessage && !selectedMessageIds.size ? `<div class="pinned-messages"><button class="pinned-messages__content" type="button" data-scroll-pinned-message="${activePinnedMessage.id}" title="Перейти к закреплённому сообщению"><span class="pinned-messages__label">${pinIcon("pinned-messages__pin-icon")}<span>Закреплённое сообщение${pinnedMessages.length > 1 ? ` · ${pinnedMessageIndex + 1} из ${pinnedMessages.length}` : ""}</span></span><span class="pinned-messages__text">${esc(pinnedMessagePreview(activePinnedMessage))}</span></button>${pinnedMessages.length > 1 ? '<button type="button" class="pinned-messages__next" data-next-pinned-message title="Следующее закреплённое сообщение" aria-label="Следующее закреплённое сообщение">⌄</button>' : ""}<button type="button" class="pinned-messages__menu" data-toggle-pinned-actions title="Действия с закрепом" aria-label="Действия с закрепом">${actionIcon("more")}</button></div>` : ""}
       <div class="scroll-date-bubble hidden" data-scroll-date></div><div class="messages ${channelAppearance ? "" : chatBackgroundClass(state.me)}" id="messages"${channelAppearance ? "" : chatBackgroundStyle(state.me)}>${messages.map((message) => `${message.id === firstUnreadMessageId ? '<div class="unread-divider"><span>Новые сообщения</span></div>' : ""}${messageHtml(message)}`).join("") || emptyChatNotice}</div>
       <button class="jump-to-latest hidden" type="button" data-jump-to-latest title="К последним сообщениям" aria-label="К последним сообщениям">↓</button>
     </div>
-    ${channelNeedsMediaBar ? `<div class="channel-viewer-bar" id="channelViewerBar"><button type="button" data-buy-stars-channel aria-label="Купить звёзды через канал">${starButtonIcon()}<span>Звёзды</span></button><button type="button" data-open-chat-media aria-label="Вложения канала">${attachmentButtonIcon()}<span>Вложения</span></button></div>` : showComposer ? `<form class="composer" id="composer">
+    ${channelNeedsMediaBar ? `<div class="channel-viewer-bar" id="channelViewerBar"><button type="button" data-buy-stars-channel aria-label="Купить звёзды через канал">${starButtonIcon()}<span>Звёзды</span></button><button type="button" data-open-chat-media aria-label="Вложения канала">${attachmentButtonIcon()}<span>Вложения</span></button><button type="button" data-toggle-chat-search aria-label="Поиск в канале">⌕<span>Поиск</span></button></div>` : showComposer ? `<form class="composer" id="composer">
       <label class="composer-icon attach-button" title="Прикрепить фото, видео или документ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.2 12 19.7a5.3 5.3 0 0 1-7.5-7.5l9-9a3.7 3.7 0 1 1 5.2 5.3l-9.1 9.1a2 2 0 0 1-2.8-2.8l8-8"/></svg><input name="attachment" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,application/pdf,text/plain,.doc,.docx" hidden></label>
       <div class="composer-input"><textarea name="text" placeholder="${chat.type === "channel" ? "Новая публикация" : "Сообщение"}"></textarea><button class="composer-icon composer-icon--emoji" type="button" data-emoji-toggle title="Эмодзи" aria-label="Открыть эмодзи"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.75a8.25 8.25 0 1 0 8.25 8.25"/><path d="M7.8 13.65c1.12 1.44 2.5 2.1 4.2 2.1s3.08-.66 4.2-2.1M8.75 9.75h.01M14.5 9.75h.01"/><path d="m18.6 3.25.48 1.32 1.32.48-1.32.48-.48 1.32-.48-1.32-1.32-.48 1.32-.48.48-1.32Z"/></svg></button></div>
       <div class="composer-tools">
@@ -1533,17 +1812,29 @@ function renderChat() {
   new ResizeObserver(updateComposerSpace).observe(composer);
   composer.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const composerForm = event.currentTarget;
+    const form = new FormData(composerForm);
     const attachment = form.get("attachment");
     const body = { chatId: chat.id, text: form.get("text") };
     const temporaryId = `pending-${crypto.randomUUID()}`;
+    let previewUrl = null;
     try {
       stopTypingActivity(chat.id);
       if (attachment?.size) {
-        body.mediaType = attachment.type.startsWith("image/") ? "photo" : attachment.type.startsWith("video/") ? "video" : "document";
-        body.mediaData = await fileToDataUrl(attachment, 2_500_000);
-        body.fileName = attachment.name;
+        if (state.mediaS3Enabled) {
+          setChatActivity(chat.id, "sending", true);
+          const uploaded = await uploadMessageAttachment(chat.id, attachment);
+          body.mediaType = uploaded.mediaType;
+          body.mediaKey = uploaded.mediaKey;
+          body.fileName = uploaded.fileName;
+          previewUrl = uploaded.previewUrl;
+        } else {
+          body.mediaType = attachment.type.startsWith("image/") ? "photo" : attachment.type.startsWith("video/") ? "video" : "document";
+          body.mediaData = await fileToDataUrl(attachment, 2_500_000);
+          body.fileName = attachment.name;
+        }
       }
+      const response = await api("/api/messages", { method: "POST", body });
       const pendingStartedAt = Date.now();
       pendingOutgoingMessages.set(temporaryId, {
         id: temporaryId,
@@ -1551,18 +1842,14 @@ function renderChat() {
         senderId: state.me.id,
         text: body.text,
         mediaType: body.mediaType || null,
-        mediaData: body.mediaData || null,
+        mediaData: previewUrl || body.mediaData || null,
         createdAt: Math.floor(pendingStartedAt / 1000),
         deliveryState: "sending",
       });
-      event.currentTarget.reset();
+      composerForm.reset();
       attachmentNotice.classList.add("hidden");
-      event.currentTarget.querySelector(".composer-tools")?.classList.remove("composer-tools--with-text");
+      composerForm.querySelector(".composer-tools")?.classList.remove("composer-tools--with-text");
       updateComposerSpace();
-      appendLiveMessage(pendingOutgoingMessages.get(temporaryId));
-      const response = await api("/api/messages", { method: "POST", body });
-      const remainingAnimation = 360 - (Date.now() - pendingStartedAt);
-      if (remainingAnimation > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingAnimation));
       confirmPendingMessage(temporaryId, response.messageId);
       app.querySelector("#composer textarea")?.focus({ preventScroll: true });
       return response;
@@ -1573,6 +1860,7 @@ function renderChat() {
         pendingOutgoingMessages.set(temporaryId, failed);
         replaceLiveMessage(temporaryId, failed);
       }
+      stopChatActivity(chat.id);
       toast(error.message, true);
     }
   });
@@ -1581,12 +1869,14 @@ function renderChat() {
   const attachmentName = composer.querySelector("[data-composer-attachment-name]");
   const composerTextarea = composer.querySelector("textarea");
   const updateComposerActions = () => {
-    composer.querySelector(".composer-tools")?.classList.toggle("composer-tools--with-text", Boolean(composerTextarea.value.trim()));
+    const hasContent = Boolean(composerTextarea.value.trim() || attachmentInput.files?.length);
+    composer.querySelector(".composer-tools")?.classList.toggle("composer-tools--with-text", hasContent);
   };
   attachmentInput.addEventListener("change", () => {
     const file = attachmentInput.files?.[0];
     attachmentNotice.classList.toggle("hidden", !file);
     attachmentName.textContent = file ? `${file.name} · ${Math.ceil(file.size / 1024)} КБ` : "";
+    updateComposerActions();
     updateComposerSpace();
   });
   composer.querySelector("[data-clear-composer-attachment]").addEventListener("click", () => { attachmentInput.value = ""; attachmentInput.dispatchEvent(new Event("change")); });
@@ -1646,6 +1936,7 @@ function renderChat() {
     await refresh(false);
   }));
   panel.querySelectorAll("[data-open-channel-comments]").forEach((button) => button.addEventListener("click", () => openChannelComments(button.dataset.openChannelComments)));
+  panel.querySelectorAll("[data-share-channel-post]").forEach((button) => button.addEventListener("click", () => openChannelPostShare(button, button.dataset.shareChannelPost)));
   panel.querySelectorAll("[data-toggle-rss-post]").forEach((button) => button.addEventListener("click", () => {
     const description = button.previousElementSibling;
     if (!description?.classList.contains("message__rss-description")) return;
@@ -1870,6 +2161,27 @@ function renderChat() {
   }));
   panel.querySelectorAll("[data-call]").forEach((btn) => btn.addEventListener("click", () => startCall(chat, btn.dataset.call)));
   panel.querySelector("[data-open-chat-media]")?.addEventListener("click", () => openChatMedia(chat));
+  panel.querySelectorAll("[data-toggle-chat-search]").forEach((button) => button.addEventListener("click", () => {
+    activeChatSearchOpen = true;
+    renderChat();
+  }));
+  panel.querySelector("[data-close-chat-search]")?.addEventListener("click", () => {
+    activeChatSearchOpen = false;
+    activeChatSearchQuery = "";
+    renderChat();
+  });
+  const chatSearchInput = panel.querySelector("[data-chat-search-input]");
+  if (chatSearchInput) {
+    const chatSearchResults = panel.querySelector("[data-chat-search-results]");
+    const chatSearchCount = panel.querySelector("[data-chat-search-count]");
+    const search = () => runChatMessageSearch(chat, activeChatSearchQuery, chatSearchResults, chatSearchCount);
+    chatSearchInput.addEventListener("input", (event) => {
+      activeChatSearchQuery = event.target.value;
+      clearTimeout(activeChatSearchTimer);
+      activeChatSearchTimer = setTimeout(search, 180);
+    });
+    if (activeChatSearchQuery) search();
+  }
   panel.querySelector("[data-buy-stars-channel]")?.addEventListener("click", () => openChannelStarPurchase(chat));
   panel.querySelector("[data-open-group-profile]")?.addEventListener("click", (event) => {
     if (!event.target.closest("button, input, label")) openGroupProfile(chat);
@@ -2349,8 +2661,10 @@ function messageHtml(msg) {
     : msg.sourceType && !["telegram", "rss"].includes(msg.sourceType)
       ? `<div class="group-post-actions"><button type="button" data-delete-source-repost="${msg.id}">Удалить репост</button></div>`
       : "";
-  const comments = chat?.type === "channel" ? state.channelComments.filter((comment) => comment.message_id === msg.id) : [];
-  const commentsHtml = chat?.type === "channel" && settings.commentsEnabled !== false ? `<div class="channel-comments"><button type="button" data-open-channel-comments="${msg.id}" aria-label="Комментарии${comments.length ? `: ${comments.length}` : ""}" title="Комментарии"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 5.5h13a2.5 2.5 0 0 1 2.5 2.5v7a2.5 2.5 0 0 1-2.5 2.5H12l-4.6 3v-3H5.5A2.5 2.5 0 0 1 3 15V8a2.5 2.5 0 0 1 2.5-2.5Z"/><path d="M8 11.5h.01M12 11.5h.01M16 11.5h.01"/></svg>${comments.length ? `<span>${comments.length}</span>` : ""}</button></div>` : "";
+  const commentableChat = ["channel", "group", "community"].includes(chat?.type);
+  const comments = commentableChat ? state.channelComments.filter((comment) => comment.message_id === msg.id) : [];
+  const channelReactionPickerHtml = chat?.type === "channel" && settings.showReactions !== false ? `<div class="reaction-picker hidden" data-reaction-picker="${msg.id}"><div class="reaction-picker__head"><b>Выберите реакцию</b><button class="reaction-picker__close" type="button" data-close-reactions aria-label="Закрыть">×</button></div><div class="reaction-picker__emojis">${availableMessageReactions(chat).map((emoji) => `<button type="button" data-react="${msg.id}" data-emoji="${esc(emoji)}" aria-label="Реакция ${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div></div>` : "";
+  const commentsHtml = commentableChat && settings.commentsEnabled !== false ? `<div class="channel-comments"><button type="button" data-open-channel-comments="${msg.id}" aria-label="Комментарии${comments.length ? `: ${comments.length}` : ""}" title="Комментарии"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.75A2.75 2.75 0 0 1 6.75 3h7.5A2.75 2.75 0 0 1 17 5.75v4.5A2.75 2.75 0 0 1 14.25 13H10l-3.75 2.5V13A2.75 2.75 0 0 1 4 10.25v-4.5Z"/><path d="M8 17h6.25A2.75 2.75 0 0 0 17 14.25V13M7.5 7.75h6M7.5 10h3.75"/></svg>${comments.length ? `<span>${comments.length}</span>` : ""}</button>${chat?.type === "channel" && settings.showReactions !== false ? `<button type="button" data-open-reacts="${msg.id}" aria-label="Выбрать реакцию" title="Выбрать реакцию">${actionIcon("reaction")}</button>` : ""}${chat?.type === "channel" ? `<button type="button" data-share-channel-post="${msg.id}" aria-label="Поделиться публикацией" title="Поделиться">${actionIcon("forward")}</button>` : ""}</div>` : "";
   return `<div class="message ${msg.senderId === state.me.id ? "own" : ""}${showAuthor ? " message--with-author" : ""}${msg.pinned ? " pinned" : ""}${isCircle ? " message--circle" : ""}${isVoice ? " message--audio" : ""}${String(msg.id).startsWith("pending-") ? " message--pending" : ""}${msg.deliveryState === "failed" ? " message--failed" : ""}${selectedMessageIds.has(msg.id) ? " selected" : ""}" id="message-${msg.id}">
     ${showAuthor ? `<button class="message__author" type="button" data-open-profile="${msg.senderId}" title="Открыть профиль ${esc(author?.name || "участника")}">${avatarHtml(author, "message__author-avatar")}</button>` : ""}
     <div class="message__content">
@@ -2358,13 +2672,14 @@ function messageHtml(msg) {
         ${msg.forwardedFrom ? forwardedFromUser ? `<button type="button" class="message__forwarded message__forwarded--link" data-open-profile="${forwardedFromUser.id}" title="Открыть профиль автора источника"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 3 12l6 7M4 12h10a6 6 0 0 1 6 6v1"/></svg>Переслано от ${esc(msg.forwardedFrom)}</button>` : `<div class="message__forwarded"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 3 12l6 7M4 12h10a6 6 0 0 1 6 6v1"/></svg>Переслано от ${esc(msg.forwardedFrom)}</div>` : ""}
         ${messageMediaHtml(msg)}
         ${sharedProfile ? `<button type="button" class="shared-profile-card" data-open-profile="${sharedProfile.id}" title="Открыть профиль ${esc(sharedProfile.name)}">${avatarHtml(sharedProfile, "shared-profile-card__avatar")}<span><b>${esc(sharedProfile.name)}</b><small>@${esc(sharedProfile.username)}</small></span><em>Профиль</em></button>` : msg.profileUserId ? '<div class="shared-profile-card shared-profile-card--missing"><span><b>Профиль недоступен</b><small>Пользователь больше не найден</small></span></div>' : ""}
-        ${["rss", "vk"].includes(msg.sourceType) ? rssPostHtml(msg) : msg.text ? `<div class="message__text">${esc(msg.text)}</div>` : ""}
+        ${["rss", "vk"].includes(msg.sourceType) ? rssPostHtml(msg) : msg.text ? `<div class="message__text">${highlightedMessageSearch.chatId === msg.chatId ? highlightedText(msg.text, highlightedMessageSearch.query) : esc(msg.text)}</div>` : ""}
         ${selectedMessageIds.has(msg.id) ? `<span class="message__selected-marker" aria-label="Сообщение выбрано">${actionIcon("select")}</span>` : ""}
         ${messageDeliveryHtml(msg, showInlineDelivery ? "inline" : "inside")}
         ${msg.deliveryState === "failed" ? `<button class="message__pending-delete" type="button" data-remove-pending-message="${msg.id}" title="Удалить неотправленное сообщение" aria-label="Удалить неотправленное сообщение">${actionIcon("delete")}</button>` : ""}
       </div>
       ${settings.showReactions !== false ? reactionHtml : ""}
       ${commentsHtml}
+      ${channelReactionPickerHtml}
       ${sourcePostActions}
     </div>
   </div>`;
@@ -2421,7 +2736,7 @@ function openMessageMenu(msg) {
   const settings = chat?.settings || {};
   const canDeleteForEveryone = canDeleteMessageForEveryone(msg);
   const canPinForEveryone = canPinMessageForEveryone(msg);
-  const reactions = ["❤️", ...EMOJI_SET.filter((emoji) => emoji !== "❤️")];
+  const reactions = availableMessageReactions(chat);
   const downloadLabel = msg.mediaType === "voice" ? "Скачать голосовое" : msg.mediaType === "circle" ? "Скачать видеокружок" : "";
   const overlay = document.createElement("div");
   overlay.className = "message-menu-overlay";
@@ -2553,6 +2868,7 @@ function openGroupProfile(chat) {
   const audio = media.filter((message) => message.mediaType === "voice");
   const circles = media.filter((message) => message.mediaType === "circle");
   const inviteLink = `${window.location.origin}/invite/${encodeURIComponent(chat.inviteCode || "")}`;
+  const channelLink = `${window.location.origin}/channel/${encodeURIComponent(chat.inviteCode || "")}`;
   const inviteEnabled = chat.settings?.inviteLinkEnabled !== false;
   const roleLabel = { owner: "Создатель", admin: "Администратор", author: "Администратор", member: "Подписчик" };
   const memberHtml = members.map((member) => {
@@ -2567,9 +2883,10 @@ function openGroupProfile(chat) {
   overlay.className = `group-card-overlay${isChannel ? " group-card-overlay--channel" : ""}`;
   const bonus = channelStarBonus(chat);
   const channelPurchases = state.channelStarPurchases.filter((purchase) => purchase.channel_id === chat.id);
-  const channelSettings = isChannel && canEditProfile ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Настройки канала</b><small>Видимость и взаимодействия</small></div></div><div class="channel-settings">${[["showSubscribers", "Подписчики", "Показывать число подписчиков"], ["showReactions", "Реакции", "Показывать реакции под публикациями"], ["commentsEnabled", "Комментарии", "Разрешить комментарии к постам"], ["isPublic", "Публичный канал", "Показывать канал в общем поиске"]].map(([key, title, hint]) => `<label class="channel-setting"><span><b>${title}</b><small>${hint}</small></span><input type="checkbox" name="${key}" ${chat.settings?.[key] !== false ? "checked" : ""}></label>`).join("")}<label class="channel-setting"><span><b>Бонус за покупку звёзд</b><small>Покупатели увидят условие до оплаты.</small></span><select name="starBonusType"><option value="stars" ${bonus.type === "stars" ? "selected" : ""}>Звёздный бонус</option><option value="money" ${bonus.type === "money" ? "selected" : ""}>Денежный бонус</option></select></label><label class="channel-setting"><span><b>Размер бонуса</b><small>Процент от купленных звёзд или суммы оплаты.</small></span><input name="starBonusPercent" type="number" min="1" max="100" value="${bonus.percent}"></label><div class="channel-settings__actions"><button class="button small" type="button" data-link-telegram>Импорт из Telegram</button><button class="button small" type="button" data-link-rss>Автопостинг из RSS</button><button class="button small" type="button" data-link-vk>Автопостинг из VK</button></div></div></section>` : "";
+  const channelSettings = isChannel && canEditProfile ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Настройки канала</b><small>Видимость и взаимодействия</small></div></div><div class="channel-settings">${[["showSubscribers", "Подписчики", "Показывать число подписчиков"], ["showReactions", "Реакции", "Показывать реакции под публикациями"], ["commentsEnabled", "Комментарии", "Разрешить комментарии к постам"], ["isPublic", "Публичный канал", "Показывать канал в общем поиске"]].map(([key, title, hint]) => `<label class="channel-setting"><span><b>${title}</b><small>${hint}</small></span><input type="checkbox" name="${key}" ${chat.settings?.[key] !== false ? "checked" : ""}></label>`).join("")}<label class="channel-setting"><span><b>Бонус владельцу за покупку</b><small>Звёзды начисляются на баланс. Деньги фиксируются к выплате и требуют отдельного подключения выплат.</small></span><select name="starBonusType"><option value="stars" ${bonus.type === "stars" ? "selected" : ""}>Звёзды владельцу</option><option value="money" ${bonus.type === "money" ? "selected" : ""}>Деньги к выплате</option></select></label><label class="channel-setting"><span><b>Размер бонуса владельцу</b><small>Процент от купленных звёзд или суммы оплаты.</small></span><input name="starBonusPercent" type="number" min="1" max="100" value="${bonus.percent}"></label><label class="channel-setting"><span><b>Подарок покупателю</b><small>Будет списан с вашего баланса после успешной оплаты.</small></span><input name="buyerGiftStars" type="number" min="0" max="100000" value="${channelBuyerGift(chat)}"></label><label>Сообщение покупателю / промокод<textarea name="buyerPurchaseMessage" maxlength="500" placeholder="Например: промокод CHANNEL10 на следующую покупку">${esc(chat.settings?.buyerPurchaseMessage || "")}</textarea></label><div class="channel-settings__actions"><button class="button small" type="button" data-link-telegram>Импорт из Telegram</button><button class="button small" type="button" data-link-rss>Автопостинг из RSS</button><button class="button small" type="button" data-link-vk>Автопостинг из VK</button></div></div></section>` : "";
   const channelPurchaseHistory = isChannel && canEditProfile ? `<section class="group-card__section channel-purchase-history"><div class="group-card__section-head"><div><b>Покупки через канал</b><small>${channelPurchases.length ? "Покупатели и начисленные бонусы" : "Покупок пока не было"}</small></div></div>${channelPurchases.length ? `<div class="channel-purchase-list">${channelPurchases.map((purchase) => `<article><span><b>${esc(purchase.buyer_name)}</b><small>@${esc(purchase.buyer_username)} · ${timeFmt(purchase.created_at)}</small></span><strong>★ ${purchase.stars}<small>${purchase.bonus_type === "money" ? `${esc(purchase.bonus_amount)} ₽ к выплате` : `+ ★ ${esc(purchase.bonus_amount)}`}</small></strong></article>`).join("")}</div>` : ""}</section>` : "";
   const channelAdminTools = canAuthorChannel ? `<section class="group-card__section group-card__section--tools"><div class="group-card__section-head"><div><b>Инструменты администратора</b><small>Публикации, оформление и связь с группой</small></div></div><div class="channel-settings__actions"><button class="button small" type="button" data-schedule-channel-post>Запланировать пост</button><button class="button small" type="button" data-link-channel>Привязать группу / беседу</button><button class="button small" type="button" data-channel-appearance>Оформление канала</button></div></section>` : "";
+  const channelPublicLink = isChannel ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Ссылка на канал</b><small>По ней пользователь откроет канал и сможет подписаться.</small></div></div><div class="invite-link"><code>${esc(channelLink)}</code><button class="button small" type="button" data-copy-channel-link>Копировать</button></div></section>` : "";
   const channelMedia = isChannel ? `<section class="group-card__section group-card__section--media"><div class="group-card__section-head"><div><b>Вложения</b><small>${media.length ? `${media.length} ${media.length === 1 ? "файл" : "файлов"}` : "Фото, документы, голосовые и кружки"}</small></div><button class="button small" type="button" data-open-group-media>Открыть</button></div></section>` : "";
   const groupTools = !isChannel ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Вложения</b><small>${media.length ? `${media.length} ${media.length === 1 ? "файл" : "файлов"}` : "Пока нет файлов"}</small></div><button class="button small" type="button" data-open-group-media>Открыть</button></div></section><section class="group-card__section"><div class="group-card__section-head"><div><b>Ссылка-приглашение</b><small>${inviteEnabled ? "Доступна всем, у кого есть ссылка" : "Выдавать ссылку могут только администраторы"}</small></div></div>${canModerate ? `<div class="invite-link"><code>${esc(inviteLink)}</code><button class="button small" type="button" data-copy-invite-link>Копировать</button></div><label class="channel-setting"><span><b>Публичная ссылка</b><small>Разрешить вступление по ссылке без приглашения администратора</small></span><input type="checkbox" name="inviteLinkEnabled" ${inviteEnabled ? "checked" : ""}></label>` : '<p class="muted">Ссылка доступна у владельца и администраторов группы.</p>'}</section>` : "";
   const profileEditor = canEditProfile
@@ -2579,7 +2896,7 @@ function openGroupProfile(chat) {
     ? `<section class="group-card__section group-card__section--subscriber-count"><div class="group-card__section-head"><div><b>Подписчики</b><small>Список подписчиков скрыт создателем канала</small></div><strong>${subscriberCount}</strong></div></section>`
     : `<section class="group-card__section"><div class="group-card__section-head"><div><b>${isChannel ? "Подписчики и администраторы" : "Участники"}</b><small>${isChannel ? `${subscriberCount} ${subscriberWord(subscriberCount)}` : `${members.length} ${memberWord(members.length)}`}</small></div>${myRole === "owner" ? '<button class="button small" type="button" data-add-group-member>Добавить</button>' : ""}</div><div class="group-card__members">${memberHtml}</div></section>`;
   const profileCount = isChannel ? subscriberCount : members.length;
-  overlay.innerHTML = `<section class="group-card${isChannel ? " group-card--channel" : ""}" role="dialog" aria-modal="true" aria-label="Профиль ${isChannel ? "канала" : "группы"}"><header class="group-card__header"><div class="group-card__identity">${chatAvatarHtml(chat, "group-card__avatar")}<div><b>${esc(chat.title)}</b><small>${profileCount} ${isChannel ? subscriberWord(profileCount) : memberWord(profileCount)} · ${isChannel ? "канал" : chat.type === "group" ? "группа" : "комьюнити"}</small></div></div><button type="button" data-close-group-card aria-label="Закрыть">×</button></header>${profileEditor}${channelSettings}${channelPurchaseHistory}${channelAdminTools}${channelMedia}${groupTools}${memberSection}<footer class="group-card__footer${isChannel ? " group-card__footer--channel" : ""}">${isChannel ? `<button class="button primary group-card__buy-stars" type="button" data-buy-stars-through-channel>${starButtonIcon()} Купить звёзды</button>` : ""}${isChannel && chat.ownerId !== state.me.id ? `<button class="button small" type="button" data-report-channel-profile="${chat.id}">Пожаловаться на канал</button>` : ""}<button class="button danger" type="button" data-group-leave>Выйти из ${isChannel ? "канала" : "беседы"}</button></footer></section>`;
+  overlay.innerHTML = `<section class="group-card${isChannel ? " group-card--channel" : ""}" role="dialog" aria-modal="true" aria-label="Профиль ${isChannel ? "канала" : "группы"}"><header class="group-card__header"><div class="group-card__identity">${chatAvatarHtml(chat, "group-card__avatar")}<div><b>${esc(chat.title)}</b><small>${profileCount} ${isChannel ? subscriberWord(profileCount) : memberWord(profileCount)} · ${isChannel ? "канал" : chat.type === "group" ? "группа" : "комьюнити"}</small></div></div><button type="button" data-close-group-card aria-label="Закрыть">×</button></header>${profileEditor}${channelSettings}${channelPurchaseHistory}${channelAdminTools}${channelPublicLink}${channelMedia}${groupTools}${memberSection}<footer class="group-card__footer${isChannel ? " group-card__footer--channel" : ""}">${isChannel ? `<button class="button primary group-card__buy-stars" type="button" data-buy-stars-through-channel>${starButtonIcon()} Купить звёзды</button>` : ""}${isChannel && chat.ownerId !== state.me.id ? `<button class="button small" type="button" data-report-channel-profile="${chat.id}">Пожаловаться на канал</button>` : ""}<button class="button danger" type="button" data-group-leave>Выйти из ${isChannel ? "канала" : "беседы"}</button></footer></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-group-card]").addEventListener("click", close);
@@ -2595,6 +2912,8 @@ function openGroupProfile(chat) {
         ["showSubscribers", "showReactions", "commentsEnabled", "isPublic"].forEach((key) => { body[key] = overlay.querySelector(`[name="${key}"]`)?.checked; });
         body.starBonusType = form.get("starBonusType");
         body.starBonusPercent = form.get("starBonusPercent");
+        body.buyerGiftStars = form.get("buyerGiftStars");
+        body.buyerPurchaseMessage = form.get("buyerPurchaseMessage");
       }
       if (!isChannel && canModerate) body.inviteLinkEnabled = overlay.querySelector('[name="inviteLinkEnabled"]')?.checked;
       await api("/api/chats/update", { method: "POST", body });
@@ -2615,6 +2934,7 @@ function openGroupProfile(chat) {
     try { await navigator.clipboard.writeText(inviteLink); toast("Ссылка-приглашение скопирована."); }
     catch { window.prompt("Скопируйте ссылку:", inviteLink); }
   });
+  overlay.querySelector("[data-copy-channel-link]")?.addEventListener("click", () => copyText(channelLink, "Ссылка на канал скопирована.").catch((error) => toast(error.message, true)));
   overlay.querySelector("[data-schedule-channel-post]")?.addEventListener("click", () => openChannelScheduleDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
   overlay.querySelector("[data-link-channel]")?.addEventListener("click", () => openChannelLinkDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
   overlay.querySelector("[data-link-telegram]")?.addEventListener("click", () => openChannelTelegramDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
@@ -2880,7 +3200,7 @@ function openChannelComments(messageId) {
   const commentForm = canComment
     ? `<form class="form" data-channel-comment-form><label>Ваш комментарий<textarea name="text" maxlength="1000" placeholder="Напишите комментарий"></textarea></label><label>Фото<input name="photo" type="file" accept="image/png,image/jpeg,image/webp"></label><button class="button primary">Отправить</button></form>`
     : `<section class="channel-comment-join"><p class="muted">Подпишитесь на канал, чтобы оставить комментарий.</p>${channel?.type === "channel" ? '<button class="button primary small" type="button" data-join-comment-channel>Подписаться</button>' : ""}</section>`;
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Комментарии"><header><div><b>Комментарии</b><small>${esc(pinnedMessagePreview(message))}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-comment-list">${comments.map((comment) => { const author = userById(comment.user_id); return `<article><div class="channel-comment__author">${avatarHtml(author, "channel-comment__avatar")}<b>${esc(author?.name || "Пользователь")}</b></div>${comment.media_data ? `<button class="channel-comment-photo" type="button" data-open-comment-media="${esc(comment.media_data)}"><img src="${esc(comment.media_data)}" alt="Фото в комментарии"></button>` : ""}${comment.text ? `<p>${esc(comment.text)}</p>` : ""}<small>${timeFmt(comment.created_at)}</small></article>`; }).join("") || '<p class="muted">Комментариев пока нет.</p>'}</div>${commentForm}</section>`;
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Комментарии"><header><div><b>Комментарии</b><small>${esc(pinnedMessagePreview(message))}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-comment-list">${comments.map((comment) => { const author = userById(comment.user_id); return `<article><div class="channel-comment__author">${avatarHtml(author, "channel-comment__avatar")}<b>${esc(author?.name || "Пользователь")}</b>${comment.automated ? '<span class="channel-comment__automated">Автокомментарий</span>' : ""}</div>${comment.media_data ? `<button class="channel-comment-photo" type="button" data-open-comment-media="${esc(comment.media_data)}"><img src="${esc(comment.media_data)}" alt="Фото в комментарии"></button>` : ""}${comment.text ? `<p>${esc(comment.text)}</p>` : ""}<small>${timeFmt(comment.created_at)}</small></article>`; }).join("") || '<p class="muted">Комментариев пока нет.</p>'}</div>${commentForm}</section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector(".member-manager__close").addEventListener("click", close);
@@ -2906,6 +3226,23 @@ function openChannelComments(messageId) {
       openChannelComments(messageId);
     } catch (error) { toast(error.message, true); }
   });
+}
+
+function channelPostLink(message) {
+  const channel = state.chats.find((chat) => chat.id === message.chatId);
+  if (!channel?.inviteCode) throw new Error("Не удалось сформировать ссылку на публикацию.");
+  return `${window.location.origin}/channel/${encodeURIComponent(channel.inviteCode)}/post/${encodeURIComponent(message.id)}`;
+}
+
+function openChannelPostShare(anchor, messageId) {
+  const message = state.messages.find((item) => item.id === messageId);
+  if (!message) return;
+  const link = channelPostLink(message);
+  openSimpleActions(anchor, [
+    { label: "Переслать в Chat‑Pro", action: () => openForwardPicker([messageId]) },
+    { label: "Скопировать ссылку", action: () => copyText(link, "Ссылка на публикацию скопирована.") },
+    { label: "Поделиться в другом приложении", action: () => shareText(link) },
+  ]);
 }
 
 function openGroupContentShare(sourceType, sourceId) {
@@ -3210,7 +3547,10 @@ function showRecordingOverlay(type, stream) {
     : `<div class="recording-card"><div class="recording-status"><span class="recording-dot"></span> Голосовое сообщение <b data-record-time>0:00</b></div><div class="voice-wave" data-wave>${Array.from({ length: 34 }, () => '<i></i>').join("")}</div><p class="muted">Говорите — дорожка показывает уровень звука</p><div class="recording-actions"><button class="button" data-cancel>Отмена</button><button class="button danger" data-stop>Остановить и отправить</button></div></div>`;
   document.body.append(overlay);
   const video = overlay.querySelector("video");
-  if (video) video.srcObject = stream;
+  if (video) {
+    video.srcObject = stream;
+    bindCameraPinchZoom(video, () => stream.getVideoTracks()[0]);
+  }
   const startedAt = Date.now();
   const timer = setInterval(() => {
     const seconds = Math.floor((Date.now() - startedAt) / 1000);
@@ -3526,7 +3866,7 @@ async function startCall(chat, callType) {
     }
     Object.assign(pendingCall, { id: response.callId, pending: false });
     updateCallOverlay("Ожидаем ответа…");
-    startRingTone();
+    startRingTone(state.me.callRingtone || "classic");
   } catch (error) {
     peer?.close();
     stream?.getTracks().forEach((track) => track.stop());
@@ -3544,6 +3884,7 @@ async function pollCalls() {
     if (incoming && (!activeCall || activeCall.id !== incoming.id)) showIncomingCall(incoming);
     if (activeCall?.role === "caller" && activeCall.id) {
       const remote = data.calls.find((call) => call.id === activeCall.id);
+      if (remote?.status === "accepted") stopRingTone();
       if (remote?.answerSdp && !activeCall.answerApplied) {
         await activeCall.peer.setRemoteDescription(new RTCSessionDescription(remote.answerSdp));
         activeCall.answerApplied = true;
@@ -3562,7 +3903,7 @@ function showIncomingCall(call) {
   box.className = "incoming-call";
   box.innerHTML = `<div><b>${esc(call.callerName)} звонит</b><p>${call.callType === "video" ? "Видеозвонок" : "Аудиозвонок"}</p><div class="incoming-call__actions"><button class="button call-action--accept" data-accept>${callControlIcon("accept")}<span>Принять</span></button><button class="button danger" data-decline>${callControlIcon("decline")}<span>Отклонить</span></button></div></div>`;
   document.body.append(box);
-  startRingTone();
+  startRingTone(call.callerRingtone || "classic");
   box.querySelector("[data-accept]").addEventListener("click", () => acceptCall(call));
   box.querySelector("[data-decline]").addEventListener("click", async () => { stopRingTone(); await api("/api/calls/end", { method: "POST", body: { callId: call.id } }); box.remove(); });
 }
@@ -3664,6 +4005,58 @@ function updateCameraPreview(preview, stream) {
   preview.srcObject = null;
   preview.srcObject = stream;
   preview.play().catch(() => {});
+}
+
+function bindCameraPinchZoom(video, getTrack) {
+  if (!video || typeof getTrack !== "function") return { wasPinching: () => false };
+  let initialDistance = 0;
+  let initialZoom = 1;
+  let pinchedUntil = 0;
+  let pendingZoom = null;
+  let applying = false;
+  const distance = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  const zoomInfo = () => {
+    const track = getTrack();
+    const capability = track?.getCapabilities?.().zoom;
+    if (!track || !capability) return null;
+    const current = Number(track.getSettings?.().zoom);
+    return { track, capability, current: Number.isFinite(current) ? current : capability.min };
+  };
+  const applyPendingZoom = async () => {
+    if (applying || pendingZoom === null) return;
+    applying = true;
+    while (pendingZoom !== null) {
+      const zoom = pendingZoom;
+      pendingZoom = null;
+      const info = zoomInfo();
+      if (!info) continue;
+      try { await info.track.applyConstraints({ advanced: [{ zoom }] }); }
+      catch { /* Zoom is optional and unsupported on some camera/browser combinations. */ }
+    }
+    applying = false;
+  };
+  video.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 2) return;
+    const info = zoomInfo();
+    if (!info) return;
+    initialDistance = distance(event.touches);
+    initialZoom = info.current;
+  }, { passive: true });
+  video.addEventListener("touchmove", (event) => {
+    if (event.touches.length !== 2 || !initialDistance) return;
+    const info = zoomInfo();
+    if (!info) return;
+    event.preventDefault();
+    pinchedUntil = Date.now() + 250;
+    const { min, max, step = 0.1 } = info.capability;
+    const rawZoom = initialZoom * (distance(event.touches) / initialDistance);
+    const zoom = Math.min(max, Math.max(min, Math.round(rawZoom / step) * step));
+    pendingZoom = zoom;
+    applyPendingZoom();
+  }, { passive: false });
+  video.addEventListener("touchend", () => { if (initialDistance) pinchedUntil = Date.now() + 250; initialDistance = 0; }, { passive: true });
+  video.addEventListener("touchcancel", () => { initialDistance = 0; }, { passive: true });
+  return { wasPinching: () => Date.now() < pinchedUntil };
 }
 
 function attachRemoteStream(stream) {
@@ -3798,8 +4191,9 @@ function showCallOverlay(title, callType, stream) {
   box.querySelector("[data-toggle-pause]").addEventListener("click", toggleCallPause);
   box.querySelector("[data-toggle-call-fullscreen]").addEventListener("click", toggleCallFullscreen);
   box.querySelector("[data-toggle-call-minimized]").addEventListener("click", toggleCallMinimized);
+  const localPinchZoom = bindCameraPinchZoom(localVideo, () => activeCall?.stream?.getVideoTracks()[0]);
   box.querySelector("[data-remote-video]").addEventListener("click", () => setCallPrimaryVideo("remote"));
-  box.querySelector("[data-local-video]").addEventListener("click", () => setCallPrimaryVideo("local"));
+  localVideo.addEventListener("click", () => { if (!localPinchZoom.wasPinching()) setCallPrimaryVideo("local"); });
   box.querySelector(".call-window").addEventListener("click", (event) => {
     if (box.classList.contains("is-minimized") && !event.target.closest("button")) toggleCallMinimized();
   });
@@ -3899,7 +4293,7 @@ function toggleCallPause(event) {
   event.currentTarget.innerHTML = `${callControlIcon(activeCall.paused ? "play" : "pause")}<span data-pause-label>${activeCall.paused ? "Продолжить" : "Пауза"}</span>`;
   updateCallOverlay(activeCall.paused ? "Звонок на паузе" : "Звонок подключён");
 }
-function startRingTone() {
+function startRingTone(ringtone = "classic") {
   stopRingTone();
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) return;
@@ -3907,16 +4301,23 @@ function startRingTone() {
   const gain = context.createGain();
   gain.gain.value = 0.04;
   gain.connect(context.destination);
-  const playBeep = () => {
+  const tones = {
+    classic: { frequencies: [440], interval: 1400, duration: 0.18 },
+    pulse: { frequencies: [392, 494], interval: 1200, duration: 0.14, gap: 0.2 },
+    bright: { frequencies: [660, 880], interval: 1100, duration: 0.13, gap: 0.16 },
+  };
+  const pattern = tones[ringtone] || tones.classic;
+  const playTone = (frequency, delay = 0) => {
     const oscillator = context.createOscillator();
     oscillator.type = "sine";
-    oscillator.frequency.value = 440;
+    oscillator.frequency.value = frequency;
     oscillator.connect(gain);
-    oscillator.start();
-    oscillator.stop(context.currentTime + 0.18);
+    oscillator.start(context.currentTime + delay);
+    oscillator.stop(context.currentTime + delay + pattern.duration);
   };
+  const playBeep = () => pattern.frequencies.forEach((frequency, index) => playTone(frequency, index * (pattern.gap || 0)));
   playBeep();
-  ringTone = { context, timer: setInterval(playBeep, 1400) };
+  ringTone = { context, timer: setInterval(playBeep, pattern.interval) };
 }
 function stopRingTone() {
   if (!ringTone) return;
@@ -4018,7 +4419,7 @@ function openProfilePost(postId) {
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-profile-post]").addEventListener("click", close);
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-open-media]")?.addEventListener("click", (event) => openMedia(event.currentTarget.dataset.openMedia));
+  overlay.querySelector("[data-open-media]")?.addEventListener("click", (event) => openMedia(event.currentTarget.dataset.openMedia, "photo", state.posts.filter((item) => item.user_id === post.user_id && item.media_data).map((item) => item.media_data)));
   overlay.querySelector("[data-share-profile-post]").addEventListener("click", () => { close(); openGroupContentShare("profile-post", post.id); });
   let selectedReaction = "";
   const sendReaction = overlay.querySelector("[data-send-profile-post-reaction]");
@@ -4042,21 +4443,30 @@ function openProfilePost(postId) {
 }
 function galleryPostHtml(post) { return `<button class="gallery-photo" data-open-profile-post="${post.id}"><img src="${esc(post.media_data)}" alt="Фото поста"></button>`; }
 function limitLabel(key) { return ({ maxStars: "Звёзд на балансе", postsPerDay: "Постов в сутки (профиль и каналы)", storiesPerDay: "Сторис в сутки", storiesPerMonth: "Сторис за 30 дней", groupsJoined: "Подписок на группы", groupsCreated: "Созданных групп", communitiesJoined: "Вступлений в беседы", communitiesCreated: "Созданных бесед", channelsJoined: "Подписок на каналы", channelsCreated: "Созданных каналов", savedAccounts: "Сохранённых входов", autopostSourcesTotal: "Всех источников автопостинга", autopostSourcesPerChannel: "Источников автопостинга на канал" })[key] || key; }
-function openMedia(source, mediaType = "photo") {
+function openMedia(source, mediaType = "photo", sources = [source]) {
   if (!source) return;
+  const items = [...new Set(sources.filter(Boolean))];
+  let index = Math.max(0, items.indexOf(source));
   const isVideo = mediaType === "video";
   const overlay = document.createElement("div");
   overlay.className = "media-overlay";
-  overlay.innerHTML = `<button class="media-overlay__close" aria-label="Закрыть">×</button>${isVideo ? `<video controls autoplay playsinline src="${esc(source)}">Ваш браузер не поддерживает видео.</video>` : `<img src="${esc(source)}" alt="Просмотр изображения">`}`;
+  const render = () => {
+    const current = items[index];
+    overlay.innerHTML = `<button class="media-overlay__close" aria-label="Закрыть">×</button>${items.length > 1 ? `<button class="media-overlay__nav media-overlay__nav--previous" type="button" data-media-previous aria-label="Предыдущее фото">‹</button><button class="media-overlay__nav media-overlay__nav--next" type="button" data-media-next aria-label="Следующее фото">›</button><span class="media-overlay__counter">${index + 1} / ${items.length}</span>` : ""}${isVideo ? `<video controls autoplay playsinline src="${esc(current)}">Ваш браузер не поддерживает видео.</video>` : `<img src="${esc(current)}" alt="Просмотр изображения">`}`;
+    overlay.querySelector(".media-overlay__close").addEventListener("click", close);
+    overlay.querySelector("[data-media-previous]")?.addEventListener("click", () => show(index - 1));
+    overlay.querySelector("[data-media-next]")?.addEventListener("click", () => show(index + 1));
+  };
+  const show = (nextIndex) => { index = (nextIndex + items.length) % items.length; render(); };
   document.body.append(overlay);
   const close = () => {
     overlay.querySelector("video")?.pause();
     overlay.remove();
     document.removeEventListener("keydown", onKeyDown);
   };
-  const onKeyDown = (event) => { if (event.key === "Escape") close(); };
+  const onKeyDown = (event) => { if (event.key === "Escape") close(); else if (items.length > 1 && event.key === "ArrowLeft") show(index - 1); else if (items.length > 1 && event.key === "ArrowRight") show(index + 1); };
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("button").addEventListener("click", close);
+  render();
   document.addEventListener("keydown", onKeyDown);
 }
 function openCircle(messageId) {
@@ -4091,20 +4501,29 @@ function openCircle(messageId) {
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
   document.addEventListener("keydown", onKeyDown);
 }
-async function openStory(storyId) {
+async function openStory(storyId, storyIds = (state.stories || []).map((story) => story.id)) {
   try {
     const data = await api("/api/stories/view", { method: "POST", body: { storyId } });
     await refresh();
     const story = data.story;
+    const availableStoryIds = storyIds.filter((id) => (state.stories || []).some((item) => item.id === id));
+    const storyIndex = availableStoryIds.indexOf(story.id);
     const own = story.user_id === state.me.id;
     const reactions = ["❤️", "🔥", "😍", "😂", "😮", "👏"];
     const overlay = document.createElement("div");
     overlay.className = "story-overlay";
-    overlay.innerHTML = `<div class="story-viewer"><button class="media-overlay__close" data-close-story aria-label="Закрыть">×</button><img src="${esc(story.media_data)}" alt="Сторис">${story.caption ? `<p>${esc(story.caption)}</p>` : ""}${own ? `<button class="button small" type="button" data-save-story-permanent ${story.permanent ? "disabled" : ""}>${story.permanent ? "В постоянных" : "Сохранить в постоянные"}</button><section class="story-insights"><b>Просмотры: ${story.viewerCount || 0}</b>${story.viewers?.map((viewer) => `<div class="story-viewer-row"><button class="row" type="button" data-story-viewer="${viewer.id}">${avatarHtml(viewer)}<span>${esc(viewer.name)} ${viewer.storyReaction ? `<b>${esc(viewer.storyReaction)}</b>` : ""}<small>@${esc(viewer.username)}</small></span></button><button class="button danger small" type="button" data-hide-story-from-viewer="${viewer.id}">Скрыть от него</button></div>`).join("") || '<p class="muted">Пока никто не посмотрел.</p>'}</section>` : `<section class="story-reaction-panel"><div class="story-reactions">${reactions.map((emoji) => `<button class="${story.myReaction === emoji ? "active" : ""}" data-story-react="${emoji}" aria-label="Выбрать реакцию ${emoji}">${emoji}</button>`).join("")}</div><button class="story-send-reaction" type="button" data-send-story-reaction disabled><span data-selected-story-reaction>Выберите реакцию</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 3-7.4 18-3.7-7.3L3 10.1 21 3Z"/><path d="m10 14 4.2-4.2"/></svg></button></section><form class="story-reply" data-story-reply><input name="text" maxlength="1000" placeholder="Ответить на сторис"><button class="button small" type="submit">Ответить</button></form><div class="story-actions"><button class="button small" type="button" data-share-story>Поделиться</button><button class="button small" type="button" data-share-story-to-group>В группу</button><button class="button small" type="button" data-report-story>Пожаловаться</button></div><button class="story-hide-author" type="button" data-hide-current-story-author title="Скрыть сторис пользователя" aria-label="Скрыть сторис пользователя">◉</button>`}</div>`;
+    overlay.innerHTML = `<div class="story-viewer"><button class="media-overlay__close" data-close-story aria-label="Закрыть">×</button>${availableStoryIds.length > 1 ? `<button class="story-viewer__nav story-viewer__nav--previous" type="button" data-story-previous aria-label="Предыдущая сторис">‹</button><button class="story-viewer__nav story-viewer__nav--next" type="button" data-story-next aria-label="Следующая сторис">›</button><span class="story-viewer__counter">${storyIndex + 1} / ${availableStoryIds.length}</span>` : ""}<img src="${esc(story.media_data)}" alt="Сторис">${story.caption ? `<p>${esc(story.caption)}</p>` : ""}${own ? `<button class="button small" type="button" data-save-story-permanent ${story.permanent ? "disabled" : ""}>${story.permanent ? "В постоянных" : "Сохранить в постоянные"}</button><section class="story-insights"><b>Просмотры: ${story.viewerCount || 0}</b>${story.viewers?.map((viewer) => `<div class="story-viewer-row"><button class="row" type="button" data-story-viewer="${viewer.id}">${avatarHtml(viewer)}<span>${esc(viewer.name)} ${viewer.storyReaction ? `<b>${esc(viewer.storyReaction)}</b>` : ""}<small>@${esc(viewer.username)}</small></span></button><button class="button danger small" type="button" data-hide-story-from-viewer="${viewer.id}">Скрыть от него</button></div>`).join("") || '<p class="muted">Пока никто не посмотрел.</p>'}</section>` : `<section class="story-reaction-panel"><div class="story-reactions">${reactions.map((emoji) => `<button class="${story.myReaction === emoji ? "active" : ""}" data-story-react="${emoji}" aria-label="Выбрать реакцию ${emoji}">${emoji}</button>`).join("")}</div><button class="story-send-reaction" type="button" data-send-story-reaction disabled><span data-selected-story-reaction>Выберите реакцию</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 3-7.4 18-3.7-7.3L3 10.1 21 3Z"/><path d="m10 14 4.2-4.2"/></svg></button></section><form class="story-reply" data-story-reply><input name="text" maxlength="1000" placeholder="Ответить на сторис"><button class="button small" type="submit">Ответить</button></form><div class="story-actions"><button class="button small" type="button" data-share-story>Поделиться</button><button class="button small" type="button" data-share-story-to-group>В группу</button><button class="button small" type="button" data-report-story>Пожаловаться</button></div><button class="story-hide-author" type="button" data-hide-current-story-author title="Скрыть сторис пользователя" aria-label="Скрыть сторис пользователя">◉</button>`}</div>`;
     document.body.append(overlay);
     const close = () => overlay.remove();
     overlay.querySelector("[data-close-story]").addEventListener("click", close);
     overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+    const changeStory = (offset) => {
+      if (storyIndex < 0 || availableStoryIds.length < 2) return;
+      close();
+      openStory(availableStoryIds[(storyIndex + offset + availableStoryIds.length) % availableStoryIds.length], availableStoryIds);
+    };
+    overlay.querySelector("[data-story-previous]")?.addEventListener("click", () => changeStory(-1));
+    overlay.querySelector("[data-story-next]")?.addEventListener("click", () => changeStory(1));
     overlay.querySelectorAll("[data-story-viewer]").forEach((button) => button.addEventListener("click", () => { close(); openProfile(button.dataset.storyViewer); }));
     overlay.querySelectorAll("[data-hide-story-from-viewer]").forEach((button) => button.addEventListener("click", async () => { await setStoryPrivacyHidden(button.dataset.hideStoryFromViewer, true); close(); }));
     overlay.querySelector("[data-hide-current-story-author]")?.addEventListener("click", async () => { await setStoryAuthorHidden(story.user_id, true); close(); });
@@ -4227,7 +4646,7 @@ function esc(value) { return String(value ?? "").replaceAll("&", "&amp;").replac
 function toastAction(message) {
   const text = String(message || "");
   if (/недостаточно звёзд/i.test(text)) return { section: "stars", label: "Звёзды", message: "Недостаточно звёзд. Пополните баланс в разделе «Звёзды»." };
-  if (/на вашем уровне|лимит баланса|превышает лимит баланса|баланс этого аккаунта ограничен/i.test(text)) return { section: "account-level", label: "Уровень аккаунта", message: "Вы достигли лимита. Его можно повысить в разделе «Уровень аккаунта»." };
+  if (/на вашем уровне|лимит баланса|превышает лимит баланса|баланс этого аккаунта ограничен|доступна с уровня|повысьте уровень/i.test(text)) return { section: "account-level", label: "Уровень аккаунта", message: "Чтобы выполнить это действие, повысьте уровень аккаунта." };
   return null;
 }
 

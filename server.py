@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime
 import hashlib
+import hmac
 import ipaddress
 import json
 import mimetypes
@@ -32,7 +34,7 @@ from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib import error as urlerror
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
 from urllib import request as urlrequest
 from xml.etree import ElementTree
 
@@ -64,6 +66,138 @@ SMTP_USE_SSL = os.environ.get("SMTP_USE_SSL", "").strip().lower() in {"1", "true
 YOOKASSA_SHOP_ID = os.environ.get("YOOKASSA_SHOP_ID", "")
 YOOKASSA_SECRET_KEY = os.environ.get("YOOKASSA_SECRET_KEY", "")
 YOOKASSA_RETURN_URL = os.environ.get("YOOKASSA_RETURN_URL", "").rstrip("/")
+
+
+def read_genapi_settings() -> dict[str, str]:
+    settings: dict[str, str] = {}
+    try:
+        for line in Path("/etc/chat-pro/genapi.env").read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.strip().partition("=")
+            if separator and key in {"GENAPI_API_KEY", "GENAPI_BASE_URL", "GENAPI_MODEL"}:
+                settings[key] = value.strip()
+    except OSError:
+        pass
+    return settings
+
+
+GENAPI_SETTINGS = read_genapi_settings()
+GENAPI_API_KEY = os.environ.get("GENAPI_API_KEY", GENAPI_SETTINGS.get("GENAPI_API_KEY", "")).strip()
+GENAPI_BASE_URL = os.environ.get("GENAPI_BASE_URL", GENAPI_SETTINGS.get("GENAPI_BASE_URL", "https://proxy.gen-api.ru/v1")).strip().rstrip("/")
+GENAPI_MODEL = os.environ.get("GENAPI_MODEL", GENAPI_SETTINGS.get("GENAPI_MODEL", "deepseek-v4-flash")).strip()
+
+
+def genapi_configuration() -> tuple[str, str, str]:
+    settings = read_genapi_settings()
+    api_key = settings.get("GENAPI_API_KEY", "").strip() or GENAPI_API_KEY
+    base_url = settings.get("GENAPI_BASE_URL", "").strip().rstrip("/") or GENAPI_BASE_URL
+    model = settings.get("GENAPI_MODEL", "").strip() or GENAPI_MODEL
+    return api_key, base_url, model
+
+
+def read_s3_settings() -> dict[str, str]:
+    allowed = {"S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_REGION"}
+    settings: dict[str, str] = {}
+    try:
+        for line in Path("/etc/chat-pro/s3.env").read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.strip().partition("=")
+            if separator and key in allowed:
+                settings[key] = value.strip()
+    except OSError:
+        pass
+    return settings
+
+
+def s3_configuration() -> dict[str, str]:
+    settings = read_s3_settings()
+    return {
+        "endpoint": settings.get("S3_ENDPOINT", "").strip().rstrip("/"),
+        "bucket": settings.get("S3_BUCKET", "").strip(),
+        "access_key": settings.get("S3_ACCESS_KEY", "").strip(),
+        "secret_key": settings.get("S3_SECRET_KEY", "").strip(),
+        "region": settings.get("S3_REGION", "us-east-1").strip() or "us-east-1",
+    }
+
+
+def s3_is_configured() -> bool:
+    config = s3_configuration()
+    endpoint = urlparse(config["endpoint"])
+    return bool(config["bucket"] and config["access_key"] and config["secret_key"] and endpoint.scheme == "https" and endpoint.netloc)
+
+
+def s3_quote(value: str) -> str:
+    return quote(str(value), safe="~-._/")
+
+
+def s3_query_quote(value: str) -> str:
+    return quote(str(value), safe="~-._")
+
+
+def s3_signing_key(secret_key: str, date_stamp: str, region: str) -> bytes:
+    date_key = hmac.new(("AWS4" + secret_key).encode("utf-8"), date_stamp.encode("utf-8"), hashlib.sha256).digest()
+    region_key = hmac.new(date_key, region.encode("utf-8"), hashlib.sha256).digest()
+    service_key = hmac.new(region_key, b"s3", hashlib.sha256).digest()
+    return hmac.new(service_key, b"aws4_request", hashlib.sha256).digest()
+
+
+def s3_object_url(config: dict[str, str], key: str) -> tuple[str, str, str]:
+    endpoint = urlparse(config["endpoint"])
+    canonical_uri = s3_quote(f"/{config['bucket']}/{key}")
+    return config["endpoint"] + canonical_uri, endpoint.netloc, canonical_uri
+
+
+def s3_presigned_url(method: str, key: str, expires_in: int = 900, content_type: str | None = None) -> tuple[str, dict[str, str]]:
+    config = s3_configuration()
+    if not s3_is_configured():
+        raise ValueError("S3-хранилище пока не подключено.")
+    current = datetime.datetime.now(datetime.timezone.utc)
+    amz_date = current.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = current.strftime("%Y%m%d")
+    credential_scope = f"{date_stamp}/{config['region']}/s3/aws4_request"
+    url, host, canonical_uri = s3_object_url(config, key)
+    canonical_headers = f"host:{host}\n"
+    signed_headers = "host"
+    headers: dict[str, str] = {}
+    if content_type:
+        canonical_headers = f"content-type:{content_type}\n" + canonical_headers
+        signed_headers = "content-type;host"
+        headers["Content-Type"] = content_type
+    query = {
+        "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+        "X-Amz-Credential": f"{config['access_key']}/{credential_scope}",
+        "X-Amz-Date": amz_date,
+        "X-Amz-Expires": str(max(60, min(expires_in, 3600))),
+        "X-Amz-SignedHeaders": signed_headers,
+    }
+    canonical_query = "&".join(f"{s3_query_quote(name)}={s3_query_quote(query[name])}" for name in sorted(query))
+    canonical_request = "\n".join((method, canonical_uri, canonical_query, canonical_headers, signed_headers, "UNSIGNED-PAYLOAD"))
+    string_to_sign = "\n".join(("AWS4-HMAC-SHA256", amz_date, credential_scope, hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()))
+    signature = hmac.new(s3_signing_key(config["secret_key"], date_stamp, config["region"]), string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{url}?{canonical_query}&X-Amz-Signature={signature}", headers
+
+
+def s3_object_metadata(key: str) -> tuple[int, str]:
+    config = s3_configuration()
+    if not s3_is_configured():
+        raise ValueError("S3-хранилище пока не подключено.")
+    current = datetime.datetime.now(datetime.timezone.utc)
+    amz_date = current.strftime("%Y%m%dT%H%M%SZ")
+    date_stamp = current.strftime("%Y%m%d")
+    credential_scope = f"{date_stamp}/{config['region']}/s3/aws4_request"
+    url, host, canonical_uri = s3_object_url(config, key)
+    canonical_headers = f"host:{host}\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:{amz_date}\n"
+    signed_headers = "host;x-amz-content-sha256;x-amz-date"
+    canonical_request = "\n".join(("HEAD", canonical_uri, "", canonical_headers, signed_headers, "UNSIGNED-PAYLOAD"))
+    string_to_sign = "\n".join(("AWS4-HMAC-SHA256", amz_date, credential_scope, hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()))
+    signature = hmac.new(s3_signing_key(config["secret_key"], date_stamp, config["region"]), string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+    authorization = f"AWS4-HMAC-SHA256 Credential={config['access_key']}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    request = urlrequest.Request(url, method="HEAD", headers={"Authorization": authorization, "x-amz-content-sha256": "UNSIGNED-PAYLOAD", "x-amz-date": amz_date})
+    try:
+        with urlrequest.urlopen(request, timeout=15) as response:
+            return int(response.headers.get("Content-Length", "0")), response.headers.get_content_type()
+    except (OSError, ValueError) as error:
+        raise ValueError("Не удалось проверить загруженный файл в S3.") from error
+
+
 CHANNEL_MANAGER_ROLES = {"owner", "admin", "author"}
 LEVEL_LIMIT_KEYS = {
     "maxStars", "messagesPerDay", "storiesPerDay", "storiesPerMonth", "postsPerDay",
@@ -81,6 +215,8 @@ LEVEL_CRITERIA_KEYS = ACTIVITY_METRIC_KEYS | {"communities", "channels"}
 DEFAULT_UI_APPEARANCE = {"outlineColor": "#65ddf8", "glowColor": "#21d5f0", "glowIntensity": 35}
 DEFAULT_PUBLIC_BRANDING = {"loginLogoData": ""}
 LOGIN_LOGO_MAX_BYTES = 2_500_000
+CHANNEL_REACTION_OPTIONS = ("👍", "❤️", "🔥", "👏", "🤩", "⚡", "🎉", "😍", "😢", "🤔", "👎", "💯")
+DEFAULT_CHANNEL_REACTIONS = ("👍", "❤️", "🔥", "👏", "🤩", "⚡")
 DEFAULT_STAR_PACKAGES = [
     {"id": "stars-100", "stars": 100, "price": "99.00"},
     {"id": "stars-550", "stars": 550, "price": "449.00"},
@@ -107,6 +243,30 @@ def nonnegative_int(value, field_name: str, maximum: int = 1_000_000) -> int:
     if parsed < 0 or parsed > maximum:
         raise ValueError(f"Поле «{field_name}» должно быть от 0 до {maximum}.")
     return parsed
+
+
+def normalize_channel_reactions(value) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError("Реакции каналов должны быть списком.")
+    reactions = []
+    for item in value:
+        emoji = str(item)
+        if emoji not in CHANNEL_REACTION_OPTIONS:
+            raise ValueError("Выбрана неподдерживаемая реакция канала.")
+        if emoji not in reactions:
+            reactions.append(emoji)
+    if not reactions:
+        raise ValueError("Выберите хотя бы одну реакцию для каналов.")
+    return reactions
+
+
+def channel_reaction_emojis(con: sqlite3.Connection) -> tuple[str, ...]:
+    row = con.execute("SELECT value FROM settings WHERE key = 'channel_reactions'").fetchone()
+    try:
+        reactions = normalize_channel_reactions(loads(row["value"], []) if row else list(DEFAULT_CHANNEL_REACTIONS))
+    except ValueError:
+        reactions = list(DEFAULT_CHANNEL_REACTIONS)
+    return tuple(reactions)
 
 
 def normalize_ui_appearance(value) -> dict:
@@ -241,6 +401,7 @@ def normalize_level_reward(value, field_name: str) -> dict:
         raise ValueError("Параметр рекомендации канала должен быть логическим значением.")
     return {
         "stars": nonnegative_int(value.get("stars", 0), "stars"),
+        "premiumDays": nonnegative_int(value.get("premiumDays", 0), "premiumDays", 3650),
         "limits": {key: nonnegative_int(limits[key], key) for key in limits},
         "recurringStars": recurring_stars,
         "recurringIntervalDays": recurring_interval_days,
@@ -306,6 +467,7 @@ def now() -> int:
 def connect() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH, timeout=10)
     con.row_factory = sqlite3.Row
+    con.create_function("casefold", 1, lambda value: str(value or "").casefold())
     con.execute("PRAGMA foreign_keys = ON")
     return con
 
@@ -436,8 +598,10 @@ def public_user(row: sqlite3.Row | dict | None) -> dict | None:
         "nightOutlineColor": row["night_outline_color"] if "night_outline_color" in row.keys() else None,
         "nightGlowColor": row["night_glow_color"] if "night_glow_color" in row.keys() else None,
         "nightGlowIntensity": row["night_glow_intensity"] if "night_glow_intensity" in row.keys() else None,
+        "callRingtone": row["call_ringtone"] if "call_ringtone" in row.keys() else "classic",
         "hiddenStatusIds": loads(row["hidden_status_ids"], []),
         "groupInvitePrivacy": row["group_invite_privacy"] if "group_invite_privacy" in row.keys() else "contacts",
+        "directMessagePrivacy": row["direct_message_privacy"] if "direct_message_privacy" in row.keys() else "everyone",
         "avatarData": row["avatar_data"],
         "createdAt": row["created_at"],
     }
@@ -483,6 +647,7 @@ def message_to_dict(row: sqlite3.Row) -> dict:
         "forwardedFromUserId": row["forwarded_from_user_id"] if "forwarded_from_user_id" in row.keys() else None,
         "sourceType": row["source_type"] if "source_type" in row.keys() else None,
         "sourceId": row["source_id"] if "source_id" in row.keys() else None,
+        "aiAgent": bool(row["ai_agent"]) if "ai_agent" in row.keys() else False,
         "replyToId": row["reply_to_id"] if "reply_to_id" in row.keys() else None,
         "editedAt": row["edited_at"] if "edited_at" in row.keys() else None,
         "unread": bool(row["is_unread"]) if "is_unread" in row.keys() else False,
@@ -511,7 +676,7 @@ def init_db() -> None:
               site_background TEXT NOT NULL DEFAULT 'default',
               site_background_data TEXT,
               dialog_color TEXT NOT NULL DEFAULT '#dff9f9',
-              other_dialog_color TEXT NOT NULL DEFAULT '#ffffff',
+              other_dialog_color TEXT NOT NULL DEFAULT '#dff9f9',
               dialog_panel_color TEXT NOT NULL DEFAULT '#f4f8fc',
               dialog_panel_style TEXT NOT NULL DEFAULT 'interactive-light',
               dialog_bubble_style TEXT NOT NULL DEFAULT 'custom',
@@ -524,8 +689,10 @@ def init_db() -> None:
               night_outline_color TEXT,
               night_glow_color TEXT,
               night_glow_intensity INTEGER,
+              call_ringtone TEXT NOT NULL DEFAULT 'classic',
               hidden_status_ids TEXT NOT NULL DEFAULT '[]',
               group_invite_privacy TEXT NOT NULL DEFAULT 'contacts',
+              direct_message_privacy TEXT NOT NULL DEFAULT 'everyone',
               avatar_data TEXT,
               last_login_day TEXT,
               login_streak INTEGER NOT NULL DEFAULT 0,
@@ -629,7 +796,39 @@ def init_db() -> None:
               forwarded_from_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
               reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
               edited_at INTEGER,
+              ai_agent INTEGER NOT NULL DEFAULT 0,
               created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_settings (
+              user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+              instruction TEXT NOT NULL DEFAULT '',
+              style TEXT NOT NULL DEFAULT 'friendly',
+              autopilot_enabled INTEGER NOT NULL DEFAULT 0,
+              allowed_chat_ids_json TEXT NOT NULL DEFAULT '[]',
+              template_message_ids_json TEXT NOT NULL DEFAULT '[]',
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_processed_messages (
+              message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+              processed_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_channel_rules (
+              user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+              enabled INTEGER NOT NULL DEFAULT 0,
+              target_channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+              source_channel_ids_json TEXT NOT NULL DEFAULT '[]',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_channel_processed_posts (
+              rule_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              processed_at INTEGER NOT NULL,
+              PRIMARY KEY (rule_user_id, message_id)
             );
 
             CREATE TABLE IF NOT EXISTS notifications (
@@ -668,14 +867,26 @@ def init_db() -> None:
               created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS avatar_history (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              avatar_data TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS avatar_history_user_created_idx ON avatar_history(user_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS automated_comment_rules (
               id TEXT PRIMARY KEY,
               channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
               target_message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,
+              target_scope TEXT NOT NULL DEFAULT 'future',
               commenter_ids_json TEXT NOT NULL DEFAULT '[]',
               texts_json TEXT NOT NULL DEFAULT '[]',
+              comment_mode TEXT NOT NULL DEFAULT 'manual',
+              categories_json TEXT NOT NULL DEFAULT '[]',
               min_delay_seconds INTEGER NOT NULL DEFAULT 300,
               max_delay_seconds INTEGER NOT NULL DEFAULT 1800,
+              distribution_seconds INTEGER NOT NULL DEFAULT 43200,
               starts_at INTEGER NOT NULL,
               ends_at INTEGER NOT NULL,
               active INTEGER NOT NULL DEFAULT 1,
@@ -691,6 +902,18 @@ def init_db() -> None:
               publish_at INTEGER NOT NULL,
               created_at INTEGER NOT NULL,
               UNIQUE(rule_id, message_id, commenter_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS media_uploads (
+              key TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              media_type TEXT NOT NULL,
+              file_name TEXT NOT NULL DEFAULT '',
+              content_type TEXT NOT NULL,
+              size_bytes INTEGER NOT NULL,
+              expires_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS channel_links (
@@ -804,6 +1027,52 @@ def init_db() -> None:
               remaining INTEGER NOT NULL,
               active INTEGER NOT NULL DEFAULT 1,
               last_tick INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_growth_jobs (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              subscribers_per_hour INTEGER NOT NULL DEFAULT 0,
+              views_per_hour INTEGER NOT NULL DEFAULT 0,
+              reactions_per_hour INTEGER NOT NULL DEFAULT 0,
+              comments_per_hour INTEGER NOT NULL DEFAULT 0,
+              starts_at INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              subscribers_added INTEGER NOT NULL DEFAULT 0,
+              views_added INTEGER NOT NULL DEFAULT 0,
+              reactions_added INTEGER NOT NULL DEFAULT 0,
+              comments_added INTEGER NOT NULL DEFAULT 0,
+              active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS demo_activity_packages (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              subscribers_per_day INTEGER NOT NULL DEFAULT 0,
+              views_per_day INTEGER NOT NULL DEFAULT 0,
+              reactions_per_day INTEGER NOT NULL DEFAULT 0,
+              comments_per_day INTEGER NOT NULL DEFAULT 0,
+              post_limit INTEGER NOT NULL DEFAULT 1,
+              duration_days INTEGER NOT NULL DEFAULT 7,
+              fade_duration_days INTEGER NOT NULL DEFAULT 30,
+              indefinite INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS demo_activity_subscriptions (
+              id TEXT PRIMARY KEY,
+              package_id TEXT NOT NULL REFERENCES demo_activity_packages(id) ON DELETE CASCADE,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              starts_at INTEGER NOT NULL,
+              ends_at INTEGER NOT NULL,
+              auto_renew INTEGER NOT NULL DEFAULT 0,
+              subscribers_added INTEGER NOT NULL DEFAULT 0,
+              views_added INTEGER NOT NULL DEFAULT 0,
+              reactions_added INTEGER NOT NULL DEFAULT 0,
+              comments_added INTEGER NOT NULL DEFAULT 0,
+              active INTEGER NOT NULL DEFAULT 1,
               created_at INTEGER NOT NULL
             );
 
@@ -1015,6 +1284,8 @@ def init_db() -> None:
               stars INTEGER NOT NULL,
               bonus_type TEXT NOT NULL,
               bonus_amount TEXT NOT NULL,
+              buyer_gift_stars INTEGER NOT NULL DEFAULT 0,
+              buyer_message TEXT NOT NULL DEFAULT '',
               created_at INTEGER NOT NULL
             );
 
@@ -1117,7 +1388,7 @@ def init_db() -> None:
         if "dialog_font" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN dialog_font TEXT NOT NULL DEFAULT 'system'")
         if "other_dialog_color" not in columns:
-            con.execute("ALTER TABLE users ADD COLUMN other_dialog_color TEXT NOT NULL DEFAULT '#ffffff'")
+            con.execute("ALTER TABLE users ADD COLUMN other_dialog_color TEXT NOT NULL DEFAULT '#dff9f9'")
         if "dialog_panel_color" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN dialog_panel_color TEXT NOT NULL DEFAULT '#f4f8fc'")
         if "dialog_panel_style" not in columns:
@@ -1128,6 +1399,22 @@ def init_db() -> None:
             con.execute("ALTER TABLE users ADD COLUMN sidebar_background_data TEXT")
         if "group_invite_privacy" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN group_invite_privacy TEXT NOT NULL DEFAULT 'contacts'")
+        if "direct_message_privacy" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN direct_message_privacy TEXT NOT NULL DEFAULT 'everyone'")
+        channel_purchase_columns = {row["name"] for row in con.execute("PRAGMA table_info(channel_star_purchases)").fetchall()}
+        if "buyer_gift_stars" not in channel_purchase_columns:
+            con.execute("ALTER TABLE channel_star_purchases ADD COLUMN buyer_gift_stars INTEGER NOT NULL DEFAULT 0")
+        if "buyer_message" not in channel_purchase_columns:
+            con.execute("ALTER TABLE channel_star_purchases ADD COLUMN buyer_message TEXT NOT NULL DEFAULT ''")
+        automated_comment_rule_columns = {row["name"] for row in con.execute("PRAGMA table_info(automated_comment_rules)").fetchall()}
+        if "target_scope" not in automated_comment_rule_columns:
+            con.execute("ALTER TABLE automated_comment_rules ADD COLUMN target_scope TEXT NOT NULL DEFAULT 'future'")
+        if "distribution_seconds" not in automated_comment_rule_columns:
+            con.execute("ALTER TABLE automated_comment_rules ADD COLUMN distribution_seconds INTEGER NOT NULL DEFAULT 43200")
+        if "comment_mode" not in automated_comment_rule_columns:
+            con.execute("ALTER TABLE automated_comment_rules ADD COLUMN comment_mode TEXT NOT NULL DEFAULT 'manual'")
+        if "categories_json" not in automated_comment_rule_columns:
+            con.execute("ALTER TABLE automated_comment_rules ADD COLUMN categories_json TEXT NOT NULL DEFAULT '[]'")
         if "night_appearance_custom" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN night_appearance_custom INTEGER NOT NULL DEFAULT 0")
         if "night_outline_color" not in columns:
@@ -1136,6 +1423,11 @@ def init_db() -> None:
             con.execute("ALTER TABLE users ADD COLUMN night_glow_color TEXT")
         if "night_glow_intensity" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN night_glow_intensity INTEGER")
+        if "call_ringtone" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN call_ringtone TEXT NOT NULL DEFAULT 'classic'")
+        message_columns = {row["name"] for row in con.execute("PRAGMA table_info(messages)").fetchall()}
+        if "ai_agent" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN ai_agent INTEGER NOT NULL DEFAULT 0")
         chat_columns = {row["name"] for row in con.execute("PRAGMA table_info(chats)").fetchall()}
         if "invite_code" not in chat_columns:
             con.execute("ALTER TABLE chats ADD COLUMN invite_code TEXT")
@@ -1143,6 +1435,11 @@ def init_db() -> None:
             con.execute("UPDATE chats SET invite_code = ? WHERE id = ?", (secrets.token_urlsafe(12), chat["id"]))
         if "avatar_data" not in chat_columns:
             con.execute("ALTER TABLE chats ADD COLUMN avatar_data TEXT")
+        demo_package_columns = {row["name"] for row in con.execute("PRAGMA table_info(demo_activity_packages)").fetchall()}
+        if "fade_duration_days" not in demo_package_columns:
+            con.execute("ALTER TABLE demo_activity_packages ADD COLUMN fade_duration_days INTEGER NOT NULL DEFAULT 30")
+        if "indefinite" not in demo_package_columns:
+            con.execute("ALTER TABLE demo_activity_packages ADD COLUMN indefinite INTEGER NOT NULL DEFAULT 0")
         # «Автор» was the former channel-manager role. Keep its permissions as a
         # compatibility fallback, but normalize stored rows to the current name.
         con.execute(
@@ -1253,6 +1550,7 @@ def init_db() -> None:
                 "communities": True, "reviews": True, "donations": True,
             },
             "ui_appearance": DEFAULT_UI_APPEARANCE,
+            "channel_reactions": list(DEFAULT_CHANNEL_REACTIONS),
             "public_branding": DEFAULT_PUBLIC_BRANDING,
             "public_legal": DEFAULT_PUBLIC_LEGAL,
         }
@@ -1391,13 +1689,138 @@ def tick_boosts(con: sqlite3.Connection) -> None:
         )
 
 
+def weighted_channel_post(con: sqlite3.Connection, channel_id: str) -> sqlite3.Row | None:
+    posts = con.execute(
+        """SELECT id, text, media_type, reactions_json FROM messages
+           WHERE chat_id = ? AND media_type != 'system' AND deleted_by_admin = 0
+           ORDER BY created_at DESC, rowid DESC LIMIT 500""",
+        (channel_id,),
+    ).fetchall()
+    if not posts:
+        return None
+    total_weight = sum((len(posts) - index) ** 2 for index in range(len(posts)))
+    selected = secrets.randbelow(total_weight)
+    for index, post in enumerate(posts):
+        selected -= (len(posts) - index) ** 2
+        if selected < 0:
+            return post
+    return posts[0]
+
+
+def tick_channel_growth(con: sqlite3.Connection) -> None:
+    current = now()
+    jobs = con.execute("SELECT * FROM channel_growth_jobs WHERE active = 1").fetchall()
+    reaction_icons = channel_reaction_emojis(con)
+    commenters = con.execute("SELECT user_id FROM automated_commenters ORDER BY created_at").fetchall()
+    for job in jobs:
+        elapsed = max(0, min(current, job["ends_at"]) - job["starts_at"])
+        targets = {metric: elapsed * job[f"{metric}_per_hour"] // 3600 for metric in ("subscribers", "views", "reactions", "comments")}
+        additions = {metric: targets[metric] - job[f"{metric}_added"] for metric in targets}
+        if additions["subscribers"] > 0:
+            con.execute("UPDATE chats SET subscriber_boost = subscriber_boost + ? WHERE id = ?", (additions["subscribers"], job["channel_id"]))
+        for _ in range(max(0, additions["views"])):
+            post = weighted_channel_post(con, job["channel_id"])
+            if post:
+                con.execute("UPDATE messages SET views_boost = views_boost + 1 WHERE id = ?", (post["id"],))
+        for _ in range(max(0, additions["reactions"])):
+            post = weighted_channel_post(con, job["channel_id"])
+            if post:
+                reactions = loads(post["reactions_json"], {}) or {}
+                icon = reaction_icons[secrets.randbelow(len(reaction_icons))]
+                reactions[icon] = int(reactions.get(icon, 0)) + 1
+                con.execute("UPDATE messages SET reactions_json = ? WHERE id = ?", (dumps(reactions), post["id"]))
+        if additions["comments"] > 0 and commenters:
+            for _ in range(additions["comments"]):
+                post = weighted_channel_post(con, job["channel_id"])
+                if post:
+                    commenter = commenters[secrets.randbelow(len(commenters))]
+                    text = local_automated_comment(post["text"], post["media_type"] == "photo", ["support", "opinion", "question"])
+                    con.execute("INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)", (uid("comment"), post["id"], commenter["user_id"], text, None, 1, current))
+        con.execute("UPDATE channel_growth_jobs SET subscribers_added = ?, views_added = ?, reactions_added = ?, comments_added = ?, active = ? WHERE id = ?", (targets["subscribers"], targets["views"], targets["reactions"], targets["comments"], 1 if current < job["ends_at"] else 0, job["id"]))
+
+
+def demo_activity_post(con: sqlite3.Connection, channel_id: str, post_limit: int) -> sqlite3.Row | None:
+    posts = con.execute(
+        """SELECT id, text, media_type, reactions_json FROM messages
+           WHERE chat_id = ? AND media_type != 'system' AND deleted_by_admin = 0
+           ORDER BY created_at DESC, rowid DESC LIMIT ?""",
+        (channel_id, post_limit),
+    ).fetchall()
+    return posts[secrets.randbelow(len(posts))] if posts else None
+
+
+def tick_demo_activity(con: sqlite3.Connection) -> None:
+    current = now()
+    reaction_icons = channel_reaction_emojis(con)
+    commenters = con.execute("SELECT user_id FROM automated_commenters ORDER BY created_at").fetchall()
+    rows = con.execute(
+        """SELECT subscription.*, package.subscribers_per_day, package.views_per_day, package.reactions_per_day,
+                  package.comments_per_day, package.post_limit, package.duration_days, package.fade_duration_days,
+                  package.indefinite
+           FROM demo_activity_subscriptions subscription
+           JOIN demo_activity_packages package ON package.id = subscription.package_id
+           WHERE subscription.active = 1"""
+        ).fetchall()
+    for row in rows:
+        in_fade = False
+        if not row["indefinite"] and current >= row["ends_at"]:
+            if row["auto_renew"]:
+                duration = row["duration_days"] * 86400
+                con.execute(
+                    "UPDATE demo_activity_subscriptions SET starts_at=?, ends_at=?, subscribers_added=0, views_added=0, reactions_added=0, comments_added=0 WHERE id=?",
+                    (current, current + duration, row["id"]),
+                )
+                continue
+            fade_duration = row["fade_duration_days"] * 86400
+            if not fade_duration or current >= row["ends_at"] + fade_duration:
+                con.execute("UPDATE demo_activity_subscriptions SET active = 0 WHERE id = ?", (row["id"],))
+                continue
+            in_fade = True
+        elapsed = max(0, current - row["starts_at"])
+        # Uneven but bounded progress: short pauses and bursts while preserving the daily total.
+        wave = 1 if in_fade else .55 + (secrets.randbelow(91) / 100)
+        fade_elapsed_days = max(0, current - row["ends_at"]) / 86400
+        fade_days = max(1, row["fade_duration_days"])
+        fade_progress_days = min(fade_elapsed_days, fade_days)
+        effective_days = elapsed / 86400 if row["indefinite"] or not in_fade else row["duration_days"] + (fade_progress_days / 3) * (1 - fade_progress_days / (2 * fade_days))
+        targets = {
+            metric: max(row[f"{metric}_added"], int(row[f"{metric}_per_day"] * effective_days * wave))
+            for metric in ("subscribers", "views", "reactions", "comments")
+        }
+        additions = {metric: max(0, targets[metric] - row[f"{metric}_added"]) for metric in targets}
+        if additions["subscribers"]:
+            con.execute("UPDATE chats SET subscriber_boost = subscriber_boost + ? WHERE id = ?", (additions["subscribers"], row["channel_id"]))
+        for metric in ("views", "reactions", "comments"):
+            for _ in range(additions[metric]):
+                post = demo_activity_post(con, row["channel_id"], row["post_limit"])
+                if not post:
+                    break
+                if metric == "views":
+                    con.execute("UPDATE messages SET views_boost = views_boost + 1 WHERE id = ?", (post["id"],))
+                elif metric == "reactions":
+                    reactions = loads(post["reactions_json"], {}) or {}
+                    icon = reaction_icons[secrets.randbelow(len(reaction_icons))]
+                    reactions[icon] = int(reactions.get(icon, 0)) + 1
+                    con.execute("UPDATE messages SET reactions_json = ? WHERE id = ?", (dumps(reactions), post["id"]))
+                elif commenters:
+                    author = commenters[secrets.randbelow(len(commenters))]
+                    text = local_automated_comment(post["text"], post["media_type"] == "photo", ["support", "opinion", "question"])
+                    con.execute("INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)", (uid("comment"), post["id"], author["user_id"], text, None, 1, current))
+        con.execute(
+            "UPDATE demo_activity_subscriptions SET subscribers_added=?, views_added=?, reactions_added=?, comments_added=? WHERE id=?",
+            (targets["subscribers"], targets["views"], targets["reactions"], targets["comments"], row["id"]),
+        )
+
+
 def publish_scheduled_posts(con: sqlite3.Connection) -> None:
     due_posts = con.execute("SELECT * FROM scheduled_posts WHERE publish_at <= ? ORDER BY publish_at, created_at", (now(),)).fetchall()
     for post in due_posts:
+        message_id = uid("msg")
         con.execute(
             "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (uid("msg"), post["chat_id"], post["sender_id"], post["text"], post["media_type"], post["media_data"], 1, post["publish_at"]),
+            (message_id, post["chat_id"], post["sender_id"], post["text"], post["media_type"], post["media_data"], 1, post["publish_at"]),
         )
+        schedule_automated_comments(con, message_id, post["chat_id"], post["publish_at"])
         con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (post["publish_at"], post["chat_id"]))
         link = con.execute("SELECT target_chat_id FROM channel_links WHERE channel_id = ?", (post["chat_id"],)).fetchone()
         if link:
@@ -1745,39 +2168,171 @@ def poll_vk_channels(con: sqlite3.Connection) -> None:
                         (message_id, source["channel_id"], sender["id"], text, "photo" if media_data else None, media_data, 1,
                          f"VK · {source['source_title']}", "vk", original_url, int(post.get("date", current) or current)),
                     )
+                    schedule_automated_comments(con, message_id, source["channel_id"], current)
                     con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (current, source["channel_id"]))
             con.execute("UPDATE vk_channel_sources SET last_sync_at = ?, last_error = NULL WHERE id = ?", (current, source["id"]))
         except ValueError as error:
             con.execute("UPDATE vk_channel_sources SET last_sync_at = ?, last_error = ? WHERE id = ?", (current, str(error)[:300], source["id"]))
 
 
-def schedule_automated_comments(con: sqlite3.Connection, message_id: str, channel_id: str, current: int | None = None) -> None:
+AUTOMATED_COMMENT_CATEGORIES = {"support", "opinion", "question", "humor", "disagreement", "criticism", "irony"}
+
+
+def local_automated_comment(post_text: str, has_image: bool, categories: list[str]) -> str:
+    enabled = [category for category in categories if category in AUTOMATED_COMMENT_CATEGORIES]
+    if not enabled:
+        enabled = ["support", "opinion", "question"]
+    normalized = " ".join(post_text.lower().split())
+    subject = "публикацию с фотографией" if has_image and not normalized else "материал"
+    if any(word in normalized for word in ("спасибо", "благодар", "поздрав", "побед", "успех")):
+        variants = {
+            "support": "Спасибо, очень тёплый и приятный материал.",
+            "opinion": "Хорошая мысль — такие истории действительно вдохновляют.",
+            "question": "Спасибо за публикацию. Что для вас было самым важным в этой истории?",
+        }
+    elif any(word in normalized for word in ("как ", "почему", "зачем", "что делать", "совет", "вопрос")):
+        variants = {
+            "support": "Спасибо за понятную постановку вопроса.",
+            "opinion": "На мой взгляд, здесь важно спокойно рассмотреть несколько вариантов.",
+            "question": "Интересно, какие решения вы уже успели попробовать?",
+            "disagreement": "Возможен и другой взгляд: многое зависит от конкретной ситуации.",
+            "criticism": "Не хватает деталей, чтобы сделать уверенный вывод — полезно добавить примеры или источники.",
+        }
+    else:
+        variants = {
+            "support": f"Спасибо за {subject}, было интересно ознакомиться.",
+            "opinion": "Интересная точка зрения, есть над чем подумать.",
+            "question": "А какой вывод вы считаете главным для читателей?",
+            "humor": "Похоже, этот материал точно не оставит ленту без обсуждения 🙂",
+            "disagreement": "Не со всем готов согласиться, но взгляд заслуживает обсуждения.",
+            "criticism": "Аргумент интересный, хотя хотелось бы больше конкретики и подтверждений.",
+            "irony": "Вот это поворот — есть о чём поспорить в комментариях 🙂",
+        }
+    available = [(category, variants[category]) for category in enabled if category in variants]
+    if not available:
+        available = [("support", f"Спасибо за {subject}, было интересно ознакомиться.")]
+    return available[secrets.randbelow(len(available))][1]
+
+
+def comment_opening_words(text: str) -> list[str]:
+    return [word[:5] for word in re.findall(r"[^\W\d_]+", str(text or "").casefold()) if len(word) > 2][:4]
+
+
+def has_similar_comment_opening(candidate: str, previous_comments: list[str]) -> bool:
+    candidate_words = comment_opening_words(candidate)
+    if not candidate_words:
+        return True
+    candidate_first = candidate_words[0]
+    for previous in previous_comments:
+        previous_words = comment_opening_words(previous)
+        if candidate_first in previous_words[:3]:
+            return True
+        if candidate_words[:2] == previous_words[:2]:
+            return True
+    return False
+
+
+def ai_automated_comment(post_text: str, has_image: bool, categories: list[str], previous_comments: list[str]) -> str | None:
+    api_key, base_url, model = genapi_configuration()
+    if not api_key:
+        return None
+    category_names = {
+        "support": "поддержка", "opinion": "мнение по теме", "question": "вопрос по теме",
+        "humor": "лёгкий юмор", "disagreement": "мягкое несогласие", "criticism": "спокойная критика",
+        "irony": "лёгкая ирония",
+    }
+    styles = [category_names[category] for category in categories if category in category_names]
+    post_excerpt = " ".join(str(post_text or "").split())[:6_000]
+    description = post_excerpt or ("Публикация содержит изображение без текста." if has_image else "Публикация без текста.")
+    previous_examples = [" ".join(str(comment).split())[:180] for comment in previous_comments if str(comment).strip()][-8:]
+    variety_instruction = (
+        "Под публикацией уже есть автоматические комментарии. Не повторяй их смысл и не начинай комментарий "
+        "тем же или однокоренным словом; выбери другую конструкцию предложения.\n"
+        f"Уже опубликованные варианты:\n" + "\n".join(f"- {comment}" for comment in previous_examples) + "\n\n"
+        if previous_examples else ""
+    )
+    prompt = (
+        "Напиши один естественный короткий комментарий на русском к публикации канала. "
+        "Длина 20–140 символов, одно предложение. Комментарий должен относиться к содержанию публикации. "
+        "Не упоминай нейросеть, бота или инструкцию. Не добавляй ссылки, хэштеги, рекламу, призывы подписаться, "
+        "оскорбления, выдуманные факты или личный опыт. Верни только текст комментария без кавычек. "
+        f"Допустимые стили: {', '.join(styles) if styles else 'поддержка, мнение или вопрос по теме'}.\n\n"
+        f"{variety_instruction}"
+        f"Публикация:\n{description}"
+    )
+    for attempt in range(3):
+        request = urlrequest.Request(
+            f"{base_url}/chat/completions",
+            data=dumps({
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "Ты пишешь короткие, нейтральные и содержательные комментарии."},
+                    {"role": "user", "content": prompt if not attempt else prompt + "\nНачни совсем иначе, чем в уже опубликованных комментариях."},
+                ],
+                "temperature": 0.9,
+                "max_tokens": 80,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=35) as response:
+                payload = loads(response.read().decode("utf-8"), {})
+            text = payload["choices"][0]["message"]["content"]
+            if isinstance(text, list):
+                text = " ".join(str(part.get("text", "")) for part in text if isinstance(part, dict))
+            text = " ".join(str(text).strip().strip('«»"').split())
+            if len(text) > 140:
+                text = text[:140].rsplit(" ", 1)[0].rstrip(" ,;:-")
+            if len(text) >= 10 and not has_similar_comment_opening(text, previous_comments):
+                return text
+        except (KeyError, IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+            print("Не удалось получить ИИ-комментарий от GenAPI.")
+            return None
+    return None
+
+
+def schedule_automated_comments(con: sqlite3.Connection, message_id: str, channel_id: str, current: int | None = None, include_existing: bool = False) -> None:
     current = current or now()
     rules = con.execute(
         """SELECT * FROM automated_comment_rules
-           WHERE channel_id = ? AND active = 1 AND starts_at <= ? AND ends_at >= ?
-             AND (target_message_id IS NULL OR target_message_id = ?)""",
-        (channel_id, current, current, message_id),
+            WHERE channel_id = ? AND active = 1 AND starts_at <= ? AND ends_at >= ?
+              AND (target_message_id = ? OR (target_message_id IS NULL AND target_scope = 'future')
+                   OR (target_message_id IS NULL AND target_scope = 'existing' AND ?))""",
+        (channel_id, current, current, message_id, 1 if include_existing else 0),
     ).fetchall()
     for rule in rules:
         commenter_ids = loads(rule["commenter_ids_json"], [])
+        mode = str(rule["comment_mode"] or "manual")
         texts = [str(text).strip()[:1000] for text in loads(rule["texts_json"], []) if str(text).strip()]
-        if not isinstance(commenter_ids, list) or not texts:
+        categories = loads(rule["categories_json"], [])
+        if not isinstance(categories, list):
+            categories = []
+        if mode not in {"manual", "local", "ai"} or not isinstance(commenter_ids, list) or (mode == "manual" and not texts):
             continue
+        if mode == "local":
+            post = con.execute("SELECT text, media_type FROM messages WHERE id = ? AND chat_id = ?", (message_id, channel_id)).fetchone()
+            if not post:
+                continue
         minimum = max(0, int(rule["min_delay_seconds"]))
         maximum = max(minimum, int(rule["max_delay_seconds"]))
-        publish_at = current
+        distribution = max(0, int(rule["distribution_seconds"]))
+        latest_publish_at = min(int(rule["ends_at"]), current + distribution)
+        commenter_count = len(commenter_ids)
         for position, commenter_id in enumerate(commenter_ids):
             commenter = con.execute("SELECT id FROM automated_commenters WHERE id = ?", (str(commenter_id),)).fetchone()
             if not commenter:
                 continue
-            publish_at += minimum + secrets.randbelow(maximum - minimum + 1)
-            if publish_at > int(rule["ends_at"]):
-                break
+            if latest_publish_at < current + maximum:
+                continue
+            denominator = max(1, commenter_count - 1)
+            lower = current + minimum + (latest_publish_at - current - minimum) * position // denominator
+            upper = current + maximum + (latest_publish_at - current - maximum) * position // denominator
+            publish_at = lower + secrets.randbelow(upper - lower + 1)
             con.execute(
                 """INSERT OR IGNORE INTO automated_comment_jobs(id,rule_id,message_id,commenter_id,text,publish_at,created_at)
                    VALUES (?,?,?,?,?,?,?)""",
-                (uid("autocomment"), rule["id"], message_id, commenter["id"], texts[position % len(texts)], publish_at, current),
+                (uid("autocomment"), rule["id"], message_id, commenter["id"], local_automated_comment(post["text"], post["media_type"] == "photo", categories) if mode == "local" else "" if mode == "ai" else texts[position % len(texts)], publish_at, current),
             )
 
 
@@ -1785,11 +2340,13 @@ def publish_automated_comments(con: sqlite3.Connection) -> None:
     current = now()
     con.execute("DELETE FROM automated_comment_jobs WHERE rule_id IN (SELECT id FROM automated_comment_rules WHERE active = 0 OR ends_at < ?)", (current,))
     jobs = con.execute(
-        """SELECT job.*, commenter.user_id
+        """SELECT job.*, commenter.user_id, chat.settings_json, rule.comment_mode, rule.categories_json,
+                  message.text AS message_text, message.media_type AS message_media_type
            FROM automated_comment_jobs job
            JOIN automated_comment_rules rule ON rule.id = job.rule_id
            JOIN automated_commenters commenter ON commenter.id = job.commenter_id
            JOIN messages message ON message.id = job.message_id
+           JOIN chats chat ON chat.id = message.chat_id
            WHERE job.publish_at <= ? AND rule.active = 1 AND rule.starts_at <= ? AND rule.ends_at >= ?
              AND message.chat_id = rule.channel_id
            ORDER BY job.publish_at LIMIT 30""",
@@ -1806,9 +2363,33 @@ def publish_automated_comments(con: sqlite3.Connection) -> None:
         ).rowcount
         if not claimed:
             continue
+        if not loads(job["settings_json"], {}).get("commentsEnabled", True):
+            continue
+        text = job["text"]
+        if job["comment_mode"] == "ai":
+            categories = loads(job["categories_json"], [])
+            previous_comments = [row["text"] for row in con.execute(
+                "SELECT text FROM channel_comments WHERE message_id = ? AND automated = 1 ORDER BY created_at DESC LIMIT 8",
+                (job["message_id"],),
+            ).fetchall()]
+            con.commit()
+            text = ai_automated_comment(
+                job["message_text"],
+                job["message_media_type"] == "photo",
+                categories if isinstance(categories, list) else [],
+                previous_comments,
+            )
+            if not text:
+                con.execute(
+                    "INSERT INTO automated_comment_jobs(id,rule_id,message_id,commenter_id,text,publish_at,created_at) VALUES (?,?,?,?,?,?,?)",
+                    (job["id"], job["rule_id"], job["message_id"], job["commenter_id"], "", current + 60, job["created_at"]),
+                )
+                continue
+        if con.execute("SELECT 1 FROM channel_comments WHERE message_id = ? AND text = ?", (job["message_id"], text)).fetchone():
+            continue
         con.execute(
             "INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)",
-            (uid("comment"), job["message_id"], job["user_id"], job["text"], None, 1, current),
+            (uid("comment"), job["message_id"], job["user_id"], text, None, 1, current),
         )
 
 
@@ -1865,12 +2446,14 @@ def poll_telegram_channels(con: sqlite3.Connection) -> None:
                 if not sender or not sender["id"]:
                     continue
                 source_title = str(source_chat.get("title", "Telegram"))[:120]
+                message_id = uid("msg")
                 con.execute(
                     """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                    (uid("msg"), link["channel_id"], sender["id"], text, "photo" if media_data else None,
+                    (message_id, link["channel_id"], sender["id"], text, "photo" if media_data else None,
                      media_data, 1, f"Telegram · {source_title}", "telegram", str(telegram_message_id), int(post.get("date", current) or current)),
                 )
+                schedule_automated_comments(con, message_id, link["channel_id"], current)
                 con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (current, link["channel_id"]))
             con.execute(
                 "UPDATE telegram_channel_links SET last_update_id = ?, last_sync_at = ?, last_error = NULL WHERE channel_id = ?",
@@ -1914,11 +2497,11 @@ class Handler(BaseHTTPRequestHandler):
                     self.require_user(media_user)
                     message_id = path.removeprefix("/media/messages/").removesuffix(".m4a").removesuffix(".mp4")
                     return self.send_message_media(con, media_user, message_id)
-            if path == "/admin":
+            if path in {"/admin", "/admin/"}:
                 return self.send_file(ROOT / "admin.html")
             if path == "/requisites":
                 return self.send_file(ROOT / "requisites.html")
-            if path == "/" or path == "/payment-return" or path.startswith("/invite/"):
+            if path == "/" or path == "/payment-return" or path.startswith("/invite/") or path.startswith("/channel/"):
                 return self.send_file(ROOT / "index.html")
             return self.send_file(ROOT / path.lstrip("/"))
         except ConnectionError:
@@ -1959,6 +2542,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bootstrap" and method == "GET":
             self.require_user(user)
             return self.bootstrap(con, user)
+        if path == "/api/ai-agent/settings" and method == "POST":
+            self.require_user(user)
+            return self.update_ai_agent_settings(con, user, body)
+        if path == "/api/ai-agent/ask" and method == "POST":
+            self.require_user(user)
+            return self.ask_ai_agent(con, user, body)
+        if path == "/api/ai-agent/draft" and method == "POST":
+            self.require_user(user)
+            return self.draft_ai_agent_reply(con, user, body)
+        if path == "/api/ai-agent/private-search" and method == "GET":
+            self.require_user(user)
+            return self.ai_agent_private_search(con, user, query)
+        if path == "/api/ai-agent/channel-rule" and method == "POST":
+            self.require_user(user)
+            return self.update_ai_agent_channel_rule(con, user, body)
+        if path == "/api/media/messages/upload" and method == "POST":
+            self.require_user(user)
+            return self.prepare_message_media_upload(con, user, body)
         if path == "/api/users" and method == "GET":
             self.require_user(user)
             q = (query.get("q", [""])[0] or "").lower().replace("@", "")
@@ -1967,6 +2568,9 @@ class Handler(BaseHTTPRequestHandler):
                 (user["id"], f"%{q}%", f"%{q}%"),
             ).fetchall()
             return self.json({"ok": True, "users": [public_user(r) for r in rows]})
+        if path == "/api/messages/search" and method == "GET":
+            self.require_user(user)
+            return self.search_messages(con, user, query)
         if path == "/api/username" and method == "POST":
             self.require_user(user)
             username = normalize_username(body.get("username"))
@@ -2024,6 +2628,14 @@ class Handler(BaseHTTPRequestHandler):
             group_invite_privacy = str(body.get("groupInvitePrivacy", "contacts"))
             if group_invite_privacy not in {"everyone", "contacts", "nobody"}:
                 raise ValueError("Неизвестная настройка добавления в группы.")
+            direct_message_privacy = str(body.get("directMessagePrivacy", "everyone"))
+            if direct_message_privacy not in {"everyone", "contacts", "nobody"}:
+                raise ValueError("Неизвестная настройка личных сообщений.")
+            call_ringtone = str(body.get("callRingtone", "classic"))
+            if call_ringtone not in {"classic", "pulse", "bright"}:
+                raise ValueError("Неизвестная мелодия звонка.")
+            if call_ringtone != "classic":
+                self.require_active_account_level(con, user["id"])
             site_background = str(body.get("siteBackground", "default"))
             if site_background not in allowed_backgrounds:
                 raise ValueError("Неизвестный вариант фона сайта.")
@@ -2034,13 +2646,16 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 site_background_data = None
             con.execute(
-                "UPDATE users SET theme = ?, site_color = ?, site_background = ?, site_background_data = ?, dialog_color = ?, other_dialog_color = ?, dialog_panel_color = ?, dialog_panel_style = ?, dialog_bubble_style = ?, dialog_font = ?, text_scale = ?, chat_background = ?, chat_background_data = ?, sidebar_background_data = ?, hidden_status_ids = ?, group_invite_privacy = ?, night_appearance_custom = ?, night_outline_color = ?, night_glow_color = ?, night_glow_intensity = ? WHERE id = ?",
-                (theme, site_color, site_background, site_background_data, dialog_color, other_dialog_color, dialog_panel_color, dialog_panel_style, dialog_bubble_style, dialog_font, text_scale, background, background_data, sidebar_background_data, dumps(body.get("hiddenStatusIds", [])), group_invite_privacy, int(night_appearance_custom), night_appearance["outlineColor"] if night_appearance else None, night_appearance["glowColor"] if night_appearance else None, night_appearance["glowIntensity"] if night_appearance else None, user["id"]),
+                "UPDATE users SET theme = ?, site_color = ?, site_background = ?, site_background_data = ?, dialog_color = ?, other_dialog_color = ?, dialog_panel_color = ?, dialog_panel_style = ?, dialog_bubble_style = ?, dialog_font = ?, text_scale = ?, chat_background = ?, chat_background_data = ?, sidebar_background_data = ?, hidden_status_ids = ?, group_invite_privacy = ?, direct_message_privacy = ?, night_appearance_custom = ?, night_outline_color = ?, night_glow_color = ?, night_glow_intensity = ?, call_ringtone = ? WHERE id = ?",
+                (theme, site_color, site_background, site_background_data, dialog_color, other_dialog_color, dialog_panel_color, dialog_panel_style, dialog_bubble_style, dialog_font, text_scale, background, background_data, sidebar_background_data, dumps(body.get("hiddenStatusIds", [])), group_invite_privacy, direct_message_privacy, int(night_appearance_custom), night_appearance["outlineColor"] if night_appearance else None, night_appearance["glowColor"] if night_appearance else None, night_appearance["glowIntensity"] if night_appearance else None, call_ringtone, user["id"]),
             )
             return self.json({"ok": True})
         if path == "/api/profile/avatar" and method == "POST":
             self.require_user(user)
             return self.update_avatar(con, user, body)
+        if path == "/api/my-reactions" and method == "GET":
+            self.require_user(user)
+            return self.my_reactions(con, user)
         if path == "/api/profile/posts" and method == "POST":
             self.require_user(user)
             return self.create_profile_post(con, user, body)
@@ -2220,6 +2835,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Настройки функций должны быть объектом.")
             elif key == "ui_appearance":
                 value = normalize_ui_appearance(body.get("value"))
+            elif key == "channel_reactions":
+                value = normalize_channel_reactions(body.get("value"))
             elif key == "public_branding":
                 value = normalize_public_branding(body.get("value"))
             elif key == "public_legal":
@@ -2272,7 +2889,7 @@ class Handler(BaseHTTPRequestHandler):
             configured_levels = normalize_account_levels(loads(levels_row["value"], []) if levels_row else []) if levels_row else []
             if reward["accountLevelId"] and reward["accountLevelId"] not in {level["id"] for level in configured_levels}:
                 raise ValueError("Выберите существующий уровень аккаунта для награды.")
-            if not any((reward["stars"], reward["limits"], reward["recurringStars"], reward["starPackageDiscountPercent"], reward["accountLevelId"], reward["recommendOwnChannel"])):
+            if not any((reward["stars"], reward["premiumDays"], reward["limits"], reward["recurringStars"], reward["starPackageDiscountPercent"], reward["accountLevelId"], reward["recommendOwnChannel"])):
                 raise ValueError("Укажите хотя бы один вид награды.")
             add_activity_reward(con, title[:120], str(body.get("description", "")).strip()[:1000], criteria, reward)
             return self.json({"ok": True})
@@ -2285,6 +2902,56 @@ class Handler(BaseHTTPRequestHandler):
                    VALUES (?,?,?,?,?,?,?,?)""",
                 (uid("status"), body.get("icon", "🏅"), body.get("title", "Статус"), body.get("description", ""), dumps(body.get("criteria", {})), dumps(body.get("reward", {})), 1, now()),
             )
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-packages" and method == "POST":
+            title = " ".join(str(body.get("title", "")).split())[:80]
+            if not title:
+                raise ValueError("Введите название демо-пакета.")
+            existing = con.execute("SELECT count(*) AS count FROM demo_activity_packages").fetchone()["count"]
+            if existing >= 6:
+                raise ValueError("Можно создать не более шести демо-пакетов.")
+            values = {
+                metric: nonnegative_int(body.get(f"{metric}PerDay", 0), f"{metric}PerDay", 1_000_000)
+                for metric in ("subscribers", "views", "reactions", "comments")
+            }
+            post_limit = nonnegative_int(body.get("postLimit", 1), "postLimit", 10)
+            indefinite = bool(body.get("indefinite"))
+            fade_duration_days = nonnegative_int(body.get("fadeDurationDays", 30), "fadeDurationDays", 365)
+            if not post_limit or not any(values.values()):
+                raise ValueError("Укажите число публикаций и хотя бы один дневной показатель.")
+            if not indefinite and not fade_duration_days:
+                raise ValueError("Укажите длительность затухания или включите бессрочный режим.")
+            con.execute(
+                """INSERT INTO demo_activity_packages(id,title,subscribers_per_day,views_per_day,reactions_per_day,comments_per_day,post_limit,duration_days,fade_duration_days,indefinite,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (uid("demopackage"), title, values["subscribers"], values["views"], values["reactions"], values["comments"], post_limit, 7, fade_duration_days, 1 if indefinite else 0, now()),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-packages/delete" and method == "POST":
+            package_id = str(body.get("packageId", "")).strip()
+            if con.execute("SELECT 1 FROM demo_activity_subscriptions WHERE package_id = ? AND active = 1", (package_id,)).fetchone():
+                raise ValueError("Сначала отключите активные подключения этого пакета.")
+            con.execute("DELETE FROM demo_activity_packages WHERE id = ?", (package_id,))
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-subscriptions" and method == "POST":
+            package_id = str(body.get("packageId", "")).strip()
+            channel_id = str(body.get("channelId", "")).strip()
+            package = con.execute("SELECT * FROM demo_activity_packages WHERE id = ?", (package_id,)).fetchone()
+            if not package or not con.execute("SELECT 1 FROM chats WHERE id = ? AND type = 'channel'", (channel_id,)).fetchone():
+                raise ValueError("Выберите существующий пакет и канал.")
+            if (package["views_per_day"] or package["reactions_per_day"] or package["comments_per_day"]) and not demo_activity_post(con, channel_id, package["post_limit"]):
+                raise ValueError("Для этого пакета в канале должна быть хотя бы одна публикация.")
+            if package["comments_per_day"] and not con.execute("SELECT 1 FROM automated_commenters LIMIT 1").fetchone():
+                raise ValueError("Для комментариев сначала добавьте служебные аккаунты в раздел «Автокомментарии».")
+            current = now()
+            con.execute(
+                """INSERT INTO demo_activity_subscriptions(id,package_id,channel_id,starts_at,ends_at,auto_renew,created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (uid("demosubscription"), package_id, channel_id, current, current + package["duration_days"] * 86400, 0 if package["indefinite"] else 1 if body.get("autoRenew") else 0, current),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-subscriptions/deactivate" and method == "POST":
+            con.execute("UPDATE demo_activity_subscriptions SET active = 0 WHERE id = ?", (str(body.get("subscriptionId", "")),))
             return self.json({"ok": True})
         if path == "/api/admin/boost-jobs" and method == "POST":
             target_type = str(body.get("targetType", ""))
@@ -2309,8 +2976,37 @@ class Handler(BaseHTTPRequestHandler):
                 (uid("boost"), target_type, target_id, metric, amount_per_minute, total, 1, now(), now()),
             )
             return self.json({"ok": True})
+        if path == "/api/admin/channel-growth-jobs" and method == "POST":
+            channel_id = str(body.get("channelId", "")).strip()
+            subscribers_per_hour = nonnegative_int(body.get("subscribersPerHour", 0), "subscribersPerHour", 100_000)
+            views_per_hour = nonnegative_int(body.get("viewsPerHour", 0), "viewsPerHour", 100_000)
+            reactions_per_hour = nonnegative_int(body.get("reactionsPerHour", 0), "reactionsPerHour", 100_000)
+            comments_per_hour = nonnegative_int(body.get("commentsPerHour", 0), "commentsPerHour", 1_000)
+            duration_hours = nonnegative_int(body.get("durationHours", 0), "durationHours", 720)
+            if not duration_hours or not any((subscribers_per_hour, views_per_hour, reactions_per_hour, comments_per_hour)):
+                raise ValueError("Укажите длительность и хотя бы одну ненулевую скорость.")
+            if not con.execute("SELECT 1 FROM chats WHERE id = ? AND type = 'channel'", (channel_id,)).fetchone():
+                raise ValueError("Выберите существующий канал.")
+            if (views_per_hour or reactions_per_hour or comments_per_hour) and not weighted_channel_post(con, channel_id):
+                raise ValueError("Для просмотров, реакций или комментариев в канале должна быть хотя бы одна публикация.")
+            if comments_per_hour and not con.execute("SELECT 1 FROM automated_commenters LIMIT 1").fetchone():
+                raise ValueError("Для ИИ-комментариев сначала добавьте аккаунты в пул автокомментаторов.")
+            starts_at = now()
+            con.execute(
+                """INSERT INTO channel_growth_jobs(
+                       id,channel_id,subscribers_per_hour,views_per_hour,reactions_per_hour,comments_per_hour,
+                       starts_at,ends_at,subscribers_added,views_added,reactions_added,comments_added,active,created_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (uid("channel_growth"), channel_id, subscribers_per_hour, views_per_hour, reactions_per_hour, comments_per_hour,
+                 starts_at, starts_at + duration_hours * 3600, 0, 0, 0, 0, 1, starts_at),
+            )
+            return self.json({"ok": True})
         if path == "/api/admin/automated-commenters" and method == "POST":
             return self.create_automated_commenter(con, body)
+        if path == "/api/admin/automated-commenters/create-pool" and method == "POST":
+            return self.create_automated_commenter_pool(con)
+        if path == "/api/admin/automated-commenters/password" and method == "POST":
+            return self.reset_automated_commenter_password(con, body)
         if path == "/api/admin/automated-comment-rules" and method == "POST":
             return self.create_automated_comment_rule(con, body)
         if path == "/api/admin/automated-comment-rules/deactivate" and method == "POST":
@@ -2474,6 +3170,11 @@ class Handler(BaseHTTPRequestHandler):
         self.ensure_saved(con, user["id"])
         self.evaluate_statuses(con, user["id"])
         users = [public_user(r) for r in con.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()]
+        avatar_history = {}
+        for row in con.execute("SELECT user_id, avatar_data FROM avatar_history ORDER BY created_at DESC, id DESC").fetchall():
+            avatar_history.setdefault(row["user_id"], []).append(row["avatar_data"])
+        for public in users:
+            public["avatarHistory"] = avatar_history.get(public["id"], [])
         chats = [chat_to_dict(r) for r in con.execute(
             """SELECT c.*,
                       EXISTS(SELECT 1 FROM pinned_chats pc WHERE pc.chat_id = c.id AND pc.user_id = ?) AS pinned,
@@ -2542,7 +3243,13 @@ class Handler(BaseHTTPRequestHandler):
         for link in vk_channel_links:
             link["keywords"] = loads(link.pop("keywords_json"), [])
         channel_comments = [dict(r) for r in con.execute(
-            "SELECT cc.* FROM channel_comments cc JOIN messages m ON m.id = cc.message_id JOIN chats c ON c.id = m.chat_id WHERE c.type = 'channel' ORDER BY cc.created_at"
+            """SELECT cc.* FROM channel_comments cc
+               JOIN messages m ON m.id = cc.message_id
+               JOIN chats c ON c.id = m.chat_id
+               WHERE c.type IN ('channel', 'group', 'community')
+                 AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
+               ORDER BY cc.created_at""",
+            (user["id"],),
         ).fetchall()]
         channel_star_purchases = [dict(r) for r in con.execute(
             """SELECT csp.*, u.name AS buyer_name, u.username AS buyer_username
@@ -2556,7 +3263,7 @@ class Handler(BaseHTTPRequestHandler):
         ).fetchall()]
         notifications = [dict(r) for r in con.execute("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", (user["id"],)).fetchall()]
         messages = [message_to_dict(r) for r in con.execute(
-            """SELECT m.id, m.chat_id, m.sender_id, m.profile_user_id, m.text, m.media_type, m.voice_waveform_json, m.views, m.views_boost, m.reactions_json, m.pinned, m.forwarded_from, m.forwarded_from_user_id, m.source_type, m.source_id, m.reply_to_id, m.edited_at, m.created_at,
+            """SELECT m.id, m.chat_id, m.sender_id, m.profile_user_id, m.text, m.media_type, m.voice_waveform_json, m.views, m.views_boost, m.reactions_json, m.pinned, m.forwarded_from, m.forwarded_from_user_id, m.source_type, m.source_id, m.ai_agent, m.reply_to_id, m.edited_at, m.created_at,
                       EXISTS(SELECT 1 FROM hidden_pinned_messages hpm WHERE hpm.message_id = m.id AND hpm.user_id = ?) AS pin_hidden,
                       (m.sender_id != ? AND m.rowid > COALESCE((SELECT crs.read_rowid FROM chat_read_states crs WHERE crs.chat_id = m.chat_id AND crs.user_id = ?), 0)) AS is_unread,
                       EXISTS(
@@ -2612,11 +3319,63 @@ class Handler(BaseHTTPRequestHandler):
         recommended = [dict(r) for r in con.execute("SELECT * FROM recommended_groups ORDER BY position").fetchall()]
         star_transactions = [dict(r) for r in con.execute("SELECT * FROM star_transactions WHERE user_id = ? ORDER BY created_at DESC LIMIT 100", (user["id"],)).fetchall()]
         me = public_user(con.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone())
+        me["avatarHistory"] = avatar_history.get(me["id"], [])
         me["hiddenStoryAuthorIds"] = [r["author_id"] for r in con.execute("SELECT author_id FROM hidden_story_authors WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
         me["storyHiddenFromIds"] = [r["blocked_user_id"] for r in con.execute("SELECT blocked_user_id FROM story_privacy_blocks WHERE owner_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
         activities = self.visible_chat_activities(con, chats, user["id"])
         packages = [{**item, "originalPrice": item["price"], "price": discounted_price(item["price"], star_package_discount)} for item in yookassa_star_packages(con)]
-        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "activities": activities, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "vkChannelLinks": vk_channel_links, "channelComments": channel_comments, "channelStarPurchases": channel_star_purchases, "notifications": notifications, "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions, "yookassa": {"available": yookassa_configured(), "discountPercent": star_package_discount, "packages": packages}})
+        ai_agent = self.ai_agent_settings(con, user["id"])
+        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "activities": activities, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "vkChannelLinks": vk_channel_links, "channelComments": channel_comments, "channelStarPurchases": channel_star_purchases, "notifications": notifications, "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "aiAgent": ai_agent, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions, "mediaS3Enabled": s3_is_configured(), "yookassa": {"available": yookassa_configured(), "discountPercent": star_package_discount, "packages": packages}})
+
+    def my_reactions(self, con, user):
+        reactions = []
+        for row in con.execute(
+            """SELECT mr.emoji, mr.created_at, m.id AS target_id, m.text AS target_text, c.title AS target_title
+               FROM message_reactions mr JOIN messages m ON m.id = mr.message_id JOIN chats c ON c.id = m.chat_id
+               WHERE mr.user_id = ? ORDER BY mr.created_at DESC LIMIT 150""", (user["id"],)
+        ).fetchall():
+            reactions.append({"type": "message", "emoji": row["emoji"], "createdAt": row["created_at"], "targetId": row["target_id"], "title": row["target_title"], "text": row["target_text"]})
+        for row in con.execute(
+            """SELECT pr.emoji, pr.created_at, p.id AS target_id, p.text AS target_text, u.name AS target_title
+               FROM profile_post_reactions pr JOIN profile_posts p ON p.id = pr.post_id JOIN users u ON u.id = p.user_id
+               WHERE pr.user_id = ? ORDER BY pr.created_at DESC LIMIT 150""", (user["id"],)
+        ).fetchall():
+            reactions.append({"type": "post", "emoji": row["emoji"], "createdAt": row["created_at"], "targetId": row["target_id"], "title": row["target_title"], "text": row["target_text"]})
+        for row in con.execute(
+            """SELECT sr.emoji, sr.created_at, s.id AS target_id, s.caption AS target_text, u.name AS target_title
+               FROM story_reactions sr JOIN stories s ON s.id = sr.story_id JOIN users u ON u.id = s.user_id
+               WHERE sr.user_id = ? ORDER BY sr.created_at DESC LIMIT 150""", (user["id"],)
+        ).fetchall():
+            reactions.append({"type": "story", "emoji": row["emoji"], "createdAt": row["created_at"], "targetId": row["target_id"], "title": row["target_title"], "text": row["target_text"]})
+        reactions.sort(key=lambda item: item["createdAt"], reverse=True)
+        return self.json({"ok": True, "reactions": reactions[:200]})
+
+    def search_messages(self, con, user, query):
+        text = " ".join((query.get("q", [""])[0] or "").split())
+        chat_id = str(query.get("chatId", [""])[0] or "").strip()
+        if len(text) < 2:
+            raise ValueError("Введите не менее двух символов для поиска.")
+        if len(text) > 120:
+            raise ValueError("Поисковый запрос не должен быть длиннее 120 символов.")
+        if chat_id and not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError("Нет доступа к этому диалогу.")
+        rows = con.execute(
+            """SELECT m.id, m.chat_id, m.text, m.media_type, m.created_at, c.title AS chat_title, c.type AS chat_type
+               FROM messages m
+               JOIN chats c ON c.id = m.chat_id
+               WHERE m.deleted_by_admin = 0
+                 AND m.text IS NOT NULL AND trim(m.text) != ''
+                  AND casefold(m.text) LIKE ?
+                 AND (? = '' OR m.chat_id = ?)
+                 AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)
+                 AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
+                 AND (c.type != 'secret' OR EXISTS(
+                   SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?
+                 ))
+               ORDER BY m.created_at DESC LIMIT 100""",
+            (f"%{text.casefold()}%", chat_id, chat_id, user["id"], user["id"], user["id"]),
+        ).fetchall()
+        return self.json({"ok": True, "messages": [dict(row) for row in rows]})
 
     def has_chat_access(self, con, user_id, chat_id):
         return bool(con.execute(
@@ -2685,6 +3444,11 @@ class Handler(BaseHTTPRequestHandler):
         return int(row["discount_percent"] or 0) if row else 0
 
     def apply_reward_benefits(self, con, user_id, source_type, source_id, title, reward):
+        premium_days = int(reward.get("premiumDays", 0) or 0)
+        if premium_days:
+            user = con.execute("SELECT premium_until FROM users WHERE id = ?", (user_id,)).fetchone()
+            premium_start = max(now(), int(user["premium_until"] or 0) if user else 0)
+            con.execute("UPDATE users SET premium_until = ? WHERE id = ?", (premium_start + premium_days * 86400, user_id))
         limits = reward.get("limits", {}) if isinstance(reward, dict) else {}
         if limits:
             con.execute(
@@ -2799,6 +3563,14 @@ class Handler(BaseHTTPRequestHandler):
 
     def update_avatar(self, con, user, body):
         avatar = normalize_image_data(body.get("avatarData", ""), 1_800_000, "Аватар")
+        previous = con.execute("SELECT avatar_data FROM users WHERE id = ?", (user["id"],)).fetchone()["avatar_data"]
+        if previous and previous != avatar:
+            con.execute("DELETE FROM avatar_history WHERE user_id = ? AND avatar_data = ?", (user["id"], previous))
+            con.execute("INSERT INTO avatar_history(id,user_id,avatar_data,created_at) VALUES (?,?,?,?)", (uid("avatar"), user["id"], previous, now()))
+            con.execute("""DELETE FROM avatar_history WHERE id IN (
+                           SELECT id FROM avatar_history WHERE user_id = ?
+                           ORDER BY created_at DESC, id DESC LIMIT -1 OFFSET 20
+                         )""", (user["id"],))
         con.execute("UPDATE users SET avatar_data = ? WHERE id = ?", (avatar, user["id"]))
         return self.json({"ok": True})
 
@@ -2832,6 +3604,9 @@ class Handler(BaseHTTPRequestHandler):
         if chat:
             chat_id = chat["id"]
         else:
+            privacy_row = con.execute("SELECT direct_message_privacy FROM users WHERE id = ?", (author_id,)).fetchone()
+            if privacy_row and privacy_row["direct_message_privacy"] != "everyone":
+                raise PermissionError("Автор принимает новые сообщения только от людей из личных диалогов.")
             chat_id = uid("chat")
             con.execute("INSERT INTO chats(id,type,title,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (chat_id, "direct", "Личный чат", user["id"], now(), now()))
             for member_id in member_ids:
@@ -2841,6 +3616,7 @@ class Handler(BaseHTTPRequestHandler):
             "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,created_at) VALUES (?,?,?,?,?,?,?,?)",
             (uid("msg"), chat_id, user["id"], emoji, "photo" if post["media_data"] else None, post["media_data"], 1, now()),
         )
+        con.execute("INSERT OR IGNORE INTO profile_post_reactions(post_id,user_id,emoji,created_at) VALUES (?,?,?,?)", (post_id, user["id"], emoji, now()))
         con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), chat_id))
         return self.json({"ok": True, "chatId": chat_id})
 
@@ -3014,6 +3790,8 @@ class Handler(BaseHTTPRequestHandler):
         chat_type = body.get("type", "direct")
         if chat_type == "direct":
             other_id = body.get("userId")
+            if not other_id or other_id == user["id"]:
+                raise ValueError("Выберите другого пользователя.")
             ids = sorted([user["id"], other_id])
             existing = con.execute(
                 "SELECT c.* FROM chats c JOIN chat_members a ON a.chat_id=c.id JOIN chat_members b ON b.chat_id=c.id WHERE c.type='direct' AND a.user_id=? AND b.user_id=?",
@@ -3022,6 +3800,14 @@ class Handler(BaseHTTPRequestHandler):
             if existing:
                 con.execute("DELETE FROM hidden_chats WHERE chat_id = ? AND user_id = ?", (existing["id"], user["id"]))
                 return self.json({"ok": True, "chat": chat_to_dict(existing)})
+            recipient = con.execute("SELECT direct_message_privacy FROM users WHERE id = ?", (other_id,)).fetchone()
+            if not recipient:
+                raise ValueError("Пользователь не найден.")
+            privacy = recipient["direct_message_privacy"]
+            if privacy == "nobody":
+                raise PermissionError("Пользователь принимает новые сообщения только от тех, кому написал сам.")
+            if privacy == "contacts":
+                raise PermissionError("Пользователь принимает новые сообщения только от людей из личных диалогов.")
             chat_id = uid("chat")
             con.execute("INSERT INTO chats(id,type,title,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (chat_id, "direct", "Личный чат", user["id"], now(), now()))
             for member_id in ids:
@@ -3198,6 +3984,12 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("Укажите бонус от 1 до 100 %.")
                 settings["starBonusType"] = bonus_type
                 settings["starBonusPercent"] = bonus_percent
+            buyer_gift_stars = nonnegative_int(body.get("buyerGiftStars", settings.get("buyerGiftStars", 0)), "buyerGiftStars", 100_000)
+            buyer_message = str(body.get("buyerPurchaseMessage", settings.get("buyerPurchaseMessage", ""))).strip()
+            if len(buyer_message) > 500:
+                raise ValueError("Сообщение покупателю должно быть не длиннее 500 символов.")
+            settings["buyerGiftStars"] = buyer_gift_stars
+            settings["buyerPurchaseMessage"] = buyer_message
         elif chat["type"] in {"group", "community"} and "inviteLinkEnabled" in body:
             settings["inviteLinkEnabled"] = bool(body["inviteLinkEnabled"])
         con.execute("UPDATE chats SET title = ?, description = ?, avatar_data = ?, settings_json = ?, updated_at = ? WHERE id = ?", (title, description, avatar or None, dumps(settings), now(), chat_id))
@@ -3297,11 +4089,57 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({"ok": True})
         raise ValueError("Неизвестный вариант удаления.")
 
+    def prepare_message_media_upload(self, con, user, body):
+        if not s3_is_configured():
+            raise ValueError("Загрузка больших файлов скоро будет доступна. Повторите попытку через несколько минут.")
+        chat_id = str(body.get("chatId", "")).strip()
+        media_type = str(body.get("mediaType", "")).strip()
+        file_name = str(body.get("fileName", "")).strip()[:240]
+        content_type = str(body.get("contentType", "")).strip().lower().split(";", 1)[0]
+        try:
+            size_bytes = int(body.get("sizeBytes", 0) or 0)
+        except (TypeError, ValueError):
+            size_bytes = 0
+        allowed_content_types = {
+            "photo": {"image/png", "image/jpeg", "image/webp"},
+            "video": {"video/mp4", "video/webm", "video/quicktime"},
+            "document": {
+                "application/pdf", "text/plain", "application/msword",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            },
+        }
+        if media_type not in allowed_content_types or content_type not in allowed_content_types[media_type]:
+            raise ValueError("Этот тип файла не поддерживается.")
+        if not 0 < size_bytes <= 25_000_000:
+            raise ValueError("Размер вложения не должен превышать 25 МБ.")
+        if media_type == "document" and not file_name:
+            raise ValueError("Не удалось определить имя документа.")
+        if not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat:
+            raise ValueError("Чат не найден.")
+        if chat["type"] == "channel" and self.chat_member_role(con, chat_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Публиковать в канале могут только создатель и назначенные администраторы.")
+        extension = mimetypes.guess_extension(content_type, strict=False) or ""
+        if content_type == "video/quicktime":
+            extension = ".mov"
+        key = f"messages/{chat_id}/{uid('media')}{extension}"
+        expires_at = now() + 900
+        con.execute("DELETE FROM media_uploads WHERE expires_at < ?", (now(),))
+        con.execute(
+            "INSERT INTO media_uploads(key,user_id,chat_id,media_type,file_name,content_type,size_bytes,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+            (key, user["id"], chat_id, media_type, file_name, content_type, size_bytes, expires_at, now()),
+        )
+        upload_url, upload_headers = s3_presigned_url("PUT", key, expires_in=900, content_type=content_type)
+        return self.json({"ok": True, "mediaKey": key, "uploadUrl": upload_url, "uploadHeaders": upload_headers, "expiresAt": expires_at})
+
     def add_message(self, con, user, body):
         chat_id = body.get("chatId")
         text = str(body.get("text", "")).strip()
         media_type = str(body.get("mediaType", "")).strip() or None
         media_data = str(body.get("mediaData", "")) or None
+        media_key = str(body.get("mediaKey", "")).strip()
         raw_voice_waveform = body.get("voiceWaveform", [])
         profile_user_id = str(body.get("profileUserId", "")).strip() or None
         file_name = str(body.get("fileName", "")).strip()[:240]
@@ -3312,7 +4150,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(raw_voice_waveform, list):
             raise ValueError("Некорректные данные голосового сообщения.")
         voice_waveform = [max(0, min(100, int(value))) for value in raw_voice_waveform[:64] if isinstance(value, (int, float))] if media_type == "voice" else []
-        if not text and not media_data and not profile_user_id:
+        if not text and not media_data and not media_key and not profile_user_id:
             raise ValueError("Введите сообщение или прикрепите файл.")
         if profile_user_id and not con.execute("SELECT 1 FROM users WHERE id = ?", (profile_user_id,)).fetchone():
             raise ValueError("Профиль для отправки не найден.")
@@ -3335,9 +4173,26 @@ class Handler(BaseHTTPRequestHandler):
             self.enforce_post_limit(con, user["id"])
         self.enforce_message_limit(con, user["id"])
         msg_id = uid("msg")
+        if media_key:
+            if media_data:
+                raise ValueError("Передайте либо файл, либо ключ S3, но не оба сразу.")
+            upload = con.execute(
+                "SELECT * FROM media_uploads WHERE key = ? AND user_id = ? AND chat_id = ? AND expires_at >= ?",
+                (media_key, user["id"], chat_id, now()),
+            ).fetchone()
+            if not upload or upload["media_type"] != media_type:
+                raise ValueError("Ссылка на загрузку недействительна. Выберите файл ещё раз.")
+            actual_size, actual_content_type = s3_object_metadata(media_key)
+            if actual_size != upload["size_bytes"] or actual_content_type != upload["content_type"]:
+                raise ValueError("Загруженный файл не прошёл проверку.")
+            media_data = f"s3:{media_key}"
+            file_name = upload["file_name"] or file_name
+            con.execute("DELETE FROM media_uploads WHERE key = ?", (media_key,))
         stored_text = f"Документ: {file_name}" if media_type == "document" and not text else text
         con.execute("INSERT INTO messages(id,chat_id,sender_id,profile_user_id,text,media_type,media_data,voice_waveform_json,views,reply_to_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (msg_id, chat_id, user["id"], profile_user_id, stored_text, media_type, media_data, dumps(voice_waveform), 1, reply_to_id, now()))
         con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), chat_id))
+        if chat and chat["type"] == "channel":
+            schedule_automated_comments(con, msg_id, chat_id)
         if chat and chat["type"] == "channel":
             link = con.execute("SELECT target_chat_id FROM channel_links WHERE channel_id = ?", (chat_id,)).fetchone()
             if link:
@@ -3346,6 +4201,304 @@ class Handler(BaseHTTPRequestHandler):
         with chat_activities_lock:
             chat_activities.pop((chat_id, user["id"]), None)
         return self.json({"ok": True, "messageId": msg_id})
+
+    def ai_agent_settings(self, con, user_id):
+        row = con.execute("SELECT * FROM ai_agent_settings WHERE user_id = ?", (user_id,)).fetchone()
+        channel_rule = con.execute("SELECT * FROM ai_agent_channel_rules WHERE user_id = ?", (user_id,)).fetchone()
+        channel_data = {
+            "enabled": bool(channel_rule["enabled"]) if channel_rule else False,
+            "targetChannelId": channel_rule["target_channel_id"] if channel_rule else "",
+            "sourceChannelIds": loads(channel_rule["source_channel_ids_json"], []) if channel_rule else [],
+        }
+        if not row:
+            return {"instruction": "", "style": "friendly", "autopilotEnabled": False, "allowedChatIds": [], "templateMessageIds": [], "channelRule": channel_data}
+        return {
+            "instruction": row["instruction"],
+            "style": row["style"],
+            "autopilotEnabled": bool(row["autopilot_enabled"]),
+            "allowedChatIds": loads(row["allowed_chat_ids_json"], []),
+            "templateMessageIds": loads(row["template_message_ids_json"], []),
+            "channelRule": channel_data,
+        }
+
+    def require_pro_account_level(self, con, user_id):
+        data = self.account_level_data(con, user_id)
+        pro_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == "pro"), None)
+        current_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == data["current"]["id"]), -1)
+        if pro_index is None or current_index < pro_index:
+            raise ValueError("Автопилот ИИ-агента доступен с уровня «Профи». Повысьте уровень аккаунта.")
+
+    def update_ai_agent_settings(self, con, user, body):
+        instruction = " ".join(str(body.get("instruction", "")).split())[:3_000]
+        style = str(body.get("style", "friendly"))
+        if style not in {"friendly", "business", "brief"}:
+            raise ValueError("Неизвестный стиль ИИ-агента.")
+        allowed_chat_ids = body.get("allowedChatIds", [])
+        template_message_ids = body.get("templateMessageIds", [])
+        if not isinstance(allowed_chat_ids, list) or not isinstance(template_message_ids, list):
+            raise ValueError("Некорректные настройки ИИ-агента.")
+        allowed_chat_ids = list(dict.fromkeys(str(value) for value in allowed_chat_ids if isinstance(value, str)))[:50]
+        template_message_ids = list(dict.fromkeys(str(value) for value in template_message_ids if isinstance(value, str)))[:30]
+        for chat_id in allowed_chat_ids:
+            chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+            if not chat or chat["type"] != "direct" or not self.has_chat_access(con, user["id"], chat_id):
+                raise ValueError("В автопилоте можно использовать только доступные личные диалоги.")
+        saved = con.execute("SELECT c.id FROM chats c JOIN chat_members m ON m.chat_id = c.id WHERE c.type = 'saved' AND m.user_id = ?", (user["id"],)).fetchone()
+        if template_message_ids and not saved:
+            raise ValueError("Не найден чат «Избранное».")
+        for message_id in template_message_ids:
+            template = con.execute("SELECT sender_id, chat_id, media_type FROM messages WHERE id = ?", (message_id,)).fetchone()
+            if not template or template["sender_id"] != user["id"] or template["chat_id"] != saved["id"]:
+                raise ValueError("Шаблоны можно выбирать только из собственных сообщений в «Избранном».")
+        autopilot_enabled = bool(body.get("autopilotEnabled", False))
+        if autopilot_enabled:
+            if not allowed_chat_ids:
+                raise ValueError("Для автопилота выберите хотя бы один личный диалог.")
+        con.execute(
+            """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
+               VALUES (?,?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET instruction=excluded.instruction, style=excluded.style, autopilot_enabled=excluded.autopilot_enabled, allowed_chat_ids_json=excluded.allowed_chat_ids_json, template_message_ids_json=excluded.template_message_ids_json, updated_at=excluded.updated_at""",
+            (user["id"], instruction, style, int(autopilot_enabled), dumps(allowed_chat_ids), dumps(template_message_ids), now()),
+        )
+        return self.json({"ok": True})
+
+    def ai_agent_private_search(self, con, user, query):
+        text = " ".join((query.get("q", [""])[0] or "").split())
+        if len(text) < 2:
+            raise ValueError("Введите не менее двух символов для поиска.")
+        if len(text) > 120:
+            raise ValueError("Поисковый запрос не должен быть длиннее 120 символов.")
+        rows = con.execute(
+            """SELECT m.id, m.chat_id, m.text, m.media_type, m.created_at, c.title AS chat_title
+               FROM messages m JOIN chats c ON c.id = m.chat_id
+               WHERE c.type = 'direct' AND m.deleted_by_admin = 0
+                 AND m.text IS NOT NULL AND trim(m.text) != '' AND casefold(m.text) LIKE ?
+                 AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)
+                 AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
+               ORDER BY m.created_at DESC LIMIT 50""",
+            (f"%{text.casefold()}%", user["id"], user["id"]),
+        ).fetchall()
+        return self.json({"ok": True, "messages": [dict(row) for row in rows]})
+
+    def update_ai_agent_channel_rule(self, con, user, body):
+        target_channel_id = str(body.get("targetChannelId", "")).strip()
+        source_channel_ids = body.get("sourceChannelIds", [])
+        if not isinstance(source_channel_ids, list):
+            raise ValueError("Некорректный список каналов-источников.")
+        source_channel_ids = list(dict.fromkeys(str(value) for value in source_channel_ids if isinstance(value, str)))[:30]
+        enabled = bool(body.get("enabled", False))
+        if target_channel_id:
+            target = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (target_channel_id,)).fetchone()
+            if not target or target["type"] != "channel" or target["owner_id"] != user["id"]:
+                raise ValueError("Выберите собственный канал для публикаций.")
+        for channel_id in source_channel_ids:
+            source = con.execute("SELECT type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+            if not source or source["type"] != "channel" or not self.has_chat_access(con, user["id"], channel_id):
+                raise ValueError("Источниками могут быть только доступные вам каналы.")
+            if channel_id == target_channel_id:
+                raise ValueError("Свой канал нельзя выбрать источником.")
+        if enabled and (not target_channel_id or not source_channel_ids):
+            raise ValueError("Выберите свой канал и хотя бы один канал-источник.")
+        con.execute(
+            """INSERT INTO ai_agent_channel_rules(user_id,enabled,target_channel_id,source_channel_ids_json,created_at,updated_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,target_channel_id=excluded.target_channel_id,source_channel_ids_json=excluded.source_channel_ids_json,updated_at=excluded.updated_at""",
+            (user["id"], int(enabled), target_channel_id or None, dumps(source_channel_ids), now(), now()),
+        )
+        if source_channel_ids:
+            placeholders = ",".join("?" for _ in source_channel_ids)
+            con.execute(
+                f"""INSERT OR IGNORE INTO ai_agent_channel_processed_posts(rule_user_id,message_id,processed_at)
+                    SELECT ?, m.id, ? FROM messages m WHERE m.chat_id IN ({placeholders})""",
+                (user["id"], now(), *source_channel_ids),
+            )
+        return self.json({"ok": True})
+
+    def ai_completion(self, system, prompt, max_tokens=260):
+        api_key, base_url, model = genapi_configuration()
+        if not api_key:
+            raise ValueError("ИИ-агент пока не настроен на сервере.")
+        request = urlrequest.Request(
+            f"{base_url}/chat/completions",
+            data=dumps({"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}], "temperature": 0.55, "max_tokens": max_tokens}).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}, method="POST",
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=40) as response:
+                payload = loads(response.read().decode("utf-8"), {})
+            text = payload["choices"][0]["message"]["content"]
+            if isinstance(text, list):
+                text = " ".join(str(part.get("text", "")) for part in text if isinstance(part, dict))
+            return " ".join(str(text).strip().strip('«»"').split())[:1_500]
+        except (KeyError, IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError("Не удалось получить ответ ИИ-агента. Повторите позже.")
+
+    def ask_ai_agent(self, con, user, body):
+        question = " ".join(str(body.get("question", "")).split())[:2_000]
+        if not question:
+            raise ValueError("Напишите вопрос ИИ-агенту.")
+        sent = self.ai_agent_send_requested_message(con, user, question)
+        if sent:
+            return self.json({"ok": True, "answer": sent})
+        raw_history = body.get("history", [])
+        history = []
+        if isinstance(raw_history, list):
+            for item in raw_history[-10:]:
+                if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+                    continue
+                text = " ".join(str(item.get("text", "")).split())[:1_000]
+                if text:
+                    history.append((item["role"], text))
+        messages = self.ai_agent_messages_for_request(con, user["id"], question)
+        system = "Ты личный ИИ-помощник пользователя Chat-Pro. Помогаешь разобраться с функциями сайта и настройками. Если пользователь спрашивает, что ты умеешь, кратко перечисли: объяснение функций и уровней аккаунта, поиск по личным диалогам, подготовку черновиков ответов, настройку автопилота, шаблонов из «Избранного» и репостов в собственный канал из доступных подписок. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Если найденные сообщения не подходят или запрос неоднозначен, задай короткий уточняющий вопрос: имя собеседника, слова из сообщения или период. Не придумывай найденные сообщения. Объясняй, что для автопилота и репостов пользователь должен явно выбрать диалоги или каналы в настройках — не обещай включить эти действия только по текстовому сообщению. Можешь кратко подсказать преимущества и рекомендовать подходящий уровень аккаунта, только если это относится к вопросу. Не выдумывай возможности и не говори, что можешь писать за пользователя. Отвечай по-русски, ясно и кратко."
+        history_text = "\n".join(f"{'Пользователь' if role == 'user' else 'ИИ-агент'}: {text}" for role, text in history)
+        found_text = "\n".join(f"Диалог «{item['chat_title']}»: {item['text'][:500]}" for item in messages)
+        prompt = f"Предыдущий разговор:\n{history_text or 'нет'}\n\nНовый запрос: {question}\n\nНайденные сервером сообщения:\n{found_text or 'нет'}\n\nОтветь на новый запрос."
+        answer = self.ai_completion(system, prompt, 320)
+        return self.json({"ok": True, "answer": answer, "messages": messages})
+
+    def ai_agent_send_requested_message(self, con, user, question):
+        request = re.match(r"^(?:напиши|отправь|передай)\s+(?:сообщение\s+)?(?P<recipient>[^:]{2,80})\s*:\s*(?P<text>.+)$", question, re.IGNORECASE)
+        if not request:
+            return None
+        recipient = " ".join(request.group("recipient").replace("@", "").split())
+        text = " ".join(request.group("text").split())[:2_000]
+        if not text:
+            raise ValueError("После двоеточия напишите текст сообщения.")
+        recipient_key = recipient.casefold()
+        chats = con.execute(
+            """SELECT c.id, u.name, u.username FROM chats c
+               JOIN chat_members mine ON mine.chat_id = c.id AND mine.user_id = ?
+               JOIN chat_members peer ON peer.chat_id = c.id AND peer.user_id != ?
+               JOIN users u ON u.id = peer.user_id
+               WHERE c.type = 'direct' AND (casefold(u.name) = ? OR casefold(u.username) = ?)
+               ORDER BY c.updated_at DESC""",
+            (user["id"], user["id"], recipient_key, recipient_key),
+        ).fetchall()
+        unique_chats = {row["id"]: row for row in chats}
+        if not unique_chats:
+            raise ValueError(f"Не нашёл доступный личный диалог с «{recipient}». Укажите точное имя или @username после команды.")
+        if len(unique_chats) > 1:
+            raise ValueError(f"Нашёл несколько личных диалогов с «{recipient}». Укажите точный @username получателя.")
+        self.enforce_message_limit(con, user["id"])
+        chat = next(iter(unique_chats.values()))
+        con.execute(
+            "INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)",
+            (uid("msg"), chat["id"], user["id"], f"🤖 Помощник: {text}", 1, 1, now()),
+        )
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), chat["id"]))
+        return f"Отправил сообщение пользователю {chat['name']} от вашего имени."
+
+    def ai_agent_messages_for_request(self, con, user_id, question):
+        if not re.search(r"\b(найд|ищ|поиск|покаж|пришл|отправ|сообщени|диалог|переписк)\w*", question, re.IGNORECASE):
+            return []
+        ignored = {"найди", "найти", "покажи", "пришли", "отправь", "сообщение", "сообщения", "сообщений", "диалог", "диалоге", "переписке", "личных", "личной", "чат", "чате", "мне", "где", "которое", "которые", "про", "или", "что", "это", "вот", "было", "был", "была", "есть", "из", "для", "с", "по", "и", "а", "у"}
+        terms = [word.casefold() for word in re.findall(r"[\wёЁ-]{3,}", question) if word.casefold() not in ignored][:6]
+        if not terms:
+            return []
+        conditions = " AND ".join("(casefold(m.text) LIKE ? OR casefold(c.title) LIKE ?)" for _ in terms)
+        params = [value for term in terms for value in (f"%{term}%", f"%{term}%")]
+        rows = con.execute(
+            f"""SELECT m.id, m.chat_id, m.text, m.created_at, c.title AS chat_title
+                FROM messages m JOIN chats c ON c.id = m.chat_id
+                WHERE c.type = 'direct' AND m.deleted_by_admin = 0 AND trim(m.text) != ''
+                  AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)
+                  AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
+                  AND {conditions}
+                ORDER BY m.created_at DESC LIMIT 10""",
+            (user_id, user_id, *params),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def draft_ai_agent_reply(self, con, user, body):
+        chat_id = str(body.get("chatId", ""))
+        chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if not chat or chat["type"] != "direct" or not self.has_chat_access(con, user["id"], chat_id):
+            raise PermissionError()
+        settings = self.ai_agent_settings(con, user["id"])
+        recent = con.execute("SELECT sender_id,text FROM messages WHERE chat_id = ? ORDER BY created_at DESC LIMIT 8", (chat_id,)).fetchall()
+        if not recent:
+            raise ValueError("В диалоге пока нет сообщений для подготовки ответа.")
+        context = "\n".join(f"{'Пользователь' if item['sender_id'] == user['id'] else 'Собеседник'}: {item['text'][:500]}" for item in reversed(recent))
+        system = "Ты создаёшь черновик ответа для владельца аккаунта в личном диалоге. Не рекламируй Chat-Pro, его уровни или подписки. Не утверждай, что являешься человеком. Не добавляй пометку об ИИ: её добавит интерфейс. Не обещай то, чего нет в инструкции."
+        prompt = f"Инструкция владельца: {settings['instruction'] or 'Вежливо помогай собеседнику.'}\nСтиль: {settings['style']}\n\nДиалог:\n{context}\n\nВерни только один короткий ответ на последнее сообщение собеседника."
+        return self.json({"ok": True, "draft": self.ai_completion(system, prompt, 220)})
+
+    def process_ai_agent_autopilots(self, con):
+        rows = []
+        for settings in con.execute("SELECT * FROM ai_agent_settings WHERE autopilot_enabled = 1").fetchall():
+            allowed_chat_ids = loads(settings["allowed_chat_ids_json"], [])
+            if not isinstance(allowed_chat_ids, list):
+                continue
+            allowed_chat_ids = [str(chat_id) for chat_id in allowed_chat_ids[:50] if isinstance(chat_id, str)]
+            if not allowed_chat_ids:
+                continue
+            placeholders = ",".join("?" for _ in allowed_chat_ids)
+            rows.extend(con.execute(
+                f"""SELECT ? AS user_id, ? AS instruction, ? AS style, ? AS template_message_ids_json,
+                           ? AS allowed_chat_ids_json, m.id AS message_id, m.chat_id, m.sender_id, m.text, m.created_at
+                    FROM messages m JOIN chats c ON c.id = m.chat_id
+                    WHERE m.chat_id IN ({placeholders}) AND c.type = 'direct' AND m.sender_id != ?
+                      AND m.ai_agent = 0 AND NOT EXISTS(SELECT 1 FROM ai_agent_processed_messages p WHERE p.message_id = m.id)
+                    ORDER BY m.created_at ASC LIMIT 10""",
+                (settings["user_id"], settings["instruction"], settings["style"], settings["template_message_ids_json"], settings["allowed_chat_ids_json"], *allowed_chat_ids, settings["user_id"]),
+            ).fetchall())
+        rows.sort(key=lambda row: row["created_at"])
+        for row in rows:
+            con.execute("INSERT OR IGNORE INTO ai_agent_processed_messages(message_id,processed_at) VALUES (?,?)", (row["message_id"], now()))
+            owner_id = row["user_id"]
+            try:
+                text = " ".join(str(row["text"] or "").split())
+                if not text or re.search(r"\b(оператор|человек|стоп|не пишите|отключи)\b", text, re.IGNORECASE):
+                    continue
+                sent_today = con.execute("SELECT COUNT(*) AS total FROM messages WHERE sender_id = ? AND ai_agent = 1 AND created_at >= ?", (owner_id, now() - 86400)).fetchone()["total"]
+                if sent_today >= 40:
+                    continue
+                recent = con.execute("SELECT sender_id,text FROM messages WHERE chat_id = ? ORDER BY created_at DESC LIMIT 8", (row["chat_id"],)).fetchall()
+                context = "\n".join(f"{'Владелец' if item['sender_id'] == owner_id else 'Собеседник'}: {item['text'][:500]}" for item in reversed(recent))
+                template_ids = loads(row["template_message_ids_json"], [])
+                templates = [item["text"] for item in con.execute(f"SELECT text FROM messages WHERE id IN ({','.join('?' for _ in template_ids)})", template_ids).fetchall()] if template_ids else []
+                system = "Ты рабочий ИИ-помощник в личном диалоге. Создаёшь безопасный короткий ответ по инструкции владельца. Никогда не рекламируй Chat-Pro, его подписки, уровни или функции. Не выдавай себя за человека. Не обещай невозможное."
+                prompt = f"Инструкция владельца: {row['instruction'] or 'Вежливо ответь по теме.'}\nСтиль: {row['style']}\nРазрешённые текстовые шаблоны: {' | '.join(templates[:5]) or 'нет'}\n\nДиалог:\n{context}\n\nВерни только один ответ на последнее сообщение собеседника."
+                with chat_activities_lock:
+                    chat_activities[(row["chat_id"], owner_id)] = ("typing", time.monotonic() + CHAT_ACTIVITY_TTL)
+                reply = self.ai_completion(system, prompt, 220)
+                if len(reply) < 2:
+                    continue
+                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), row["chat_id"], owner_id, f"🤖 Помощник: {reply}", 1, 1, now()))
+                con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), row["chat_id"]))
+            except Exception:
+                continue
+            finally:
+                with chat_activities_lock:
+                    chat_activities.pop((row["chat_id"], owner_id), None)
+
+    def process_ai_agent_channel_rules(self, con):
+        for rule in con.execute("SELECT * FROM ai_agent_channel_rules WHERE enabled = 1").fetchall():
+            source_ids = loads(rule["source_channel_ids_json"], [])
+            if not isinstance(source_ids, list) or not source_ids or not rule["target_channel_id"]:
+                continue
+            source_ids = [str(item) for item in source_ids[:30] if isinstance(item, str)]
+            target = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (rule["target_channel_id"],)).fetchone()
+            if not target or target["type"] != "channel" or target["owner_id"] != rule["user_id"]:
+                continue
+            placeholders = ",".join("?" for _ in source_ids)
+            posts = con.execute(
+                f"""SELECT m.*, c.title AS source_title FROM messages m JOIN chats c ON c.id = m.chat_id
+                    WHERE m.chat_id IN ({placeholders}) AND c.type = 'channel' AND m.deleted_by_admin = 0
+                      AND NOT EXISTS(SELECT 1 FROM ai_agent_channel_processed_posts p WHERE p.rule_user_id = ? AND p.message_id = m.id)
+                    ORDER BY m.created_at ASC LIMIT 10""",
+                (*source_ids, rule["user_id"]),
+            ).fetchall()
+            for post in posts:
+                con.execute("INSERT OR IGNORE INTO ai_agent_channel_processed_posts(rule_user_id,message_id,processed_at) VALUES (?,?,?)", (rule["user_id"], post["id"], now()))
+                if not self.has_chat_access(con, rule["user_id"], post["chat_id"]):
+                    continue
+                con.execute(
+                    "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,voice_waveform_json,views,forwarded_from,forwarded_from_user_id,source_type,source_id,ai_agent,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (uid("msg"), rule["target_channel_id"], rule["user_id"], post["text"], post["media_type"], post["media_data"], post["voice_waveform_json"], 1, post["source_title"], post["sender_id"], "ai_agent_repost", post["id"], 1, now()),
+                )
+                con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), rule["target_channel_id"]))
 
     def update_chat_activity(self, con, user, body):
         chat_id = str(body.get("chatId", "")).strip()
@@ -3541,11 +4694,14 @@ class Handler(BaseHTTPRequestHandler):
         message_id = str(body.get("messageId", ""))
         text = str(body.get("text", "")).strip()
         media_data = str(body.get("mediaData", ""))
-        message = con.execute("SELECT m.chat_id, c.settings_json FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id = ? AND c.type = 'channel'", (message_id,)).fetchone()
+        message = con.execute(
+            "SELECT m.chat_id, c.settings_json FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id = ? AND c.type IN ('channel', 'group', 'community')",
+            (message_id,),
+        ).fetchone()
         if not message or not self.has_chat_access(con, user["id"], message["chat_id"]):
             raise PermissionError("Нет доступа к публикации.")
         if not loads(message["settings_json"], {}).get("commentsEnabled", True):
-            raise PermissionError("Комментарии отключены автором канала.")
+            raise PermissionError("Комментарии отключены автором чата.")
         if (not text and not media_data) or len(text) > 1000:
             raise ValueError("Комментарий должен содержать текст до 1000 символов или фото.")
         if media_data and (not media_data.startswith("data:image/") or len(media_data) > 2_500_000):
@@ -3557,62 +4713,137 @@ class Handler(BaseHTTPRequestHandler):
         name = " ".join(str(body.get("name", "")).strip().split())[:80]
         if not name:
             raise ValueError("Введите имя автокомментатора.")
+        username = normalize_username(body.get("username"))
+        validate_username(username)
+        if username_taken(con, username):
+            raise ValueError("Этот логин уже занят. Выберите другой.")
+        password = str(body.get("password", ""))
+        if len(password) < 8:
+            raise ValueError("Пароль должен содержать не менее 8 символов.")
         avatar_data = str(body.get("avatarData", "") or "")
         if avatar_data and (not avatar_data.startswith("data:image/") or len(avatar_data) > 2_500_000):
             raise ValueError("Аватар должен быть изображением PNG, JPG или WebP до 1,8 МБ.")
-        username = f"autocomment_{secrets.token_hex(5)}"
         user_id = uid("user")
         current = now()
         con.execute(
             """INSERT INTO users(id,name,username,password,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,avatar_data,created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (user_id, name, username, secrets.token_urlsafe(24), 0, "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", avatar_data or None, current),
+            (user_id, name, username, hash_password(password), 0, "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", avatar_data or None, current),
         )
         commenter_id = uid("autocommenter")
         con.execute("INSERT INTO automated_commenters(id,user_id,created_at) VALUES (?,?,?)", (commenter_id, user_id, current))
         return self.json({"ok": True, "commenterId": commenter_id})
 
+    def create_automated_commenter_pool(self, con):
+        existing = con.execute("SELECT count(*) AS count FROM automated_commenters").fetchone()["count"]
+        to_create = max(0, 100 - int(existing))
+        if not to_create:
+            return self.json({"ok": True, "created": 0, "total": existing})
+        current = now()
+        names = [
+            "Алекс", "Уля", "Арт", "Лера", "Даня", "Саша", "Мила", "Ник", "Соня", "Тим",
+            "Вика", "Егор", "Алиса", "Кир", "Полина", "Марк", "Алина", "Глеб", "Настя", "Рома",
+            "Яна", "Макс", "Ксю", "Даша", "Лина", "Женя", "Миша", "Тая", "Стас", "Влад",
+            "Рина", "Лёша", "Ника", "Вера", "Оля", "Илья", "Ася", "Паша", "Адольф",
+            "Алекс Морозов", "Уля Белова", "Арт Лисов", "Лера Соколова", "Даня Крылов", "Мила Рэй",
+            "Ник Орлов", "Соня Лайт", "Тим Ковалёв", "Вика Мэй", "Егор Ветров", "Алиса Нова",
+            "Кир Волков", "Полина Скай", "Марк Левин", "Алина Фокс", "Глеб Север", "Настя Роу",
+            "Рома Дэн", "Яна Вэй",
+            "Геркулес", "Джин", "Хорошая девочка", "Жан-Клод Ван Дамм", "Джеки Чан", "Люкс Авто МСК",
+            "Sherlock Holmes", "Luna Lovegood", "Tony Stark", "Harley Quinn", "Neo", "Trinity", "Loki", "Thor",
+            "Wonder Woman", "Batman", "Black Panther", "Spiderman", "Catwoman", "Sonic", "Zelda", "Mario",
+            "Pikachu", "Wolverine", "Deadpool", "Iron Man", "Doctor Strange", "Obi-Wan Kenobi", "Princess Leia",
+            "Indiana Jones", "Lara Croft", "Jack Sparrow", "Wednesday Addams", "Eleven", "The Joker",
+            "Daenerys Stormborn", "Geralt of Rivia", "Yennefer", "Hermione Granger", "Mr Bean", "Maverick",
+        ]
+        for position in range(to_create):
+            number = int(existing) + position + 1
+            username = f"channel_reader_{number:03d}"
+            while username_taken(con, username):
+                number += 100
+                username = f"channel_reader_{number:03d}"
+            user_id = uid("user")
+            con.execute(
+                """INSERT INTO users(id,name,username,password,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (user_id, names[position % len(names)], username, hash_password(secrets.token_urlsafe(32)), 0,
+                 "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", current),
+            )
+            con.execute("INSERT INTO automated_commenters(id,user_id,created_at) VALUES (?,?,?)", (uid("autocommenter"), user_id, current))
+        return self.json({"ok": True, "created": to_create, "total": int(existing) + to_create})
+
+    def reset_automated_commenter_password(self, con, body):
+        commenter_id = str(body.get("commenterId", "")).strip()
+        password = str(body.get("password", ""))
+        if len(password) < 8:
+            raise ValueError("Пароль должен содержать не менее 8 символов.")
+        commenter = con.execute("SELECT user_id FROM automated_commenters WHERE id = ?", (commenter_id,)).fetchone()
+        if not commenter:
+            raise ValueError("Автокомментатор не найден.")
+        con.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(password), commenter["user_id"]))
+        return self.json({"ok": True})
+
     def create_automated_comment_rule(self, con, body):
         channel_id = str(body.get("channelId", ""))
+        target_scope = str(body.get("targetScope", "future"))
         target_message_id = str(body.get("targetMessageId", "")).strip() or None
         channel = con.execute("SELECT id FROM chats WHERE id = ? AND type = 'channel'", (channel_id,)).fetchone()
         if not channel:
             raise ValueError("Выберите канал.")
+        if target_scope not in {"selected", "existing", "future"}:
+            raise ValueError("Выберите, к каким публикациям применять правило.")
+        if target_scope == "selected" and not target_message_id:
+            raise ValueError("Выберите публикацию.")
+        if target_scope != "selected":
+            target_message_id = None
         commenter_ids = list(dict.fromkeys(str(item) for item in body.get("commenterIds", []) if item))
-        if not commenter_ids or len(commenter_ids) > 20:
-            raise ValueError("Выберите от 1 до 20 автокомментаторов.")
+        if not commenter_ids or len(commenter_ids) > 100:
+            raise ValueError("Выберите от 1 до 100 автокомментаторов.")
         found_commenters = con.execute(
             f"SELECT id FROM automated_commenters WHERE id IN ({','.join('?' for _ in commenter_ids)})",
             commenter_ids,
         ).fetchall()
         if len(found_commenters) != len(commenter_ids):
             raise ValueError("Один из автокомментаторов не найден.")
+        comment_mode = str(body.get("commentMode", "manual")).strip()
+        if comment_mode not in {"manual", "local", "ai"}:
+            raise ValueError("Выберите режим комментариев.")
         texts = [" ".join(str(text).strip().split())[:1000] for text in body.get("texts", []) if str(text).strip()]
-        if not texts or len(texts) > 30:
+        categories = list(dict.fromkeys(str(category) for category in body.get("categories", []) if str(category) in AUTOMATED_COMMENT_CATEGORIES))
+        if comment_mode == "manual" and (not texts or len(texts) > 30):
             raise ValueError("Добавьте от 1 до 30 текстов комментариев.")
+        if comment_mode == "local" and not categories:
+            raise ValueError("Выберите хотя бы одну категорию локальных комментариев.")
         minimum = nonnegative_int(body.get("minDelayMinutes", 5), "minDelayMinutes", 10_080) * 60
         maximum = nonnegative_int(body.get("maxDelayMinutes", 30), "maxDelayMinutes", 10_080) * 60
         if minimum > maximum:
             raise ValueError("Минимальная задержка не может быть больше максимальной.")
+        distribution_hours = nonnegative_int(body.get("distributionHours", 12), "distributionHours", 24)
+        if not distribution_hours:
+            raise ValueError("Укажите окно публикации от 1 до 24 часов.")
         duration_days = nonnegative_int(body.get("durationDays", 2), "durationDays", 30)
         if not duration_days:
             raise ValueError("Укажите срок работы от 1 до 30 дней.")
         current = now()
         if target_message_id:
             target = con.execute(
-                "SELECT id FROM messages WHERE id = ? AND chat_id = ? AND source_type = 'rss'",
+                "SELECT id FROM messages WHERE id = ? AND chat_id = ? AND media_type != 'system'",
                 (target_message_id, channel_id),
             ).fetchone()
             if not target:
-                raise ValueError("Выберите RSS-публикацию указанного канала.")
+                raise ValueError("Выберите публикацию указанного канала.")
         rule_id = uid("autocommentrule")
         con.execute(
-            """INSERT INTO automated_comment_rules(id,channel_id,target_message_id,commenter_ids_json,texts_json,min_delay_seconds,max_delay_seconds,starts_at,ends_at,active,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (rule_id, channel_id, target_message_id, dumps(commenter_ids), dumps(texts), minimum, maximum, current, current + duration_days * 86400, 1, current),
+            """INSERT INTO automated_comment_rules(id,channel_id,target_message_id,target_scope,commenter_ids_json,texts_json,comment_mode,categories_json,min_delay_seconds,max_delay_seconds,distribution_seconds,starts_at,ends_at,active,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (rule_id, channel_id, target_message_id, target_scope, dumps(commenter_ids), dumps(texts), comment_mode, dumps(categories), minimum, maximum, distribution_hours * 3600, current, current + duration_days * 86400, 1, current),
         )
-        if target_message_id:
+        if target_scope == "selected":
             schedule_automated_comments(con, target_message_id, channel_id, current)
+        elif target_scope == "existing":
+            posts = con.execute("SELECT id FROM messages WHERE chat_id = ? AND media_type != 'system' ORDER BY created_at", (channel_id,)).fetchall()
+            for post in posts:
+                schedule_automated_comments(con, post["id"], channel_id, current, include_existing=True)
         return self.json({"ok": True, "ruleId": rule_id})
 
     def edit_message(self, con, user, body):
@@ -3662,6 +4893,13 @@ class Handler(BaseHTTPRequestHandler):
         ).fetchone()
         if not row or not row["media_data"]:
             self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if str(row["media_data"]).startswith("s3:"):
+            download_url, _ = s3_presigned_url("GET", str(row["media_data"])[3:], expires_in=300)
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", download_url)
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
             return
         header, separator, encoded = row["media_data"].partition(";base64,")
         if not separator or not header.startswith("data:"):
@@ -3908,7 +5146,10 @@ class Handler(BaseHTTPRequestHandler):
         emoji = str(body.get("emoji", "👍"))[:32]
         if not emoji:
             raise ValueError("Выберите реакцию.")
-        row = con.execute("SELECT chat_id, reactions_json FROM messages WHERE id=?", (body.get("messageId"),)).fetchone()
+        row = con.execute(
+            "SELECT m.chat_id, c.type AS chat_type, c.settings_json FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id=?",
+            (body.get("messageId"),),
+        ).fetchone()
         if not row:
             raise ValueError("Пост не найден.")
         if not self.has_chat_access(con, user["id"], row["chat_id"]):
@@ -3918,6 +5159,11 @@ class Handler(BaseHTTPRequestHandler):
             "SELECT 1 FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
             (message_id, user["id"], emoji),
         ).fetchone()
+        if row["chat_type"] == "channel":
+            if not loads(row["settings_json"], {}).get("showReactions", True):
+                raise PermissionError("Реакции отключены автором канала.")
+            if not existing and emoji not in channel_reaction_emojis(con):
+                raise ValueError("Эта реакция недоступна в каналах.")
         if existing:
             con.execute(
                 "DELETE FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
@@ -4078,15 +5324,15 @@ class Handler(BaseHTTPRequestHandler):
         self.credit_stars(con, payment_order["user_id"], payment_order["stars"])
         self.record_star_transaction(con, payment_order["user_id"], payment_order["stars"], "yookassa_purchase", f"Покупка {payment_order['stars']} звёзд через ЮKassa")
         if payment_order["channel_id"]:
-            channel = con.execute("SELECT title, owner_id FROM chats WHERE id = ? AND type = 'channel'", (payment_order["channel_id"],)).fetchone()
+            channel = con.execute("SELECT title, owner_id, settings_json FROM chats WHERE id = ? AND type = 'channel'", (payment_order["channel_id"],)).fetchone()
             if channel and payment_order["channel_bonus_type"] in {"stars", "money"} and payment_order["channel_bonus_amount"]:
                 bonus_type = payment_order["channel_bonus_type"]
                 bonus_amount = payment_order["channel_bonus_amount"]
-                con.execute(
-                    """INSERT OR IGNORE INTO channel_star_purchases(id,payment_id,channel_id,buyer_user_id,stars,bonus_type,bonus_amount,created_at)
-                       VALUES (?,?,?,?,?,?,?,?)""",
-                    (uid("channel_purchase"), payment_order["id"], payment_order["channel_id"], payment_order["user_id"], payment_order["stars"], bonus_type, bonus_amount, now()),
-                )
+                settings = loads(channel["settings_json"], {}) or {}
+                requested_gift = nonnegative_int(settings.get("buyerGiftStars", 0), "buyerGiftStars", 100_000)
+                buyer_message = str(settings.get("buyerPurchaseMessage", "")).strip()[:500]
+                owner = con.execute("SELECT stars FROM users WHERE id = ?", (channel["owner_id"],)).fetchone()
+                gift_stars = requested_gift if owner and owner["stars"] >= requested_gift else 0
                 buyer = con.execute("SELECT name, username FROM users WHERE id = ?", (payment_order["user_id"],)).fetchone()
                 buyer_label = buyer["name"] if buyer else "Пользователь"
                 if bonus_type == "stars":
@@ -4095,6 +5341,33 @@ class Handler(BaseHTTPRequestHandler):
                     bonus_label = f"★ {bonus_amount}"
                 else:
                     bonus_label = f"{bonus_amount} ₽ к выплате"
+                if gift_stars:
+                    debited = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (gift_stars, channel["owner_id"], gift_stars)).rowcount
+                    if debited:
+                        self.credit_stars(con, payment_order["user_id"], gift_stars)
+                        self.record_star_transaction(con, channel["owner_id"], -gift_stars, "channel_buyer_gift_sent", f"Подарок покупателю через канал «{channel['title']}»")
+                        self.record_star_transaction(con, payment_order["user_id"], gift_stars, "channel_buyer_gift_received", f"Подарок за покупку через канал «{channel['title']}»")
+                    else:
+                        gift_stars = 0
+                con.execute(
+                    """INSERT OR IGNORE INTO channel_star_purchases(id,payment_id,channel_id,buyer_user_id,stars,bonus_type,bonus_amount,buyer_gift_stars,buyer_message,created_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (uid("channel_purchase"), payment_order["id"], payment_order["channel_id"], payment_order["user_id"], payment_order["stars"], bonus_type, bonus_amount, gift_stars, buyer_message, now()),
+                )
+                if buyer_message:
+                    direct = con.execute(
+                        """SELECT c.id FROM chats c JOIN chat_members owner_member ON owner_member.chat_id = c.id
+                           JOIN chat_members buyer_member ON buyer_member.chat_id = c.id
+                           WHERE c.type = 'direct' AND owner_member.user_id = ? AND buyer_member.user_id = ? LIMIT 1""",
+                        (channel["owner_id"], payment_order["user_id"]),
+                    ).fetchone()
+                    direct_id = direct["id"] if direct else uid("chat")
+                    if not direct:
+                        con.execute("INSERT INTO chats(id,type,title,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (direct_id, "direct", "Личный чат", channel["owner_id"], now(), now()))
+                        for member_id in (channel["owner_id"], payment_order["user_id"]):
+                            con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (direct_id, member_id, "member", now()))
+                    con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), direct_id, channel["owner_id"], buyer_message, "system", 1, now()))
+                    con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), direct_id))
                 notice = f"{buyer_label} купил(а) {payment_order['stars']} звёзд через канал «{channel['title']}». Бонус: {bonus_label}."
                 con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), channel["owner_id"], "channel_star_purchase", notice, payment_order["channel_id"], now()))
                 con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), payment_order["channel_id"], channel["owner_id"], f"{buyer_label} купил(а) ★ {payment_order['stars']} через этот канал.", "system", 1, now()))
@@ -4197,6 +5470,8 @@ class Handler(BaseHTTPRequestHandler):
         text = "\n\n".join(part for part in (comment, text) if part)
         message_id = uid("msg")
         con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (message_id, target_chat_id, user["id"], text, media_type, media_data, 1, f"Источник: {source_label}", source_type, source_id, now()))
+        if target["type"] == "channel":
+            schedule_automated_comments(con, message_id, target_chat_id)
         con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), target_chat_id))
         return self.json({"ok": True, "messageId": message_id})
 
@@ -4484,6 +5759,13 @@ class Handler(BaseHTTPRequestHandler):
         )
         return self.json({"ok": True, "callId": call_id})
 
+    def require_active_account_level(self, con, user_id):
+        data = self.account_level_data(con, user_id)
+        active_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == "active"), None)
+        current_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == data["current"]["id"]), -1)
+        if active_index is None or current_index < active_index:
+            raise ValueError("Эта функция доступна с уровня «Активный». Повысьте уровень аккаунта.")
+
     def poll_calls(self, con, user):
         rows = con.execute(
             """SELECT * FROM calls WHERE (caller_id = ? OR receiver_id = ?) AND status IN ('ringing','accepted')
@@ -4492,11 +5774,11 @@ class Handler(BaseHTTPRequestHandler):
         ).fetchall()
         calls = []
         for row in rows:
-            caller = con.execute("SELECT name,username FROM users WHERE id=?", (row["caller_id"],)).fetchone()
+            caller = con.execute("SELECT name,username,call_ringtone FROM users WHERE id=?", (row["caller_id"],)).fetchone()
             calls.append({
                 "id": row["id"], "chatId": row["chat_id"], "callerId": row["caller_id"], "receiverId": row["receiver_id"],
                 "callType": row["call_type"], "offerSdp": loads(row["offer_sdp"], {}), "answerSdp": loads(row["answer_sdp"], None),
-                "status": row["status"], "callerName": caller["name"] if caller else "Пользователь", "createdAt": row["created_at"],
+                "status": row["status"], "callerName": caller["name"] if caller else "Пользователь", "callerRingtone": caller["call_ringtone"] if caller else "classic", "createdAt": row["created_at"],
             })
         return self.json({"ok": True, "calls": calls})
 
@@ -4543,6 +5825,7 @@ class Handler(BaseHTTPRequestHandler):
         settings = {r["key"]: loads(r["value"], {}) for r in con.execute("SELECT * FROM settings").fetchall()}
         users = [public_user(r) for r in con.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()]
         chats = [chat_to_dict(r) for r in con.execute("SELECT * FROM chats ORDER BY updated_at DESC").fetchall()]
+        members = [dict(r) for r in con.execute("SELECT * FROM chat_members").fetchall()]
         messages = []
         for row in con.execute("SELECT * FROM messages ORDER BY created_at DESC LIMIT 200").fetchall():
             item = message_to_dict(row)
@@ -4566,6 +5849,18 @@ class Handler(BaseHTTPRequestHandler):
             activity_rewards.append(reward)
         statuses = [dict(r) for r in con.execute("SELECT * FROM statuses ORDER BY created_at DESC").fetchall()]
         boosts = [dict(r) for r in con.execute("SELECT * FROM boost_jobs ORDER BY created_at DESC").fetchall()]
+        demo_activity_packages = [dict(r) for r in con.execute("SELECT * FROM demo_activity_packages ORDER BY created_at DESC").fetchall()]
+        demo_activity_subscriptions = [dict(r) for r in con.execute(
+            """SELECT subscription.*, package.title AS package_title, chat.title AS channel_title
+               FROM demo_activity_subscriptions subscription
+               JOIN demo_activity_packages package ON package.id = subscription.package_id
+               JOIN chats chat ON chat.id = subscription.channel_id
+               ORDER BY subscription.created_at DESC LIMIT 50"""
+        ).fetchall()]
+        channel_growth_jobs = [dict(r) for r in con.execute(
+            """SELECT job.*, chat.title AS channel_title FROM channel_growth_jobs job
+               JOIN chats chat ON chat.id = job.channel_id ORDER BY job.created_at DESC LIMIT 50"""
+        ).fetchall()]
         automated_commenters = [dict(r) for r in con.execute(
             """SELECT ac.id, ac.user_id, ac.created_at, u.name, u.username, u.avatar_data
                FROM automated_commenters ac JOIN users u ON u.id = ac.user_id
@@ -4593,7 +5888,7 @@ class Handler(BaseHTTPRequestHandler):
                LEFT JOIN chats reported_channel ON r.target_type = 'channel' AND reported_channel.id = r.target_id
                ORDER BY r.created_at DESC LIMIT 200"""
         ).fetchall()]
-        return self.json({"ok": True, "settings": settings, "users": users, "chats": chats, "messages": messages, "promotions": promos, "recommended": recommended, "activityRewards": activity_rewards, "statuses": statuses, "boosts": boosts, "reports": reports, "automatedCommenters": automated_commenters, "automatedCommentRules": automated_comment_rules, "adminKeyHint": "По умолчанию: admin123"})
+        return self.json({"ok": True, "settings": settings, "users": users, "chats": chats, "members": members, "messages": messages, "promotions": promos, "recommended": recommended, "activityRewards": activity_rewards, "statuses": statuses, "boosts": boosts, "channelGrowthJobs": channel_growth_jobs, "demoActivityPackages": demo_activity_packages, "demoActivitySubscriptions": demo_activity_subscriptions, "reports": reports, "automatedCommenters": automated_commenters, "automatedCommentRules": automated_comment_rules, "adminKeyHint": "По умолчанию: admin123"})
 
     def read_json(self):
         length = int(self.headers.get("Content-Length", "0") or 0)
@@ -4674,12 +5969,16 @@ def run_background_worker() -> None:
         try:
             with connect() as con:
                 tick_boosts(con)
+                tick_channel_growth(con)
+                tick_demo_activity(con)
                 publish_scheduled_posts(con)
                 poll_telegram_channels(con)
                 poll_rss_channels(con)
                 poll_vk_channels(con)
                 publish_automated_comments(con)
                 reward_processor.process_recurring_star_rewards(con)
+                reward_processor.process_ai_agent_autopilots(con)
+                reward_processor.process_ai_agent_channel_rules(con)
         except sqlite3.Error as error:
             print(f"Ошибка фоновой обработки: {error}")
         time.sleep(5)
