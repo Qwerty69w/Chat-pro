@@ -736,12 +736,18 @@ function renderChatsList(box) {
     : [];
   const storyStrip = directStoryStripHtml();
   box.dataset.dialogFilter = chatFilter;
-  const channelsHtml = chats.map(chatRow).join("") || (recommendedChannels.length ? '<p class="muted">Здесь появятся ваши диалоги. А пока — интересные каналы.</p>' : '<p class="muted">Пока нет диалогов.</p>');
+  const agentRow = chatFilter === "all" || chatFilter === "direct" ? aiAgentChatRow() : "";
+  const channelsHtml = `${agentRow}${chats.map(chatRow).join("")}` || (recommendedChannels.length ? '<p class="muted">Здесь появятся ваши диалоги. А пока — интересные каналы.</p>' : '<p class="muted">Пока нет диалогов.</p>');
   const recommendationsHtml = recommendedChannels.length ? `<section class="recommended-channels"><div class="recommended-channels__title"><b>Рекомендованные каналы</b><span>Подборка для вас</span></div>${recommendedChannels.map(recommendedChannelRow).join("")}</section>` : "";
   const activityPromoHtml = hasOnlySavedChats ? `<section class="activity-rewards-promo"><b>Проявляйте активность и получайте звёзды!</b><button class="button small" type="button" data-open-activity-rewards>Подробнее</button></section>` : "";
   box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск сообщений и людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="globalSearch" placeholder="Поиск сообщений и людей"></label><div id="searchResults"></div>${channelsHtml}${recommendationsHtml}${activityPromoHtml}`;
   box.querySelectorAll("[data-chat-filter]").forEach((button) => button.addEventListener("click", () => { chatFilter = button.dataset.chatFilter; renderChatsList(box); }));
   bindChatRows(box);
+  box.querySelector("[data-open-ai-agent-chat]")?.addEventListener("click", () => {
+    activeSection = "chats";
+    activeChatId = "ai-agent";
+    renderApp();
+  });
   bindStoriesStrip(box);
   box.querySelector("#globalSearch").addEventListener("input", searchGlobal);
   box.querySelector("[data-open-activity-rewards]")?.addEventListener("click", () => openMenuSection("activity-rewards"));
@@ -763,10 +769,17 @@ function renderArchiveList(box) {
 }
 
 function renderAiAgentPanel(box) {
-  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-агент</b><small>Ваш личный помощник в Chat‑Pro.</small></div><span class="badge">Полный доступ</span></div>
-    <section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><ul class="ai-agent-capabilities"><li>Объяснить возможности Chat‑Pro, настройки и уровни аккаунта.</li><li>Подсказать, как искать нужные сообщения и подготовить ответ собеседнику.</li><li>Рассказать, как настроить автопилот личных диалогов и шаблоны из «Избранного».</li><li>Объяснить ведение собственного канала и репосты из доступных подписок.</li></ul><p class="muted">Опишите задачу своими словами — я подскажу подходящий способ и следующий шаг.</p></section>
-    <section class="card ai-agent-help"><b>Напишите агенту</b><div class="ai-agent-conversation${aiAgentConversation.length ? "" : " hidden"}" data-ai-agent-conversation></div><form data-ai-agent-ask><textarea name="question" maxlength="2000" placeholder="Например: найди сообщение о встрече с Анной в личных диалогах."></textarea><button class="button primary small" type="submit">Отправить</button></form></section></section>`;
-  const conversation = box.querySelector("[data-ai-agent-conversation]");
+  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-агент</b><small>Ваш личный помощник в Chat‑Pro.</small></div><span class="badge">Полный доступ</span></div><section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><p class="muted">Напишите команду или вопрос. Агент может отправить сообщение, включить автопилот и вести ваш канал.</p></section>${aiAgentConversationHtml()}</section>`;
+  bindAiAgentConversation(box);
+}
+
+function aiAgentConversationHtml() {
+  const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
+  return `<section class="card ai-agent-help"><div class="panel-title"><div><b>Диалог с ИИ-агентом</b><small>${running ? "Автоматические задачи выполняются" : "Автоматические задачи остановлены"}</small></div><button class="button small" type="button" data-ai-agent-control>${running ? "Остановить" : "Возобновить"}</button></div><div class="ai-agent-conversation${aiAgentConversation.length ? "" : " hidden"}" data-ai-agent-conversation></div><form data-ai-agent-ask><textarea name="question" maxlength="2000" placeholder="Например: опубликуй в мой канал: Доброе утро!"></textarea><button class="button primary small" type="submit">Отправить</button></form></section>`;
+}
+
+function bindAiAgentConversation(root) {
+  const conversation = root.querySelector("[data-ai-agent-conversation]");
   const renderConversation = () => {
     conversation.innerHTML = aiAgentConversation.map((item) => `<article class="ai-agent-message ai-agent-message--${item.role}"><b>${item.role === "user" ? "Вы" : "ИИ-агент"}</b><span>${esc(item.text)}</span>${item.messages?.length ? `<div class="ai-agent-found-messages">${item.messages.map((message) => `<button type="button" data-ai-agent-open-message="${esc(message.id)}" data-ai-agent-chat="${esc(message.chat_id)}"><b>${esc(message.chat_title)}</b><span>${esc(message.text).slice(0, 220)}</span></button>`).join("")}</div>` : ""}</article>`).join("");
     conversation.classList.toggle("hidden", !aiAgentConversation.length);
@@ -774,7 +787,15 @@ function renderAiAgentPanel(box) {
     conversation.scrollTop = conversation.scrollHeight;
   };
   renderConversation();
-  box.querySelector("[data-ai-agent-ask]").addEventListener("submit", async (event) => {
+  root.querySelector("[data-ai-agent-control]")?.addEventListener("click", async () => {
+    const button = root.querySelector("[data-ai-agent-control]");
+    try {
+      button.disabled = true;
+      await api("/api/ai-agent/control", { method: "POST", body: { enabled: !Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled) } });
+      await refresh();
+    } catch (error) { toast(error.message, true); button.disabled = false; }
+  });
+  root.querySelector("[data-ai-agent-ask]").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const button = form.querySelector("button");
@@ -788,6 +809,7 @@ function renderAiAgentPanel(box) {
       aiAgentConversation.push(workingMessage);
       renderConversation();
       const result = await api("/api/ai-agent/ask", { method: "POST", body: { question, history: aiAgentConversation.slice(-10, -1) } });
+      await loadState();
       const index = aiAgentConversation.indexOf(workingMessage);
       if (index >= 0) aiAgentConversation[index] = { role: "assistant", text: result.answer, messages: result.messages || [] };
       renderConversation();
@@ -798,6 +820,13 @@ function renderAiAgentPanel(box) {
       renderConversation();
     } finally { button.disabled = false; }
   });
+}
+
+function aiAgentChatRow() {
+  const active = activeChatId === "ai-agent" ? " active" : "";
+  const latest = aiAgentConversation.at(-1);
+  const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
+  return `<div class="chat-row${active}"><button class="row chat-row__main" data-open-ai-agent-chat><div class="avatar">🤖</div><div class="row__body"><div class="row__title">ИИ-агент</div><div class="row__sub">${esc(latest?.text || (running ? "Автопилот работает" : "Личный помощник"))}</div></div><span class="chat-row__aside"><span class="badge">${running ? "Работает" : ""}</span></span></button></div>`;
 }
 
 function renderAutopostingPanel(box) {
@@ -1754,6 +1783,13 @@ function renderChat() {
     : 0;
   const shouldScrollToLatest = scrollChatToLatest || !previousMessages || previousDistanceToBottom < 8;
   scrollChatToLatest = false;
+  if (activeChatId === "ai-agent") {
+    panel.className = "chat-panel";
+    panel.style.cssText = "";
+    panel.innerHTML = `<div class="chat-body"><div class="messages" id="messages">${aiAgentConversationHtml()}</div></div>`;
+    bindAiAgentConversation(panel);
+    return;
+  }
   const chat = state.chats.find((item) => item.id === activeChatId);
   if (!chat) {
     const welcomeBrandLetters = ["C", "h", "a", "t", "‑", "P", "r", "o"].map((letter, index) => `<span aria-hidden="true" style="--letter-delay: ${index * 65}ms">${letter}</span>`).join("");

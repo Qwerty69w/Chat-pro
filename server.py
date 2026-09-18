@@ -2548,6 +2548,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ai-agent/ask" and method == "POST":
             self.require_user(user)
             return self.ask_ai_agent(con, user, body)
+        if path == "/api/ai-agent/control" and method == "POST":
+            self.require_user(user)
+            return self.control_ai_agent(con, user, body)
         if path == "/api/ai-agent/draft" and method == "POST":
             self.require_user(user)
             return self.draft_ai_agent_reply(con, user, body)
@@ -4358,6 +4361,9 @@ class Handler(BaseHTTPRequestHandler):
         return self.json({"ok": True, "answer": answer, "messages": messages})
 
     def ai_agent_run_requested_action(self, con, user, question):
+        result = self.ai_agent_publish_requested_message(con, user, question)
+        if result:
+            return result
         result = self.ai_agent_send_requested_message(con, user, question)
         if result:
             return result
@@ -4372,9 +4378,9 @@ class Handler(BaseHTTPRequestHandler):
                 (user["id"], settings["instruction"], settings["style"], 1, dumps(allowed), dumps(settings["templateMessageIds"]), now()),
             )
             return f"Автопилот включён для личного диалога с {chat['name']}. Агент будет отвечать на новые сообщения в этом чате."
-        channel_rule = re.match(r"^(?:веди|настрой\s+ведение|включи\s+ведение)\s+(?:канал\s+)?(?P<target>[^:]+?)\s*(?:из|от)\s+канал(?:а|ов)?\s*:\s*(?P<sources>.+)$", question, re.IGNORECASE)
+        channel_rule = re.match(r"^(?:веди|настрой\s+ведение|включи\s+ведение)\s+(?:(?:мой\s+)?канал|канал\s+(?P<target>[^:]+?))\s*(?:из|от)\s+канал(?:а|ов)?\s*:\s*(?P<sources>.+)$", question, re.IGNORECASE)
         if channel_rule:
-            target = self.ai_agent_channel_by_title(con, user["id"], channel_rule.group("target"), own=True)
+            target = self.ai_agent_owned_channel(con, user["id"], channel_rule.group("target"))
             source_names = [item.strip() for item in channel_rule.group("sources").split(",") if item.strip()]
             if not source_names:
                 raise ValueError("После двоеточия укажите хотя бы один канал-источник.")
@@ -4389,6 +4395,36 @@ class Handler(BaseHTTPRequestHandler):
             )
             return f"Ведение канала «{target['title']}» включено. Новые публикации из выбранных каналов будут автоматически публиковаться в нём."
         return None
+
+    def ai_agent_publish_requested_message(self, con, user, question):
+        request = re.match(r"^(?:опубликуй|опубликовать|размести|выложи|отправь|напиши|сделай\s+пост)\s+(?:в\s+)?(?:(?:мой\s+)?канал|канал\s+(?P<target>[^:]+))\s*:\s*(?P<text>.+)$", question, re.IGNORECASE)
+        if not request:
+            return None
+        channel = self.ai_agent_owned_channel(con, user["id"], request.group("target"))
+        text = " ".join(request.group("text").split())[:2_000]
+        if not text:
+            raise ValueError("После двоеточия напишите текст публикации.")
+        self.enforce_post_limit(con, user["id"])
+        self.enforce_message_limit(con, user["id"])
+        message_id = uid("msg")
+        con.execute(
+            "INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)",
+            (message_id, channel["id"], user["id"], f"🤖 Помощник: {text}", 1, 1, now()),
+        )
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), channel["id"]))
+        schedule_automated_comments(con, message_id, channel["id"])
+        return f"Опубликовал в канале «{channel['title']}»."
+
+    def ai_agent_owned_channel(self, con, user_id, title=None):
+        normalized_title = " ".join(str(title or "").split())
+        if normalized_title:
+            return self.ai_agent_channel_by_title(con, user_id, normalized_title, own=True)
+        rows = con.execute("SELECT id, title FROM chats WHERE type = 'channel' AND owner_id = ? ORDER BY updated_at DESC", (user_id,)).fetchall()
+        if not rows:
+            raise ValueError("У вас пока нет собственного канала для публикации.")
+        if len(rows) > 1:
+            raise ValueError("У вас несколько собственных каналов. Укажите название: «Опубликуй в канал Название: текст».")
+        return rows[0]
 
     def ai_agent_direct_chat_by_recipient(self, con, user_id, recipient):
         recipient_key = " ".join(str(recipient).replace("@", "").split()).casefold()
@@ -4417,6 +4453,28 @@ class Handler(BaseHTTPRequestHandler):
         if len(rows) > 1:
             raise ValueError(f"Нашёл несколько каналов «{title}». Переименуйте один из них или используйте уникальное название.")
         return rows[0]
+
+    def control_ai_agent(self, con, user, body):
+        enabled = bool(body.get("enabled", False))
+        settings = self.ai_agent_settings(con, user["id"])
+        allowed_chat_ids = settings["allowedChatIds"]
+        channel_rule = settings["channelRule"]
+        autopilot_enabled = enabled and bool(allowed_chat_ids)
+        channel_enabled = enabled and bool(channel_rule["targetChannelId"] and channel_rule["sourceChannelIds"])
+        con.execute(
+            """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
+               VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET autopilot_enabled=excluded.autopilot_enabled,updated_at=excluded.updated_at""",
+            (user["id"], settings["instruction"], settings["style"], int(autopilot_enabled), dumps(allowed_chat_ids), dumps(settings["templateMessageIds"]), now()),
+        )
+        if channel_rule["targetChannelId"] or channel_rule["sourceChannelIds"]:
+            con.execute(
+                """INSERT INTO ai_agent_channel_rules(user_id,enabled,target_channel_id,source_channel_ids_json,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,updated_at=excluded.updated_at""",
+                (user["id"], int(channel_enabled), channel_rule["targetChannelId"] or None, dumps(channel_rule["sourceChannelIds"]), now(), now()),
+            )
+        if enabled and not autopilot_enabled and not channel_enabled:
+            raise ValueError("Сначала включите автопилот для диалога или настройте ведение канала через запрос агенту.")
+        return self.json({"ok": True, "running": bool(autopilot_enabled or channel_enabled)})
 
     def ai_agent_send_requested_message(self, con, user, question):
         request = re.match(r"^(?:напиши|отправь|передай)\s+(?:сообщение\s+)?(?P<recipient>[^:]{2,80})\s*:\s*(?P<text>.+)$", question, re.IGNORECASE)
