@@ -780,15 +780,23 @@ function renderAiAgentPanel(box) {
     const button = form.querySelector("button");
     const question = String(new FormData(form).get("question") || "").trim();
     if (!question) return;
+    const workingMessage = { role: "assistant", text: "Работаю…" };
     try {
       button.disabled = true;
+      form.reset();
       aiAgentConversation.push({ role: "user", text: question });
+      aiAgentConversation.push(workingMessage);
       renderConversation();
       const result = await api("/api/ai-agent/ask", { method: "POST", body: { question, history: aiAgentConversation.slice(-10, -1) } });
-      aiAgentConversation.push({ role: "assistant", text: result.answer, messages: result.messages || [] });
-      form.reset();
+      const index = aiAgentConversation.indexOf(workingMessage);
+      if (index >= 0) aiAgentConversation[index] = { role: "assistant", text: result.answer, messages: result.messages || [] };
       renderConversation();
-    } catch (error) { aiAgentConversation.push({ role: "assistant", text: error.message }); renderConversation(); } finally { button.disabled = false; }
+    } catch (error) {
+      const index = aiAgentConversation.indexOf(workingMessage);
+      if (index >= 0) aiAgentConversation[index] = { role: "assistant", text: error.message };
+      else aiAgentConversation.push({ role: "assistant", text: error.message });
+      renderConversation();
+    } finally { button.disabled = false; }
   });
 }
 

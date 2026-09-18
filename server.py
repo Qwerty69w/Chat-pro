@@ -4337,9 +4337,9 @@ class Handler(BaseHTTPRequestHandler):
         question = " ".join(str(body.get("question", "")).split())[:2_000]
         if not question:
             raise ValueError("Напишите вопрос ИИ-агенту.")
-        sent = self.ai_agent_send_requested_message(con, user, question)
-        if sent:
-            return self.json({"ok": True, "answer": sent})
+        action_result = self.ai_agent_run_requested_action(con, user, question)
+        if action_result:
+            return self.json({"ok": True, "answer": action_result})
         raw_history = body.get("history", [])
         history = []
         if isinstance(raw_history, list):
@@ -4350,12 +4350,73 @@ class Handler(BaseHTTPRequestHandler):
                 if text:
                     history.append((item["role"], text))
         messages = self.ai_agent_messages_for_request(con, user["id"], question)
-        system = "Ты личный ИИ-помощник пользователя Chat-Pro. Помогаешь разобраться с функциями сайта и настройками. Если пользователь спрашивает, что ты умеешь, кратко перечисли: объяснение функций и уровней аккаунта, поиск по личным диалогам, подготовку черновиков ответов, настройку автопилота, шаблонов из «Избранного» и репостов в собственный канал из доступных подписок. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Если найденные сообщения не подходят или запрос неоднозначен, задай короткий уточняющий вопрос: имя собеседника, слова из сообщения или период. Не придумывай найденные сообщения. Объясняй, что для автопилота и репостов пользователь должен явно выбрать диалоги или каналы в настройках — не обещай включить эти действия только по текстовому сообщению. Можешь кратко подсказать преимущества и рекомендовать подходящий уровень аккаунта, только если это относится к вопросу. Не выдумывай возможности и не говори, что можешь писать за пользователя. Отвечай по-русски, ясно и кратко."
+        system = "Ты личный ИИ-помощник пользователя Chat-Pro. Помогаешь разобраться с функциями сайта и настройками. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Если найденные сообщения не подходят или запрос неоднозначен, задай короткий уточняющий вопрос: имя собеседника, слова из сообщения или период. Не придумывай найденные сообщения. Пользователь может дать прямую команду отправить сообщение, включить автопилот для личного диалога или настроить ведение собственного канала из доступных каналов-источников; такие команды выполняются сервером. Если команда не содержит получателя, название канала или текст, коротко попроси недостающие данные. Не выдумывай возможности. Отвечай по-русски, ясно и кратко."
         history_text = "\n".join(f"{'Пользователь' if role == 'user' else 'ИИ-агент'}: {text}" for role, text in history)
         found_text = "\n".join(f"Диалог «{item['chat_title']}»: {item['text'][:500]}" for item in messages)
         prompt = f"Предыдущий разговор:\n{history_text or 'нет'}\n\nНовый запрос: {question}\n\nНайденные сервером сообщения:\n{found_text or 'нет'}\n\nОтветь на новый запрос."
         answer = self.ai_completion(system, prompt, 320)
         return self.json({"ok": True, "answer": answer, "messages": messages})
+
+    def ai_agent_run_requested_action(self, con, user, question):
+        result = self.ai_agent_send_requested_message(con, user, question)
+        if result:
+            return result
+        autopilot = re.match(r"^(?:включи|запусти)\s+(?:в\s+)?автопилот\s+(?:для|в)\s+(?P<recipient>.{2,80})$", question, re.IGNORECASE)
+        if autopilot:
+            chat = self.ai_agent_direct_chat_by_recipient(con, user["id"], autopilot.group("recipient"))
+            settings = self.ai_agent_settings(con, user["id"])
+            allowed = list(dict.fromkeys([*settings["allowedChatIds"], chat["id"]]))[:50]
+            con.execute(
+                """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
+                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET autopilot_enabled=excluded.autopilot_enabled,allowed_chat_ids_json=excluded.allowed_chat_ids_json,updated_at=excluded.updated_at""",
+                (user["id"], settings["instruction"], settings["style"], 1, dumps(allowed), dumps(settings["templateMessageIds"]), now()),
+            )
+            return f"Автопилот включён для личного диалога с {chat['name']}. Агент будет отвечать на новые сообщения в этом чате."
+        channel_rule = re.match(r"^(?:веди|настрой\s+ведение|включи\s+ведение)\s+(?:канал\s+)?(?P<target>[^:]+?)\s*(?:из|от)\s+канал(?:а|ов)?\s*:\s*(?P<sources>.+)$", question, re.IGNORECASE)
+        if channel_rule:
+            target = self.ai_agent_channel_by_title(con, user["id"], channel_rule.group("target"), own=True)
+            source_names = [item.strip() for item in channel_rule.group("sources").split(",") if item.strip()]
+            if not source_names:
+                raise ValueError("После двоеточия укажите хотя бы один канал-источник.")
+            sources = [self.ai_agent_channel_by_title(con, user["id"], name) for name in source_names[:30]]
+            source_ids = list(dict.fromkeys(item["id"] for item in sources))
+            if target["id"] in source_ids:
+                raise ValueError("Свой канал нельзя выбрать источником.")
+            con.execute(
+                """INSERT INTO ai_agent_channel_rules(user_id,enabled,target_channel_id,source_channel_ids_json,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,target_channel_id=excluded.target_channel_id,source_channel_ids_json=excluded.source_channel_ids_json,updated_at=excluded.updated_at""",
+                (user["id"], 1, target["id"], dumps(source_ids), now(), now()),
+            )
+            return f"Ведение канала «{target['title']}» включено. Новые публикации из выбранных каналов будут автоматически публиковаться в нём."
+        return None
+
+    def ai_agent_direct_chat_by_recipient(self, con, user_id, recipient):
+        recipient_key = " ".join(str(recipient).replace("@", "").split()).casefold()
+        chats = con.execute(
+            """SELECT c.id, u.name, u.username FROM chats c JOIN chat_members mine ON mine.chat_id = c.id AND mine.user_id = ?
+               JOIN chat_members peer ON peer.chat_id = c.id AND peer.user_id != ? JOIN users u ON u.id = peer.user_id
+               WHERE c.type = 'direct' AND (casefold(u.name) = ? OR casefold(u.username) = ?) ORDER BY c.updated_at DESC""",
+            (user_id, user_id, recipient_key, recipient_key),
+        ).fetchall()
+        unique_chats = {row["id"]: row for row in chats}
+        if not unique_chats:
+            raise ValueError(f"Не нашёл доступный личный диалог с «{recipient}». Укажите точное имя или @username.")
+        if len(unique_chats) > 1:
+            raise ValueError(f"Нашёл несколько личных диалогов с «{recipient}». Укажите точный @username.")
+        return next(iter(unique_chats.values()))
+
+    def ai_agent_channel_by_title(self, con, user_id, title, own=False):
+        title_key = " ".join(str(title).split()).casefold()
+        rows = con.execute(
+            """SELECT c.id, c.title FROM chats c JOIN chat_members member ON member.chat_id = c.id AND member.user_id = ?
+               WHERE c.type = 'channel' AND casefold(c.title) = ?""" + (" AND c.owner_id = ?" if own else ""),
+            (user_id, title_key, user_id) if own else (user_id, title_key),
+        ).fetchall()
+        if not rows:
+            raise ValueError(f"Не нашёл {'ваш' if own else 'доступный'} канал «{title}». Укажите точное название.")
+        if len(rows) > 1:
+            raise ValueError(f"Нашёл несколько каналов «{title}». Переименуйте один из них или используйте уникальное название.")
+        return rows[0]
 
     def ai_agent_send_requested_message(self, con, user, question):
         request = re.match(r"^(?:напиши|отправь|передай)\s+(?:сообщение\s+)?(?P<recipient>[^:]{2,80})\s*:\s*(?P<text>.+)$", question, re.IGNORECASE)
