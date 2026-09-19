@@ -815,6 +815,15 @@ def init_db() -> None:
               processed_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS ai_agent_global_instructions (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              instruction TEXT NOT NULL,
+              created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS ai_agent_channel_rules (
               user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
               enabled INTEGER NOT NULL DEFAULT 0,
@@ -2549,6 +2558,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ai-agent/settings" and method == "POST":
             self.require_user(user)
             return self.update_ai_agent_settings(con, user, body)
+        if path == "/api/ai-agent/global-instructions" and method == "POST":
+            self.require_user(user)
+            return self.update_ai_agent_global_instruction(con, user, body)
+        if path == "/api/ai-agent/global-instructions/delete" and method == "POST":
+            self.require_user(user)
+            return self.delete_ai_agent_global_instruction(con, user, body)
         if path == "/api/ai-agent/ask" and method == "POST":
             self.require_user(user)
             return self.ask_ai_agent(con, user, body)
@@ -4216,7 +4231,7 @@ class Handler(BaseHTTPRequestHandler):
             "rewritePosts": bool(channel_rule["rewrite_posts"]) if channel_rule else False,
         }
         if not row:
-            return {"instruction": "", "style": "friendly", "autopilotEnabled": False, "allowedChatIds": [], "templateMessageIds": [], "channelRule": channel_data}
+            return {"instruction": "", "style": "friendly", "autopilotEnabled": False, "allowedChatIds": [], "templateMessageIds": [], "channelRule": channel_data, "globalInstructions": self.ai_agent_global_instructions(con) if self.is_ai_agent_global_manager(con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()) else []}
         return {
             "instruction": row["instruction"],
             "style": row["style"],
@@ -4224,7 +4239,55 @@ class Handler(BaseHTTPRequestHandler):
             "allowedChatIds": loads(row["allowed_chat_ids_json"], []),
             "templateMessageIds": loads(row["template_message_ids_json"], []),
             "channelRule": channel_data,
+            "globalInstructions": self.ai_agent_global_instructions(con) if self.is_ai_agent_global_manager(con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()) else [],
         }
+
+    def is_ai_agent_global_manager(self, user) -> bool:
+        return bool(user) and str(user["username"] or "").casefold() == "andrei"
+
+    def ai_agent_global_instructions(self, con):
+        return [dict(row) for row in con.execute(
+            "SELECT id, title, instruction, updated_at FROM ai_agent_global_instructions ORDER BY updated_at DESC, created_at DESC"
+        ).fetchall()]
+
+    def ai_agent_global_instruction_text(self, con) -> str:
+        return "\n".join(f"- {item['title']}: {item['instruction']}" for item in self.ai_agent_global_instructions(con))
+
+    def update_ai_agent_global_instruction(self, con, user, body):
+        if not self.is_ai_agent_global_manager(user):
+            raise PermissionError("Глобальные сценарии ИИ доступны только @andrei.")
+        instruction_id = str(body.get("id", "")).strip()
+        title = " ".join(str(body.get("title", "")).split())[:120]
+        instruction = " ".join(str(body.get("instruction", "")).split())[:3_000]
+        if not title or not instruction:
+            raise ValueError("Укажите название и правило для ИИ.")
+        timestamp = now()
+        if instruction_id:
+            updated = con.execute("UPDATE ai_agent_global_instructions SET title = ?, instruction = ?, updated_at = ? WHERE id = ?", (title, instruction, timestamp, instruction_id)).rowcount
+            if not updated:
+                raise ValueError("Глобальный сценарий не найден.")
+            return self.json({"ok": True, "message": f"Глобальный сценарий «{title}» обновлён."})
+        con.execute("INSERT INTO ai_agent_global_instructions(id,title,instruction,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?)", (uid("ai_global"), title, instruction, user["id"], timestamp, timestamp))
+        return self.json({"ok": True, "message": f"Глобальный сценарий «{title}» добавлен."})
+
+    def delete_ai_agent_global_instruction(self, con, user, body):
+        if not self.is_ai_agent_global_manager(user):
+            raise PermissionError("Глобальные сценарии ИИ доступны только @andrei.")
+        instruction_id = str(body.get("id", "")).strip()
+        if not instruction_id or not con.execute("DELETE FROM ai_agent_global_instructions WHERE id = ?", (instruction_id,)).rowcount:
+            raise ValueError("Глобальный сценарий не найден.")
+        return self.json({"ok": True, "message": "Глобальный сценарий удалён."})
+
+    def ai_agent_global_command(self, con, user, question):
+        if not self.is_ai_agent_global_manager(user):
+            return None
+        match = re.match(r"^(?:добавь|создай|обнови)\s+(?:глобальную\s+)?(?:функцию|сценарий|правило)\s*:\s*(?P<title>[^:]{2,120})\s*:\s*(?P<instruction>.+)$", question, re.IGNORECASE)
+        if not match:
+            return None
+        title = " ".join(match.group("title").split())
+        instruction = " ".join(match.group("instruction").split())[:3_000]
+        con.execute("INSERT INTO ai_agent_global_instructions(id,title,instruction,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?)", (uid("ai_global"), title, instruction, user["id"], now(), now()))
+        return f"Глобальный сценарий «{title}» добавлен. Он применяется к новым запросам и ответам ИИ у всех пользователей, но не расширяет права доступа к чатам и каналам."
 
     def require_pro_account_level(self, con, user_id):
         data = self.account_level_data(con, user_id)
@@ -4345,6 +4408,9 @@ class Handler(BaseHTTPRequestHandler):
         question = " ".join(str(body.get("question", "")).split())[:2_000]
         if not question:
             raise ValueError("Напишите вопрос ИИ-агенту.")
+        global_result = self.ai_agent_global_command(con, user, question)
+        if global_result:
+            return self.json({"ok": True, "answer": global_result})
         action_result = self.ai_agent_run_requested_action(con, user, question)
         if action_result:
             return self.json({"ok": True, "answer": action_result})
@@ -4358,7 +4424,8 @@ class Handler(BaseHTTPRequestHandler):
                 if text:
                     history.append((item["role"], text))
         messages = self.ai_agent_messages_for_request(con, user["id"], question)
-        system = "Ты ИИ-администратор пользователя Chat-Pro. Помогаешь управлять личными диалогами и каналами. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Не придумывай найденные сообщения. Сервер выполняет прямые команды на отправку сообщений, публикацию, автопилот личного диалога, ведение доступного канала и RSS-автопостинг. Для RSS нужны публичная RSS-ссылка и название канала-получателя; если данных нет, коротко запроси их. Для чужих Telegram-каналов сообщи, что нужен официальный бот с правами администратора источника; не обещай подключение только по ссылке. Если команда не содержит получателя, названия канала или ссылки, коротко попроси недостающие данные. Не выдумывай возможности. Отвечай по-русски, ясно и кратко."
+        global_rules = self.ai_agent_global_instruction_text(con)
+        system = "Ты ИИ-администратор пользователя Chat-Pro. Помогаешь управлять личными диалогами и каналами. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Не придумывай найденные сообщения. Сервер выполняет прямые команды на отправку сообщений, публикацию, автопилот личного диалога, ведение доступного канала и RSS-автопостинг. Для RSS нужны публичная RSS-ссылка и название канала-получателя; если данных нет, коротко запроси их. Для чужих Telegram-каналов сообщи, что нужен официальный бот с правами администратора источника; не обещай подключение только по ссылке. Если команда не содержит получателя, названия канала или ссылки, коротко попроси недостающие данные. Не выдумывай возможности. Глобальные сценарии — это правила ответа, а не разрешение обходить права доступа или выполнять код. Отвечай по-русски, ясно и кратко." + (f"\n\nГлобальные сценарии от @andrei:\n{global_rules}" if global_rules else "")
         history_text = "\n".join(f"{'Пользователь' if role == 'user' else 'ИИ-агент'}: {text}" for role, text in history)
         found_text = "\n".join(f"Диалог «{item['chat_title']}»: {item['text'][:500]}" for item in messages)
         prompt = f"Предыдущий разговор:\n{history_text or 'нет'}\n\nНовый запрос: {question}\n\nНайденные сервером сообщения:\n{found_text or 'нет'}\n\nОтветь на новый запрос."
@@ -4654,7 +4721,7 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("В диалоге пока нет сообщений для подготовки ответа.")
         context = "\n".join(f"{'Пользователь' if item['sender_id'] == user['id'] else 'Собеседник'}: {item['text'][:500]}" for item in reversed(recent))
         system = "Ты создаёшь черновик ответа для владельца аккаунта в личном диалоге. Не рекламируй Chat-Pro, его уровни или подписки. Не утверждай, что являешься человеком. Не добавляй пометку об ИИ: её добавит интерфейс. Не обещай то, чего нет в инструкции."
-        prompt = f"Инструкция владельца: {settings['instruction'] or 'Вежливо помогай собеседнику.'}\nСтиль: {settings['style']}\n\nДиалог:\n{context}\n\nВерни только один короткий ответ на последнее сообщение собеседника."
+        prompt = f"Глобальные сценарии: {self.ai_agent_global_instruction_text(con) or 'нет'}\nИнструкция владельца: {settings['instruction'] or 'Вежливо помогай собеседнику.'}\nСтиль: {settings['style']}\n\nДиалог:\n{context}\n\nВерни только один короткий ответ на последнее сообщение собеседника."
         return self.json({"ok": True, "draft": self.ai_completion(system, prompt, 220)})
 
     def process_ai_agent_autopilots(self, con):
@@ -4692,7 +4759,7 @@ class Handler(BaseHTTPRequestHandler):
                 template_ids = loads(row["template_message_ids_json"], [])
                 templates = [item["text"] for item in con.execute(f"SELECT text FROM messages WHERE id IN ({','.join('?' for _ in template_ids)})", template_ids).fetchall()] if template_ids else []
                 system = "Ты рабочий ИИ-помощник в личном диалоге. Создаёшь безопасный короткий ответ по инструкции владельца. Никогда не рекламируй Chat-Pro, его подписки, уровни или функции. Не выдавай себя за человека. Не обещай невозможное."
-                prompt = f"Инструкция владельца: {row['instruction'] or 'Вежливо ответь по теме.'}\nСтиль: {row['style']}\nРазрешённые текстовые шаблоны: {' | '.join(templates[:5]) or 'нет'}\n\nДиалог:\n{context}\n\nВерни только один ответ на последнее сообщение собеседника."
+                prompt = f"Глобальные сценарии: {self.ai_agent_global_instruction_text(con) or 'нет'}\nИнструкция владельца: {row['instruction'] or 'Вежливо ответь по теме.'}\nСтиль: {row['style']}\nРазрешённые текстовые шаблоны: {' | '.join(templates[:5]) or 'нет'}\n\nДиалог:\n{context}\n\nВерни только один ответ на последнее сообщение собеседника."
                 with chat_activities_lock:
                     chat_activities[(row["chat_id"], owner_id)] = ("typing", time.monotonic() + CHAT_ACTIVITY_TTL)
                 reply = self.ai_completion(system, prompt, 220)

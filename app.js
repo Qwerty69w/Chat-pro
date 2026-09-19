@@ -775,8 +775,51 @@ function renderArchiveList(box) {
 }
 
 function renderAiAgentPanel(box) {
-  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-администратор</b><small>Ваш помощник по сообщениям и управлению каналами.</small></div><span class="badge">Полный доступ</span></div><section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><p class="muted">Отправляю сообщения, подключаю RSS-автопостинг и веду доступные вам каналы. Для сайта пришлите RSS-ссылку и название канала.</p></section>${aiAgentConversationHtml()}</section>`;
+  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-администратор</b><small>Ваш помощник по сообщениям и управлению каналами.</small></div><span class="badge">Полный доступ</span></div><section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><p class="muted">Отправляю сообщения, подключаю RSS-автопостинг и веду доступные вам каналы. Для сайта пришлите RSS-ссылку и название канала.</p></section>${aiAgentSettingsHtml()}${aiAgentConversationHtml()}</section>`;
+  bindAiAgentSettings(box);
   bindAiAgentConversation(box);
+}
+
+function aiAgentSettingsHtml() {
+  const settings = state.aiAgent || {};
+  const directChats = visibleChats(false).filter((chat) => chat.type === "direct");
+  const allowed = new Set(settings.allowedChatIds || []);
+  const isGlobalManager = String(state.me?.username || "").toLowerCase() === "andrei";
+  const globalItems = (settings.globalInstructions || []).map((item) => `<article class="ai-agent-global-item"><div><b>${esc(item.title)}</b><span>${esc(item.instruction)}</span></div><div><button class="button small" type="button" data-ai-global-edit="${esc(item.id)}">Изменить</button><button class="button small danger" type="button" data-ai-global-delete="${esc(item.id)}">Удалить</button></div></article>`).join("");
+  return `<section class="card ai-agent-settings"><div class="panel-title"><div><b>Мои правила общения</b><small>ИИ использует их только в ваших личных диалогах и отвечает от вашего имени.</small></div></div><form data-ai-agent-settings><label>Как общаться от вашего имени<textarea name="instruction" maxlength="3000" placeholder="Например: отвечай вежливо, кратко; по заказам уточняй номер и срок.">${esc(settings.instruction || "")}</textarea></label><label>Стиль<select name="style"><option value="friendly" ${settings.style === "friendly" ? "selected" : ""}>Дружелюбный</option><option value="business" ${settings.style === "business" ? "selected" : ""}>Деловой</option><option value="brief" ${settings.style === "brief" ? "selected" : ""}>Краткий</option></select></label><fieldset><legend>Диалоги для автопилота</legend><small>Автопилот отвечает только в отмеченных личных диалогах.</small>${directChats.map((chat) => `<label class="consent"><input type="checkbox" name="allowedChatIds" value="${esc(chat.id)}" ${allowed.has(chat.id) ? "checked" : ""}><span>${esc(chatMeta(chat).title)}</span></label>`).join("") || '<p class="muted">Личных диалогов пока нет.</p>'}</fieldset><label class="consent"><input name="autopilotEnabled" type="checkbox" ${settings.autopilotEnabled ? "checked" : ""}><span>Включить автопилот в отмеченных диалогах</span></label><button class="button small" type="submit">Сохранить мои правила</button></form></section>${isGlobalManager ? `<section class="card ai-agent-settings"><div class="panel-title"><div><b>Глобальные сценарии ИИ</b><small>Только для @andrei. Применяются ко всем, но не дают ИИ доступа к чужим данным и не исполняют код.</small></div></div><form data-ai-global-form><input type="hidden" name="id"><label>Название сценария<input name="title" maxlength="120" placeholder="Например: Ответы о доставке" required></label><label>Правило для ИИ<textarea name="instruction" maxlength="3000" placeholder="Например: если спрашивают о доставке, объясняй сроки и предлагай уточнить номер заказа." required></textarea></label><button class="button small" type="submit">Добавить глобальный сценарий</button></form><div class="ai-agent-global-list">${globalItems || '<p class="muted">Глобальных сценариев пока нет.</p>'}</div><p class="muted">В диалоге можно также написать: «добавь глобальный сценарий: Название: правило».</p></section>` : ""}`;
+}
+
+function bindAiAgentSettings(root) {
+  root.querySelector("[data-ai-agent-settings]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    try {
+      await api("/api/ai-agent/settings", { method: "POST", body: { instruction: data.get("instruction"), style: data.get("style"), allowedChatIds: data.getAll("allowedChatIds"), templateMessageIds: state.aiAgent?.templateMessageIds || [], autopilotEnabled: form.elements.autopilotEnabled.checked } });
+      await loadState(); renderApp(); toast("Ваши правила общения сохранены.");
+    } catch (error) { toast(error.message, true); }
+  });
+  const globalForm = root.querySelector("[data-ai-global-form]");
+  globalForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(globalForm);
+    try {
+      const result = await api("/api/ai-agent/global-instructions", { method: "POST", body: { id: data.get("id"), title: data.get("title"), instruction: data.get("instruction") } });
+      await loadState(); renderApp(); toast(result.message);
+    } catch (error) { toast(error.message, true); }
+  });
+  root.querySelectorAll("[data-ai-global-edit]").forEach((button) => button.addEventListener("click", () => {
+    const item = (state.aiAgent?.globalInstructions || []).find((entry) => entry.id === button.dataset.aiGlobalEdit);
+    if (!item || !globalForm) return;
+    globalForm.elements.id.value = item.id; globalForm.elements.title.value = item.title; globalForm.elements.instruction.value = item.instruction;
+    globalForm.querySelector("button[type=submit]").textContent = "Сохранить глобальный сценарий";
+    globalForm.scrollIntoView({ behavior: "smooth", block: "center" });
+  }));
+  root.querySelectorAll("[data-ai-global-delete]").forEach((button) => button.addEventListener("click", async () => {
+    if (!window.confirm("Удалить глобальный сценарий ИИ?")) return;
+    try { const result = await api("/api/ai-agent/global-instructions/delete", { method: "POST", body: { id: button.dataset.aiGlobalDelete } }); await loadState(); renderApp(); toast(result.message); }
+    catch (error) { toast(error.message, true); }
+  }));
 }
 
 function aiAgentConversationHtml() {
