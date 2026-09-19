@@ -824,6 +824,16 @@ def init_db() -> None:
               updated_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS ai_agent_conversation_messages (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+              text TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ai_agent_conversation_messages_user_created
+              ON ai_agent_conversation_messages(user_id, created_at, id);
+
             CREATE TABLE IF NOT EXISTS ai_agent_channel_rules (
               user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
               enabled INTEGER NOT NULL DEFAULT 0,
@@ -3347,7 +3357,8 @@ class Handler(BaseHTTPRequestHandler):
         activities = self.visible_chat_activities(con, chats, user["id"])
         packages = [{**item, "originalPrice": item["price"], "price": discounted_price(item["price"], star_package_discount)} for item in yookassa_star_packages(con)]
         ai_agent = self.ai_agent_settings(con, user["id"])
-        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "activities": activities, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "vkChannelLinks": vk_channel_links, "channelComments": channel_comments, "channelStarPurchases": channel_star_purchases, "notifications": notifications, "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "aiAgent": ai_agent, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions, "mediaS3Enabled": s3_is_configured(), "yookassa": {"available": yookassa_configured(), "discountPercent": star_package_discount, "packages": packages}})
+        ai_agent_conversation = self.ai_agent_conversation(con, user["id"])
+        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "activities": activities, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "vkChannelLinks": vk_channel_links, "channelComments": channel_comments, "channelStarPurchases": channel_star_purchases, "notifications": notifications, "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "aiAgent": ai_agent, "aiAgentConversation": ai_agent_conversation, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions, "mediaS3Enabled": s3_is_configured(), "yookassa": {"available": yookassa_configured(), "discountPercent": star_package_discount, "packages": packages}})
 
     def my_reactions(self, con, user):
         reactions = []
@@ -4221,6 +4232,22 @@ class Handler(BaseHTTPRequestHandler):
             chat_activities.pop((chat_id, user["id"]), None)
         return self.json({"ok": True, "messageId": msg_id})
 
+    def ai_agent_conversation(self, con, user_id):
+        rows = con.execute(
+            "SELECT role, text, created_at FROM ai_agent_conversation_messages WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 300",
+            (user_id,),
+        ).fetchall()
+        return [{"role": row["role"], "text": row["text"], "createdAt": row["created_at"]} for row in reversed(rows)]
+
+    def add_ai_agent_conversation_message(self, con, user_id, role, text):
+        message = " ".join(str(text or "").split())[:3_000]
+        if not message or role not in {"user", "assistant"}:
+            return
+        con.execute(
+            "INSERT INTO ai_agent_conversation_messages(id,user_id,role,text,created_at) VALUES (?,?,?,?,?)",
+            (uid("ai_conversation"), user_id, role, message, now()),
+        )
+
     def ai_agent_settings(self, con, user_id):
         row = con.execute("SELECT * FROM ai_agent_settings WHERE user_id = ?", (user_id,)).fetchone()
         channel_rule = con.execute("SELECT * FROM ai_agent_channel_rules WHERE user_id = ?", (user_id,)).fetchone()
@@ -4408,11 +4435,14 @@ class Handler(BaseHTTPRequestHandler):
         question = " ".join(str(body.get("question", "")).split())[:2_000]
         if not question:
             raise ValueError("Напишите вопрос ИИ-агенту.")
+        self.add_ai_agent_conversation_message(con, user["id"], "user", question)
         global_result = self.ai_agent_global_command(con, user, question)
         if global_result:
+            self.add_ai_agent_conversation_message(con, user["id"], "assistant", global_result)
             return self.json({"ok": True, "answer": global_result})
         action_result = self.ai_agent_run_requested_action(con, user, question)
         if action_result:
+            self.add_ai_agent_conversation_message(con, user["id"], "assistant", action_result)
             return self.json({"ok": True, "answer": action_result})
         raw_history = body.get("history", [])
         history = []
@@ -4430,6 +4460,7 @@ class Handler(BaseHTTPRequestHandler):
         found_text = "\n".join(f"Диалог «{item['chat_title']}»: {item['text'][:500]}" for item in messages)
         prompt = f"Предыдущий разговор:\n{history_text or 'нет'}\n\nНовый запрос: {question}\n\nНайденные сервером сообщения:\n{found_text or 'нет'}\n\nОтветь на новый запрос."
         answer = self.ai_completion(system, prompt, 320)
+        self.add_ai_agent_conversation_message(con, user["id"], "assistant", answer)
         return self.json({"ok": True, "answer": answer, "messages": messages})
 
     def ai_agent_run_requested_action(self, con, user, question):

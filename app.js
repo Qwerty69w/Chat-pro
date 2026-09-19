@@ -349,6 +349,7 @@ async function loadState() {
   state.channelStarPurchases ||= [];
   state.notifications ||= [];
   state.activities ||= {};
+  aiAgentConversation = Array.isArray(state.aiAgentConversation) ? state.aiAgentConversation : [];
   document.body.classList.toggle("theme-dark", state.me.theme === "dark");
   document.documentElement.style.setProperty("--primary", state.me.siteColor || "#2aabee");
   document.documentElement.style.setProperty("--primary-dark", colorShade(state.me.siteColor || "#2aabee", -20));
