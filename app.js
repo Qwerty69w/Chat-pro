@@ -770,19 +770,19 @@ function renderArchiveList(box) {
 }
 
 function renderAiAgentPanel(box) {
-  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-агент</b><small>Ваш личный помощник в Chat‑Pro.</small></div><span class="badge">Полный доступ</span></div><section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><p class="muted">Напишите команду или вопрос. Агент может отправить сообщение, включить автопилот и вести ваш канал.</p></section>${aiAgentConversationHtml()}</section>`;
+  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-администратор</b><small>Ваш помощник по сообщениям и управлению каналами.</small></div><span class="badge">Полный доступ</span></div><section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><p class="muted">Отправляю сообщения, подключаю RSS-автопостинг и веду доступные вам каналы. Для сайта пришлите RSS-ссылку и название канала.</p></section>${aiAgentConversationHtml()}</section>`;
   bindAiAgentConversation(box);
 }
 
 function aiAgentConversationHtml() {
   const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
-  return `<section class="card ai-agent-help"><div class="panel-title"><div><b>Диалог с ИИ-агентом</b><small>${running ? "Автоматические задачи выполняются" : "Автоматические задачи остановлены"}</small></div><button class="button small" type="button" data-ai-agent-control>${running ? "Остановить" : "Возобновить"}</button></div><div class="ai-agent-conversation${aiAgentConversation.length ? "" : " hidden"}" data-ai-agent-conversation></div><form data-ai-agent-ask><textarea name="question" maxlength="2000" placeholder="Например: опубликуй в мой канал: Доброе утро!"></textarea><button class="button primary small" type="submit">Отправить</button></form></section>`;
+  return `<section class="card ai-agent-help"><div class="panel-title"><div><b>Диалог с ИИ-администратором</b><small>${running ? "Автоматические задачи выполняются" : "Автоматические задачи остановлены"}</small></div><button class="button small" type="button" data-ai-agent-control>${running ? "Остановить" : "Возобновить"}</button></div><div class="ai-agent-conversation${aiAgentConversation.length ? "" : " hidden"}" data-ai-agent-conversation></div><form data-ai-agent-ask><textarea name="question" maxlength="2000" placeholder="Например: настрой автопостинг с сайта https://site.ru/feed.xml в канал Мой канал"></textarea><button class="button primary small" type="submit">Отправить</button></form></section>`;
 }
 
 function bindAiAgentConversation(root) {
   const conversation = root.querySelector("[data-ai-agent-conversation]");
   const renderConversation = () => {
-    conversation.innerHTML = aiAgentConversation.map((item) => `<article class="ai-agent-message ai-agent-message--${item.role}"><b>${item.role === "user" ? "Вы" : "ИИ-агент"}</b><span>${esc(item.text)}</span>${item.messages?.length ? `<div class="ai-agent-found-messages">${item.messages.map((message) => `<button type="button" data-ai-agent-open-message="${esc(message.id)}" data-ai-agent-chat="${esc(message.chat_id)}"><b>${esc(message.chat_title)}</b><span>${esc(message.text).slice(0, 220)}</span></button>`).join("")}</div>` : ""}</article>`).join("");
+    conversation.innerHTML = aiAgentConversation.map((item) => `<article class="ai-agent-message ai-agent-message--${item.role}"><b>${item.role === "user" ? "Вы" : "ИИ-администратор"}</b><span>${esc(item.text)}</span>${item.messages?.length ? `<div class="ai-agent-found-messages">${item.messages.map((message) => `<button type="button" data-ai-agent-open-message="${esc(message.id)}" data-ai-agent-chat="${esc(message.chat_id)}"><b>${esc(message.chat_title)}</b><span>${esc(message.text).slice(0, 220)}</span></button>`).join("")}</div>` : ""}</article>`).join("");
     conversation.classList.toggle("hidden", !aiAgentConversation.length);
     conversation.querySelectorAll("[data-ai-agent-open-message]").forEach((item) => item.addEventListener("click", () => openSearchMessage(item.dataset.aiAgentChat, item.dataset.aiAgentOpenMessage, item.textContent)));
     conversation.scrollTop = conversation.scrollHeight;
@@ -827,11 +827,11 @@ function aiAgentChatRow() {
   const active = activeChatId === "ai-agent" ? " active" : "";
   const latest = aiAgentConversation.at(-1);
   const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
-  return `<div class="chat-row${active}"><button class="row chat-row__main" data-open-ai-agent-chat>${aiAgentAvatarHtml()}<div class="row__body"><div class="row__title">ИИ-агент</div><div class="row__sub">${esc(latest?.text || (running ? "Автопилот работает" : "Личный помощник"))}</div></div><span class="chat-row__aside"><span class="badge">${running ? "Работает" : ""}</span></span></button><button class="chat-menu-button" type="button" data-ai-agent-menu title="Действия с ИИ-агентом" aria-label="Действия с ИИ-агентом">⋮</button></div>`;
+  return `<div class="chat-row${active}"><button class="row chat-row__main" data-open-ai-agent-chat>${aiAgentAvatarHtml()}<div class="row__body"><div class="row__title">ИИ-администратор</div><div class="row__sub">${esc(latest?.text || (running ? "Автопилот работает" : "Администратор каналов"))}</div></div><span class="chat-row__aside"><span class="badge">${running ? "Работает" : ""}</span></span></button><button class="chat-menu-button" type="button" data-ai-agent-menu title="Действия с ИИ-администратором" aria-label="Действия с ИИ-администратором">⋮</button></div>`;
 }
 
 function aiAgentAvatarHtml() {
-  return '<div class="avatar ai-agent-avatar" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><defs><linearGradient id="ai-agent-gradient" x1="4" y1="3" x2="20" y2="21" gradientUnits="userSpaceOnUse"><stop stop-color="#63E6FF"/><stop offset="1" stop-color="#5C76FF"/></linearGradient></defs><rect x="3" y="4" width="18" height="16" rx="6" fill="url(#ai-agent-gradient)"/><path d="M12 2.5v2M8.5 11h.01M15.5 11h.01M8.5 15c2.1 1.55 4.9 1.55 7 0" stroke="white" stroke-width="1.7" stroke-linecap="round"/><path d="M2.5 11H4M20 11h1.5" stroke="#8DEBFF" stroke-width="1.6" stroke-linecap="round"/></svg></div>';
+  return '<div class="avatar ai-agent-avatar" aria-hidden="true">И</div>';
 }
 
 function openAiAgentMenu(anchor) {

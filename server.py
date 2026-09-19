@@ -820,6 +820,7 @@ def init_db() -> None:
               enabled INTEGER NOT NULL DEFAULT 0,
               target_channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
               source_channel_ids_json TEXT NOT NULL DEFAULT '[]',
+              rewrite_posts INTEGER NOT NULL DEFAULT 0,
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL
             );
@@ -1381,6 +1382,9 @@ def init_db() -> None:
             con.execute("ALTER TABLE users ADD COLUMN site_background TEXT NOT NULL DEFAULT 'default'")
         if "site_background_data" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN site_background_data TEXT")
+        channel_rule_columns = {row["name"] for row in con.execute("PRAGMA table_info(ai_agent_channel_rules)").fetchall()}
+        if "rewrite_posts" not in channel_rule_columns:
+            con.execute("ALTER TABLE ai_agent_channel_rules ADD COLUMN rewrite_posts INTEGER NOT NULL DEFAULT 0")
         if "chat_background" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN chat_background TEXT NOT NULL DEFAULT 'cyan'")
         if "dialog_bubble_style" not in columns:
@@ -4212,6 +4216,7 @@ class Handler(BaseHTTPRequestHandler):
             "enabled": bool(channel_rule["enabled"]) if channel_rule else False,
             "targetChannelId": channel_rule["target_channel_id"] if channel_rule else "",
             "sourceChannelIds": loads(channel_rule["source_channel_ids_json"], []) if channel_rule else [],
+            "rewritePosts": bool(channel_rule["rewrite_posts"]) if channel_rule else False,
         }
         if not row:
             return {"instruction": "", "style": "friendly", "autopilotEnabled": False, "allowedChatIds": [], "templateMessageIds": [], "channelRule": channel_data}
@@ -4291,9 +4296,9 @@ class Handler(BaseHTTPRequestHandler):
         source_channel_ids = list(dict.fromkeys(str(value) for value in source_channel_ids if isinstance(value, str)))[:30]
         enabled = bool(body.get("enabled", False))
         if target_channel_id:
-            target = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (target_channel_id,)).fetchone()
-            if not target or target["type"] != "channel" or target["owner_id"] != user["id"]:
-                raise ValueError("Выберите собственный канал для публикаций.")
+            target = con.execute("SELECT type FROM chats WHERE id = ?", (target_channel_id,)).fetchone()
+            if not target or target["type"] != "channel" or self.chat_member_role(con, target_channel_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+                raise ValueError("Выберите канал, в котором вы создатель, администратор или автор.")
         for channel_id in source_channel_ids:
             source = con.execute("SELECT type FROM chats WHERE id = ?", (channel_id,)).fetchone()
             if not source or source["type"] != "channel" or not self.has_chat_access(con, user["id"], channel_id):
@@ -4356,7 +4361,7 @@ class Handler(BaseHTTPRequestHandler):
                 if text:
                     history.append((item["role"], text))
         messages = self.ai_agent_messages_for_request(con, user["id"], question)
-        system = "Ты личный ИИ-помощник пользователя Chat-Pro. Помогаешь разобраться с функциями сайта и настройками. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Если найденные сообщения не подходят или запрос неоднозначен, задай короткий уточняющий вопрос: имя собеседника, слова из сообщения или период. Не придумывай найденные сообщения. Пользователь может дать прямую команду отправить сообщение, включить автопилот для личного диалога или настроить ведение собственного канала из доступных каналов-источников; такие команды выполняются сервером. Если команда не содержит получателя, название канала или текст, коротко попроси недостающие данные. Не выдумывай возможности. Отвечай по-русски, ясно и кратко."
+        system = "Ты ИИ-администратор пользователя Chat-Pro. Помогаешь управлять личными диалогами и каналами. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Не придумывай найденные сообщения. Сервер выполняет прямые команды на отправку сообщений, публикацию, автопилот личного диалога, ведение доступного канала и RSS-автопостинг. Для RSS нужны публичная RSS-ссылка и название канала-получателя; если данных нет, коротко запроси их. Для чужих Telegram-каналов сообщи, что нужен официальный бот с правами администратора источника; не обещай подключение только по ссылке. Если команда не содержит получателя, названия канала или ссылки, коротко попроси недостающие данные. Не выдумывай возможности. Отвечай по-русски, ясно и кратко."
         history_text = "\n".join(f"{'Пользователь' if role == 'user' else 'ИИ-агент'}: {text}" for role, text in history)
         found_text = "\n".join(f"Диалог «{item['chat_title']}»: {item['text'][:500]}" for item in messages)
         prompt = f"Предыдущий разговор:\n{history_text or 'нет'}\n\nНовый запрос: {question}\n\nНайденные сервером сообщения:\n{found_text or 'нет'}\n\nОтветь на новый запрос."
@@ -4364,6 +4369,9 @@ class Handler(BaseHTTPRequestHandler):
         return self.json({"ok": True, "answer": answer, "messages": messages})
 
     def ai_agent_run_requested_action(self, con, user, question):
+        result = self.ai_agent_configure_rss_autoposting(con, user, question)
+        if result:
+            return result
         result = self.ai_agent_publish_latest_saved_circle(con, user, question)
         if result:
             return result
@@ -4386,7 +4394,7 @@ class Handler(BaseHTTPRequestHandler):
             return f"Автопилот включён для личного диалога с {chat['name']}. Агент будет отвечать на новые сообщения в этом чате."
         channel_rule = re.match(r"^(?:веди|настрой\s+ведение|включи\s+ведение)\s+(?:(?:мой\s+)?канал|канал\s+(?P<target>[^:]+?))\s*(?:из|от)\s+канал(?:а|ов)?\s*:\s*(?P<sources>.+)$", question, re.IGNORECASE)
         if channel_rule:
-            target = self.ai_agent_owned_channel(con, user["id"], channel_rule.group("target"))
+            target = self.ai_agent_managed_channel_by_title(con, user["id"], channel_rule.group("target"))
             source_names = [item.strip() for item in channel_rule.group("sources").split(",") if item.strip()]
             if not source_names:
                 raise ValueError("После двоеточия укажите хотя бы один канал-источник.")
@@ -4394,13 +4402,67 @@ class Handler(BaseHTTPRequestHandler):
             source_ids = list(dict.fromkeys(item["id"] for item in sources))
             if target["id"] in source_ids:
                 raise ValueError("Свой канал нельзя выбрать источником.")
+            rewrite_posts = bool(re.search(r"\b(?:переписыв|перефразир|изменяй\s+текст|своими\s+словами)\w*", question, re.IGNORECASE))
             con.execute(
-                """INSERT INTO ai_agent_channel_rules(user_id,enabled,target_channel_id,source_channel_ids_json,created_at,updated_at)
-                   VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,target_channel_id=excluded.target_channel_id,source_channel_ids_json=excluded.source_channel_ids_json,updated_at=excluded.updated_at""",
-                (user["id"], 1, target["id"], dumps(source_ids), now(), now()),
+                """INSERT INTO ai_agent_channel_rules(user_id,enabled,target_channel_id,source_channel_ids_json,rewrite_posts,created_at,updated_at)
+                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET enabled=excluded.enabled,target_channel_id=excluded.target_channel_id,source_channel_ids_json=excluded.source_channel_ids_json,rewrite_posts=excluded.rewrite_posts,updated_at=excluded.updated_at""",
+                (user["id"], 1, target["id"], dumps(source_ids), int(rewrite_posts), now(), now()),
             )
-            return f"Ведение канала «{target['title']}» включено. Новые публикации из выбранных каналов будут автоматически публиковаться в нём."
+            wording = "с переформулированным текстом без изменения смысла" if rewrite_posts else "как репосты с указанием источника"
+            return f"Ведение канала «{target['title']}» включено. Новые публикации из выбранных каналов будут выходить {wording}."
+        result = self.ai_agent_channel_management_help(question)
+        if result:
+            return result
         return None
+
+    def ai_agent_channel_management_help(self, question):
+        normalized = " ".join(question.split())
+        if not re.search(r"\b(?:канал|групп|репост|ведение|автопост)\w*\b", normalized, re.IGNORECASE):
+            return None
+        if not re.search(r"\b(?:вести|настро|репост|копир|постить|публиков)\w*\b", normalized, re.IGNORECASE):
+            return None
+        if re.search(r"https?://", normalized, re.IGNORECASE):
+            return "По одной ссылке на чужой канал я не могу получить доступ к его публикациям. Сначала откройте или добавьте источник в Chat‑Pro, затем пришлите точные названия источника и канала-получателя. В канале-получателе у вас должна быть роль создателя, администратора или автора. Для сайта вместо страницы пришлите публичную RSS-ссылку — её я проверю и подключу."
+        return "Чтобы настроить ведение канала, укажите источник и получатель: «Веди канал Мой канал из каналов: Канал-источник». Для переработки текста добавьте «перефразируй своими словами». Я проверю, что у вас есть доступ к источнику и право публиковать в канале-получателе."
+
+    def ai_agent_configure_rss_autoposting(self, con, user, question):
+        normalized = " ".join(question.split())
+        intent = re.search(r"\b(?:автопостинг|автопост|импорт(?:ируй|ировать)?|публикуй|постить|вести)\b", normalized, re.IGNORECASE)
+        mentions_site = re.search(r"\b(?:сайт|rss|лента|feed)\b", normalized, re.IGNORECASE)
+        if not intent or not mentions_site:
+            return None
+        feed_match = re.search(r"https?://[^\s<>()]+", normalized, re.IGNORECASE)
+        target_match = re.search(r"\b(?:в|на)\s+(?:мой\s+)?канал\s+[«\"]?(?P<title>[^«»\"\n]+?)[»\"]?(?:\s*(?:[.,;]|$))", normalized, re.IGNORECASE)
+        if not feed_match and not target_match:
+            return "Чтобы подключить автопостинг с сайта, пришлите ссылку на RSS-ленту и название канала, куда публиковать. Например: «Настрой автопостинг с сайта https://example.com/feed.xml в канал Мой канал»."
+        if not feed_match:
+            return "Пришлите публичную ссылку именно на RSS-ленту сайта (обычно содержит feed, rss или xml). Затем я проверю её и подключу к указанному каналу."
+        if not target_match:
+            return "Укажите название канала-получателя. Я подключу ленту только если вы создатель, администратор или автор этого канала."
+        title = " ".join(target_match.group("title").split()).strip(" :")
+        target = self.ai_agent_managed_channel_by_title(con, user["id"], title)
+        if self.chat_member_role(con, target["id"], user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError(f"У вас нет права публиковать в канале «{target['title']}». Нужна роль создателя, администратора или автора.")
+        feed_url = validate_rss_url(feed_match.group(0).rstrip(".,;:!?»\""))
+        feed_title, entries = fetch_rss_feed(feed_url)
+        if not entries:
+            raise ValueError("Сайт доступен, но в RSS-ленте пока нет публикаций. Пришлите другую RSS-ссылку или проверьте ленту на сайте.")
+        existing = con.execute("SELECT 1 FROM rss_channel_sources WHERE channel_id = ? AND feed_url = ?", (target["id"], feed_url)).fetchone()
+        if existing:
+            return f"RSS-лента «{feed_title or feed_url}» уже подключена к каналу «{target['title']}»."
+        self.enforce_autopost_source_limit(con, user["id"], target["id"])
+        current = now()
+        source_id = uid("rss")
+        con.executemany(
+            "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
+            [(source_id, entry["id"], current) for entry in entries],
+        )
+        con.execute(
+            """INSERT INTO rss_channel_sources(id,channel_id,feed_url,feed_title,next_poll_at,last_sync_at,last_error,created_by,created_at)
+               VALUES (?,?,?,?,?,?,NULL,?,?)""",
+            (source_id, target["id"], feed_url, feed_title, current + RSS_POLL_INTERVAL, current, user["id"], current),
+        )
+        return f"Подключил RSS-ленту «{feed_title or feed_url}» к каналу «{target['title']}». Новые публикации будут импортироваться автоматически."
 
     def ai_agent_publish_latest_saved_circle(self, con, user, question):
         normalized = " ".join(question.casefold().replace("ё", "е").split())
@@ -4474,6 +4536,12 @@ class Handler(BaseHTTPRequestHandler):
             return rows[0]
         names = ", ".join(f"«{row['title']}»" for row in rows[:5])
         raise ValueError(f"Не понял, в какой из ваших каналов отправить кружок. Укажите название канала в запросе: {names}.")
+
+    def ai_agent_managed_channel_by_title(self, con, user_id, title):
+        channel = self.ai_agent_channel_by_title(con, user_id, title)
+        if self.chat_member_role(con, channel["id"], user_id) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError(f"У вас нет права публиковать в канале «{channel['title']}». Нужна роль создателя, администратора или автора.")
+        return channel
 
     def ai_agent_direct_chat_by_recipient(self, con, user_id, recipient):
         recipient_key = " ".join(str(recipient).replace("@", "").split()).casefold()
@@ -4647,8 +4715,8 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(source_ids, list) or not source_ids or not rule["target_channel_id"]:
                 continue
             source_ids = [str(item) for item in source_ids[:30] if isinstance(item, str)]
-            target = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (rule["target_channel_id"],)).fetchone()
-            if not target or target["type"] != "channel" or target["owner_id"] != rule["user_id"]:
+            target = con.execute("SELECT type FROM chats WHERE id = ?", (rule["target_channel_id"],)).fetchone()
+            if not target or target["type"] != "channel" or self.chat_member_role(con, rule["target_channel_id"], rule["user_id"]) not in CHANNEL_MANAGER_ROLES:
                 continue
             placeholders = ",".join("?" for _ in source_ids)
             posts = con.execute(
@@ -4662,9 +4730,23 @@ class Handler(BaseHTTPRequestHandler):
                 con.execute("INSERT OR IGNORE INTO ai_agent_channel_processed_posts(rule_user_id,message_id,processed_at) VALUES (?,?,?)", (rule["user_id"], post["id"], now()))
                 if not self.has_chat_access(con, rule["user_id"], post["chat_id"]):
                     continue
+                text = post["text"]
+                forwarded_from = post["source_title"]
+                source_type = "ai_agent_repost"
+                if rule["rewrite_posts"] and text.strip():
+                    try:
+                        text = self.ai_completion(
+                            "Ты редактор канала. Перефразируй публикацию своими словами без изменения фактов, смысла, имён, чисел, ссылок и призывов. Не добавляй ничего от себя. Верни только готовый текст публикации.",
+                            text,
+                            700,
+                        )
+                        forwarded_from = None
+                        source_type = "ai_agent_rewrite"
+                    except ValueError:
+                        continue
                 con.execute(
                     "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,voice_waveform_json,views,forwarded_from,forwarded_from_user_id,source_type,source_id,ai_agent,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (uid("msg"), rule["target_channel_id"], rule["user_id"], post["text"], post["media_type"], post["media_data"], post["voice_waveform_json"], 1, post["source_title"], post["sender_id"], "ai_agent_repost", post["id"], 1, now()),
+                    (uid("msg"), rule["target_channel_id"], rule["user_id"], text, post["media_type"], post["media_data"], post["voice_waveform_json"], 1, forwarded_from, post["sender_id"], source_type, post["id"], 1, now()),
                 )
                 con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), rule["target_channel_id"]))
 
