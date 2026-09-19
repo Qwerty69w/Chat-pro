@@ -3982,14 +3982,11 @@ class Handler(BaseHTTPRequestHandler):
             for key in ("showViews", "showSubscribers", "showReactions", "commentsEnabled", "isPublic"):
                 if key in body:
                     settings[key] = bool(body[key])
-            if "starBonusType" in body or "starBonusPercent" in body:
-                bonus_type = str(body.get("starBonusType", settings.get("starBonusType", "stars"))).strip().lower()
-                if bonus_type not in {"stars", "money"}:
-                    raise ValueError("Выберите тип бонуса: звёзды или деньги.")
-                bonus_percent = nonnegative_int(body.get("starBonusPercent", settings.get("starBonusPercent", 10)), "starBonusPercent", 100)
+            if "starBonusPercent" in body:
+                bonus_percent = nonnegative_int(body["starBonusPercent"], "starBonusPercent", 100)
                 if not bonus_percent:
                     raise ValueError("Укажите бонус от 1 до 100 %.")
-                settings["starBonusType"] = bonus_type
+                settings["starBonusType"] = "stars"
                 settings["starBonusPercent"] = bonus_percent
             buyer_gift_stars = nonnegative_int(body.get("buyerGiftStars", settings.get("buyerGiftStars", 0)), "buyerGiftStars", 100_000)
             buyer_message = str(body.get("buyerPurchaseMessage", settings.get("buyerPurchaseMessage", ""))).strip()
@@ -5491,14 +5488,11 @@ class Handler(BaseHTTPRequestHandler):
             if not self.has_chat_access(con, user["id"], channel_id):
                 raise PermissionError("Подпишитесь на канал, чтобы купить звёзды через него.")
             settings = loads(channel["settings_json"], {}) or {}
-            channel_bonus_type = str(settings.get("starBonusType", "stars")).lower()
+            channel_bonus_type = "stars"
             bonus_percent = nonnegative_int(settings.get("starBonusPercent", 10), "starBonusPercent", 100)
-            if channel_bonus_type not in {"stars", "money"} or not bonus_percent:
+            if not bonus_percent:
                 raise ValueError("Владелец канала ещё не настроил бонус за покупку.")
-            if channel_bonus_type == "stars":
-                channel_bonus_amount = str(max(1, package["stars"] * bonus_percent // 100))
-            else:
-                channel_bonus_amount = f"{(float(amount_value) * bonus_percent / 100):.2f}"
+            channel_bonus_amount = str(max(1, package["stars"] * bonus_percent // 100))
         order_id = uid("yookassa")
         current = now()
         con.execute(
