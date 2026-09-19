@@ -97,6 +97,7 @@ let activeChatSearchQuery = "";
 let activeChatSearchTimer = null;
 let highlightedMessageSearch = { chatId: null, query: "" };
 let aiAgentConversation = [];
+const AI_AGENT_LIST_STATE_KEY = "chatpro_ai_agent_list_state_v1";
 const pendingOutgoingMessages = new Map();
 
 function pinIcon(className = "") {
@@ -736,8 +737,12 @@ function renderChatsList(box) {
     : [];
   const storyStrip = directStoryStripHtml();
   box.dataset.dialogFilter = chatFilter;
-  const agentRow = chatFilter === "all" || chatFilter === "direct" ? aiAgentChatRow() : "";
-  const channelsHtml = `${agentRow}${chats.map(chatRow).join("")}` || (recommendedChannels.length ? '<p class="muted">Здесь появятся ваши диалоги. А пока — интересные каналы.</p>' : '<p class="muted">Пока нет диалогов.</p>');
+  const agentVisible = chatFilter === "all" || chatFilter === "direct";
+  const dialogRows = [
+    ...chats.map((chat) => ({ kind: "chat", chat, pinned: Boolean(chat.pinned), updatedAt: Number(chat.updatedAt) || 0 })),
+    ...(agentVisible ? [{ kind: "ai-agent", ...aiAgentListState() }] : []),
+  ].sort((first, second) => Number(second.pinned) - Number(first.pinned) || second.updatedAt - first.updatedAt);
+  const channelsHtml = dialogRows.map((item) => item.kind === "ai-agent" ? aiAgentChatRow(item) : chatRow(item.chat)).join("") || (recommendedChannels.length ? '<p class="muted">Здесь появятся ваши диалоги. А пока — интересные каналы.</p>' : '<p class="muted">Пока нет диалогов.</p>');
   const recommendationsHtml = recommendedChannels.length ? `<section class="recommended-channels"><div class="recommended-channels__title"><b>Рекомендованные каналы</b><span>Подборка для вас</span></div>${recommendedChannels.map(recommendedChannelRow).join("")}</section>` : "";
   const activityPromoHtml = hasOnlySavedChats ? `<section class="activity-rewards-promo"><b>Проявляйте активность и получайте звёзды!</b><button class="button small" type="button" data-open-activity-rewards>Подробнее</button></section>` : "";
   box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск сообщений и людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="globalSearch" placeholder="Поиск сообщений и людей"></label><div id="searchResults"></div>${channelsHtml}${recommendationsHtml}${activityPromoHtml}`;
@@ -808,11 +813,13 @@ function bindAiAgentConversation(root) {
       form.reset();
       aiAgentConversation.push({ role: "user", text: question });
       aiAgentConversation.push(workingMessage);
+      touchAiAgentList();
       renderConversation();
       const result = await api("/api/ai-agent/ask", { method: "POST", body: { question, history: aiAgentConversation.slice(-10, -1) } });
       await loadState();
       const index = aiAgentConversation.indexOf(workingMessage);
       if (index >= 0) aiAgentConversation[index] = { role: "assistant", text: result.answer, messages: result.messages || [] };
+      touchAiAgentList();
       renderConversation();
     } catch (error) {
       const index = aiAgentConversation.indexOf(workingMessage);
@@ -823,11 +830,26 @@ function bindAiAgentConversation(root) {
   });
 }
 
-function aiAgentChatRow() {
+function aiAgentListState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AI_AGENT_LIST_STATE_KEY) || "{}");
+    return { pinned: Boolean(saved.pinned), updatedAt: Number(saved.updatedAt) || 0 };
+  } catch { return { pinned: false, updatedAt: 0 }; }
+}
+
+function saveAiAgentListState(next) {
+  localStorage.setItem(AI_AGENT_LIST_STATE_KEY, JSON.stringify({ ...aiAgentListState(), ...next }));
+}
+
+function touchAiAgentList() {
+  saveAiAgentListState({ updatedAt: Math.floor(Date.now() / 1000) });
+}
+
+function aiAgentChatRow(listState = aiAgentListState()) {
   const active = activeChatId === "ai-agent" ? " active" : "";
   const latest = aiAgentConversation.at(-1);
   const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
-  return `<div class="chat-row${active}"><button class="row chat-row__main" data-open-ai-agent-chat>${aiAgentAvatarHtml()}<div class="row__body"><div class="row__title">ИИ-администратор</div><div class="row__sub">${esc(latest?.text || (running ? "Автопилот работает" : "Администратор каналов"))}</div></div><span class="chat-row__aside"><span class="badge">${running ? "Работает" : ""}</span></span></button><button class="chat-menu-button" type="button" data-ai-agent-menu title="Действия с ИИ-администратором" aria-label="Действия с ИИ-администратором">⋮</button></div>`;
+  return `<div class="chat-row${active}"><button class="row chat-row__main" data-open-ai-agent-chat>${aiAgentAvatarHtml()}<div class="row__body"><div class="row__title">${listState.pinned ? pinIcon("chat-row__pin-icon") : ""}ИИ-администратор</div><div class="row__sub">${esc(latest?.text || (running ? "Автопилот работает" : "Администратор каналов"))}</div></div><span class="chat-row__aside"><span class="badge">${running ? "Работает" : ""}</span></span></button><button class="chat-menu-button" type="button" data-ai-agent-menu title="Действия с ИИ-администратором" aria-label="Действия с ИИ-администратором">⋮</button></div>`;
 }
 
 function aiAgentAvatarHtml() {
@@ -836,7 +858,15 @@ function aiAgentAvatarHtml() {
 
 function openAiAgentMenu(anchor) {
   const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
+  const listState = aiAgentListState();
   openSimpleActions(anchor, [
+    {
+      label: listState.pinned ? "Открепить" : "Закрепить",
+      action: () => {
+        saveAiAgentListState({ pinned: !listState.pinned });
+        renderApp();
+      },
+    },
     {
       label: running ? "Остановить задачи" : "Возобновить задачи",
       action: async () => {
