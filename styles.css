@@ -149,6 +149,8 @@ label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weig
 .bubble-style-option small { margin-top: 3px; color: var(--muted); font-size: 10px; font-weight: 600; }
 .dialog-color-control input[type="color"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .dialog-color-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.dialog-color-controls > .dialog-color-control:has([name="otherDialogColor"]) { order: 1; }
+.dialog-color-controls > .dialog-color-control:has([name="dialogColor"]) { order: 2; }
 .dialog-color-control__button { display: inline-flex; width: fit-content; gap: 8px; align-items: center; padding: 5px 9px 5px 5px; border: 1px solid rgba(var(--primary-rgb), .18); border-radius: 999px; background: rgba(var(--primary-rgb), .07); color: var(--text); font-size: 12px; font-weight: 800; }
 .dialog-color-control__button:hover, .dialog-color-control__button:focus-visible { border-color: rgba(var(--primary-rgb), .48); background: rgba(var(--primary-rgb), .13); }
 .dialog-color-control__dot { display: block; width: 27px; height: 27px; border: 2px solid rgba(255, 255, 255, .88); border-radius: 50%; background: var(--dialog-color, #ffffff); box-shadow: 0 2px 7px rgba(23, 33, 43, .18); }
@@ -294,7 +296,7 @@ button.row:hover, button.row.active { border-color: rgba(var(--primary-rgb), 0.5
 .chat-row__aside .unread-badge { margin: 0; }
 .unread-badge { display: grid; min-width: 21px; height: 21px; place-items: center; margin-left: 6px; padding: 0 6px; border-radius: 999px; background: #e55757; color: #fff; box-shadow: 0 3px 8px rgba(192, 42, 42, .28); font-size: 11px; font-weight: 900; line-height: 1; }
 .chat-row.has-unread .row__title, .chat-row.has-unread .row__sub { font-weight: 850; }
-.chat-menu-button { position: absolute; top: 50%; right: 7px; width: 32px; height: 32px; padding: 0 0 2px; transform: translateY(-50%); border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 25px; line-height: 1; }
+.chat-menu-button { position: absolute; z-index: 2; top: 50%; right: 7px; width: 32px; height: 32px; padding: 0 0 2px; transform: translateY(-50%); border: 0; border-radius: 50%; background: transparent; color: var(--muted); font-size: 25px; line-height: 1; touch-action: manipulation; }
 .chat-menu-button:hover, .chat-menu-button:focus-visible { background: rgba(42, 171, 238, 0.14); color: var(--primary-dark); }
 .recommended-channels { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .recommended-channels__title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 3px 10px; }
@@ -308,6 +310,21 @@ button.row:hover, button.row.active { border-color: rgba(var(--primary-rgb), 0.5
 .recommended-channel b, .recommended-channel small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recommended-channel small { margin-top: 3px; color: var(--muted); font-size: 11px; }
 .recommended-channel .button { flex: 0 0 auto; }
+.channel-feed { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.channel-feed__title { margin: 0 3px 10px; }
+.channel-feed__title b, .channel-feed__title span { display: block; }
+.channel-feed__title b { font-size: 15px; }
+.channel-feed__title span { margin-top: 3px; color: var(--primary-dark); font-size: 11px; font-weight: 750; line-height: 1.35; }
+.channel-feed__item { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; padding: 10px; border: 1px solid rgba(var(--primary-rgb), .2); border-radius: 16px; background: rgba(var(--primary-rgb), .055); }
+.channel-feed__info { display: flex; min-width: 0; flex: 1 1 auto; gap: 9px; align-items: center; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.channel-feed__info > span { min-width: 0; }
+.channel-feed__info:hover b, .channel-feed__info:focus-visible b { color: var(--primary-dark); }
+.channel-feed__info:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; border-radius: 10px; }
+.channel-feed__item b, .channel-feed__item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-feed__item small { margin-top: 3px; color: var(--muted); font-size: 11px; }
+.channel-feed__item .button, .channel-feed__subscribed { flex: 0 0 auto; }
+.channel-feed__subscribed { color: var(--muted); font-size: 11px; font-weight: 750; white-space: nowrap; }
+.channel-feed__more { display: block; width: 100%; margin-top: 2px; }
 .activity-rewards-promo { display: none; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0 4px; padding: 13px; border: 1px solid rgba(var(--primary-rgb), .18); border-radius: 16px; background: linear-gradient(135deg, rgba(var(--primary-rgb), .11), rgba(126, 219, 145, .1)); }
 .activity-rewards-promo b { color: var(--primary-dark); font-size: 13px; line-height: 1.35; }
 .activity-rewards-promo .button { flex: 0 0 auto; }
@@ -579,7 +596,7 @@ body.theme-dark .message__selected-marker { border-color: #17243a; }
 .message--system { align-self: center; max-width: min(560px, 95%); margin: 3px 0; padding: 6px 11px; border: 1px solid rgba(var(--primary-rgb), .17); border-radius: 999px; background: rgba(255, 255, 255, .58); color: var(--muted); font-size: 12px; font-weight: 700; line-height: 1.35; text-align: center; box-shadow: 0 4px 12px rgba(31, 65, 90, .06); backdrop-filter: blur(8px); }
 body.theme-dark .chat-panel:not(.chat-panel--channel-themed) .message--system { background: rgba(15, 29, 49, .64); }
 .message.own .reacts { align-self: flex-end; max-width: min(440px, 100%); }
-.message-photo-button { display: block; max-width: 100%; padding: 0; overflow: hidden; border: 0; border-radius: 16px; background: transparent; cursor: zoom-in; }
+.message-photo-button { display: block; max-width: 100%; padding: 0; overflow: hidden; border: 0; border-radius: 16px; background: transparent; cursor: zoom-in; touch-action: pan-y; }
 .message-photo { display: block; max-width: 100%; max-height: 360px; border-radius: 16px; object-fit: cover; transition: transform .18s ease, filter .18s ease; }
 .message-photo-button:hover .message-photo, .message-photo-button:focus-visible .message-photo { filter: brightness(.94); transform: scale(1.015); }
 .message-video { position: relative; width: min(520px, 100%); overflow: hidden; border-radius: 16px; background: #080f18; }
@@ -588,6 +605,16 @@ body.theme-dark .chat-panel:not(.chat-panel--channel-themed) .message--system { 
 .message-video > button svg, .circle-expand svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; }
 .message-video:hover > button, .message-video:focus-within > button { opacity: 1; }
 .message-video > button:hover, .message-video > button:focus-visible { transform: scale(1.08); }
+.vk-video-card { position: relative; display: grid; width: min(380px, 100%); min-height: 172px; overflow: hidden; border-radius: 16px; background: #172838; color: #fff; isolation: isolate; text-decoration: none; }
+.vk-video-card:hover, .vk-video-card:focus-visible { color: #fff; }
+.vk-video-card:focus-visible { outline: 3px solid var(--primary); outline-offset: 2px; }
+.vk-video-card__thumbnail { position: absolute; z-index: -2; width: 100%; height: 100%; object-fit: cover; }
+.vk-video-card__overlay { display: flex; gap: 11px; align-items: end; min-height: 172px; padding: 13px; background: linear-gradient(180deg, rgba(5, 12, 20, .08) 20%, rgba(5, 12, 20, .78)); }
+.vk-video-card__play { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, .94); color: #1676bc; font-size: 17px; line-height: 1; box-shadow: 0 3px 14px rgba(0, 0, 0, .3); transition: transform .18s ease; }
+.vk-video-card:hover .vk-video-card__play, .vk-video-card:focus-visible .vk-video-card__play { transform: scale(1.08); }
+.vk-video-card__overlay > span:last-child { display: grid; min-width: 0; gap: 2px; }
+.vk-video-card b { font-size: 14px; line-height: 1.2; }
+.vk-video-card small { font-size: 12px; line-height: 1.2; opacity: .9; }
 .message-audio { width: min(300px, 100%); }
 .message--audio .message__bubble { width: max-content; max-width: min(300px, 100%); padding: 0; border: 0; background: transparent; box-shadow: none; }
 .circle-message { position: relative; width: 210px; }
@@ -609,7 +636,7 @@ body.theme-dark .chat-panel:not(.chat-panel--channel-themed) .message--system { 
 .message-selection-toolbar__actions button svg { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; }
 body.theme-dark .message-selection-toolbar { background: rgba(22, 36, 58, .96); }
 .composer { position: absolute; z-index: 3; right: 0; bottom: 0; left: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 8px 12px; border-top: 0; background: transparent; box-shadow: none; }
-.chat-search-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.chat-search-panel { position: absolute; z-index: 8; top: 0; right: 0; left: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto auto; gap: 8px; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: 0 8px 22px rgba(5, 18, 32, .18); }
 .chat-search-panel input { min-width: 0; border-radius: 999px; }
 .chat-search-panel span { color: var(--muted); font-size: 12px; font-weight: 800; }
 .chat-search-panel button { width: 32px; height: 32px; border: 0; border-radius: 50%; background: rgba(var(--primary-rgb), .1); color: var(--primary-dark); font-weight: 900; }
@@ -807,7 +834,9 @@ body.theme-dark .message-selection-toolbar { background: rgba(22, 36, 58, .96); 
 .channel-comments button span { padding: 0; color: currentColor; font-size: 11px; font-weight: 700; line-height: 1; }
 .admin-select-search { width: 100%; margin: 0 0 7px; }
 .channel-comment-list { display: grid; gap: 9px; max-height: 260px; overflow: auto; }
-.channel-comment-list article { padding: 10px 12px; border-radius: 13px; background: rgba(var(--primary-rgb), .07); }
+.channel-comment-list article { position: relative; padding: 10px 40px 10px 12px; border-radius: 13px; background: rgba(var(--primary-rgb), .07); }
+.channel-comment__menu { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--muted); font: inherit; font-size: 20px; line-height: 1; }
+.channel-comment__menu:hover, .channel-comment__menu:focus-visible { background: rgba(var(--primary-rgb), .12); color: var(--primary-dark); }
 .channel-comment-list article b, .channel-comment-list article small { font-size: 12px; }
 .channel-comment-list article small { color: var(--muted); }
 .channel-comment-list article p { margin: 4px 0; white-space: pre-wrap; }
@@ -955,6 +984,10 @@ body.theme-dark .message-selection-toolbar { background: rgba(22, 36, 58, .96); 
 .profile-publications .card { margin: 0; }
 .level-card h2 { margin-top: 8px; }
 .level-card ul, .card ul { padding-left: 20px; line-height: 1.7; }
+.level-card__criteria, .level-card__subscription { margin-top: 12px; padding: 10px 12px; border: 1px solid rgba(var(--primary-rgb), .14); border-radius: 13px; background: rgba(var(--primary-rgb), .045); }
+.level-card__criteria ul { display: grid; gap: 4px; margin: 7px 0; padding-left: 0; list-style: none; }
+.level-card__criteria li { display: flex; justify-content: space-between; gap: 12px; }
+.level-card__criteria p, .level-card__subscription p { margin: 7px 0 0; }
 .level-current-limits .muted { margin: 8px 0 12px; }
 .level-next-reward { display: grid; gap: 3px; margin: 12px 0; padding: 10px 12px; border-radius: 13px; background: rgba(var(--primary-rgb), .09); color: var(--primary-dark); font-size: 13px; }
 .level-next-reward span { font-weight: 800; }
@@ -1080,6 +1113,7 @@ body.theme-dark .message-selection-toolbar { background: rgba(22, 36, 58, .96); 
   touch-action: manipulation;
 }
 .star-package__stars { display: block; font-size: 15px; line-height: 1.15; }
+.star-package__star { color: #f6c84c; text-shadow: 0 1px 7px rgba(246, 200, 76, .38); }
 .star-package__price { display: flex; min-width: 0; gap: 5px; align-items: baseline; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; line-height: 1.15; }
 .star-package__price strong { color: inherit; font-size: 14px; }
 .star-packages s { color: var(--muted); font-weight: 600; }
@@ -2120,6 +2154,14 @@ body:not(.theme-dark) .sidebar #globalSearch::placeholder { color: #435d72; opac
 .message-search-result--compact { background: rgba(var(--primary-rgb), .045); }
 .message:not(.own) .message__bubble, .message:not(.own) .message__text { font-family: var(--message-font); }
 
+/* The selected dialog font belongs to message content, including the user's own bubbles. */
+.message .message__bubble,
+.message.own .message__bubble,
+.message .message__text,
+.message.own .message__text {
+  font-family: var(--message-font) !important;
+}
+
 /* Calls inherit the current chat wallpaper; the surface is glass, not a white card. */
 .call-overlay { background-color: rgba(8, 23, 38, .42); background-position: center; background-size: cover; }
 .call-overlay.chat-background-custom { background-image: linear-gradient(rgba(11, 29, 45, .42), rgba(11, 29, 45, .42)), var(--call-chat-wallpaper); }
@@ -2195,9 +2237,12 @@ body.theme-dark .pinned-messages__next, body.theme-dark .pinned-messages__menu {
 .reaction-history__search span { position: absolute; top: 50%; left: 12px; color: var(--muted); font-size: 17px; transform: translateY(-52%); pointer-events: none; }
 .reaction-history__search input { width: 100%; padding-left: 35px; }
 .reaction-history__item { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px; border: 1px solid rgba(var(--primary-rgb), .13); border-radius: 13px; background: rgba(var(--primary-rgb), .035); }
+.reaction-history__item--openable { width: 100%; color: inherit; text-align: left; cursor: pointer; }
+.reaction-history__item--openable:hover { border-color: rgba(var(--primary-rgb), .32); background: rgba(var(--primary-rgb), .08); }
 .reaction-history__emoji { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 11px; background: rgba(var(--primary-rgb), .1); font-size: 20px; }
 .reaction-history__item > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
 .reaction-history__item b { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.reaction-history__item em { color: var(--muted); font-size: 10px; font-style: normal; }
 .reaction-history__item time { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .ringtone-settings-form { gap: 9px; }
 .ringtone-settings-form > .muted { margin: 0 0 2px; }
@@ -2899,7 +2944,7 @@ body.theme-dark .chat-panel:not(.chat-panel--channel-themed) .empty-chat-notice 
 .story-avatar span { display: block; width: 100%; max-width: 58px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .profile-more, .review-more { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid rgba(var(--primary-rgb), .14); border-radius: 50%; background: rgba(255,255,255,.58); color: var(--primary-dark); font-size: 20px; font-weight: 900; }
 .review-item__head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.simple-actions-overlay { position: fixed; z-index: 80; inset: 0; pointer-events: none; }
+.simple-actions-overlay { position: fixed; z-index: 130; inset: 0; pointer-events: none; }
 .simple-actions { position: fixed; display: grid; width: 220px; gap: 6px; padding: 8px; border: 1px solid rgba(var(--primary-rgb), .16); border-radius: 18px; background: rgba(255,255,255,.94); box-shadow: 0 18px 42px rgba(19, 61, 92, .18); backdrop-filter: blur(14px); pointer-events: auto; }
 .simple-actions button { min-height: 38px; border: 0; border-radius: 12px; background: rgba(var(--primary-rgb), .08); color: #12638b; font-weight: 800; text-align: left; }
 .scroll-date-bubble { position: absolute; z-index: 7; top: 12px; left: 50%; padding: 4px 9px; border-radius: 999px; background: rgba(18, 53, 78, .72); color: #fff; font-size: 10px; font-weight: 850; transform: translateX(-50%); pointer-events: none; backdrop-filter: blur(10px); }
@@ -3539,6 +3584,50 @@ body.theme-dark .app-shell .sidebar .profile .nav .nav-button.active {
   color: #ffffff;
 }
 
+/* Dark panels keep the selected wallpaper visible instead of becoming grey. */
+body.theme-dark .app-shell .sidebar,
+body.theme-dark .app-shell .sidebar.chat-background-custom,
+body.theme-dark .app-shell .sidebar.chat-background-whatsapp,
+body.theme-dark .app-shell .sidebar.chat-background-mint,
+body.theme-dark .app-shell .sidebar.chat-background-aurora,
+body.theme-dark .app-shell .sidebar.chat-background-noir,
+body.theme-dark .app-shell .sidebar.chat-background-cyan,
+body.theme-dark .app-shell .sidebar.chat-background-mist,
+body.theme-dark .app-shell .sidebar.chat-background-sunset,
+body.theme-dark .app-shell .sidebar.chat-background-ocean,
+body.theme-dark .app-shell .sidebar.chat-background-lavender,
+body.theme-dark .app-shell .sidebar.chat-background-forest,
+body.theme-dark .app-shell .sidebar.chat-background-midnight,
+body.theme-dark .app-shell .sidebar.chat-background-ember,
+body.theme-dark .app-shell .sidebar.chat-background-iris {
+  background-image: linear-gradient(118deg, rgba(3, 15, 28, .4), rgba(4, 20, 36, .18) 48%, rgba(3, 14, 27, .36)), var(--dialog-wallpaper, var(--dialog-panel-background)) !important;
+  background-size: 180% 180%, cover;
+  background-position: 0% 50%, center;
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+body.theme-dark .app-shell .sidebar.chat-background-custom { background-image: linear-gradient(118deg, rgba(3, 15, 28, .4), rgba(4, 20, 36, .18) 48%, rgba(3, 14, 27, .36)), var(--sidebar-chat-wallpaper) !important; }
+body.theme-dark .app-shell .sidebar.chat-background-whatsapp { background-image: linear-gradient(118deg, rgba(3, 15, 28, .4), rgba(4, 20, 36, .18) 48%, rgba(3, 14, 27, .36)), radial-gradient(circle at 7px 7px, rgba(94, 129, 111, .18) 0 1.5px, transparent 1.8px), radial-gradient(circle at 23px 17px, rgba(94, 129, 111, .13) 0 1px, transparent 1.3px), linear-gradient(135deg, transparent 46%, rgba(94, 129, 111, .11) 47% 52%, transparent 53%), linear-gradient(45deg, transparent 46%, rgba(94, 129, 111, .08) 47% 52%, transparent 53%) !important; }
+body.theme-dark .app-shell .sidebar .profile,
+body.theme-dark .app-shell .sidebar .profile .nav {
+  background: linear-gradient(135deg, rgba(3, 16, 30, .72), rgba(8, 41, 61, .5)) !important;
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+}
+
+@keyframes panel-gradient-entrance {
+  0% { opacity: .32; background-position: 100% 50%, center; filter: saturate(.74); }
+  48% { opacity: 1; background-position: 38% 50%, center; filter: saturate(1.18); }
+  100% { opacity: 1; background-position: 0% 50%, center; filter: saturate(1); }
+}
+.app-shell--panel-entrance > .sidebar,
+.app-shell--panel-entrance > .chat-panel,
+.app-shell--panel-entrance > .rightbar {
+  animation: panel-gradient-entrance 1.15s cubic-bezier(.2, .8, .25, 1) both;
+}
+.app-shell--panel-entrance > .chat-panel { animation-delay: .08s; }
+.app-shell--panel-entrance > .rightbar { animation-delay: .16s; }
+
 /* Only a narrow round frame follows the outline of a video circle. */
 .message--circle .message__bubble {
   width: max-content;
@@ -4117,7 +4206,8 @@ body.theme-dark .app-shell .chat-panel > .composer .composer-send { background: 
 .app-shell .chat-panel .pinned-messages__menu svg { width: 18px; height: 18px; }
 
 /* RSS photos use the same fullscreen viewer as ordinary chat photos. */
-.message-photo-button--rss { position: relative; }
+.message-photo-button--rss { position: relative; width: 440px; max-width: 100%; overflow-anchor: none; }
+.message-photo-button--rss .message-photo { width: 100%; max-height: min(70dvh, 640px); object-fit: contain; background: rgba(5, 12, 20, .08); }
 .message-photo-button--rss::after {
   position: absolute;
   right: 8px;
@@ -4717,3 +4807,946 @@ body.theme-dark .ai-agent-panel__notice { background: linear-gradient(135deg, rg
 .ai-agent-global-item > div:last-child { display: flex; flex: 0 0 auto; flex-wrap: wrap; gap: 5px; }
 body.theme-dark .ai-agent-global-item { border-color: rgba(196, 231, 248, .22); background: rgba(15, 53, 78, .5); }
 @media (max-width: 520px) { .ai-agent-global-item { display: grid; } }
+
+/* Final dark-surface layer: wallpaper hues remain visible in every dialog theme. */
+body.theme-dark .app-shell .sidebar,
+body.theme-dark .app-shell .rightbar,
+body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) {
+  background: linear-gradient(118deg, rgba(3, 15, 28, .42), rgba(4, 20, 36, .22) 48%, rgba(3, 14, 27, .38)), var(--dialog-panel-background) !important;
+  background-size: 180% 180%, cover;
+  background-position: 0% 50%, center;
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+body.theme-dark .app-shell .sidebar.chat-background-custom { background-image: linear-gradient(118deg, rgba(3, 15, 28, .4), rgba(4, 20, 36, .18) 48%, rgba(3, 14, 27, .36)), var(--sidebar-chat-wallpaper) !important; }
+body.theme-dark .app-shell .sidebar.chat-background-whatsapp { background-image: linear-gradient(118deg, rgba(3, 15, 28, .4), rgba(4, 20, 36, .18) 48%, rgba(3, 14, 27, .36)), radial-gradient(circle at 7px 7px, rgba(94, 129, 111, .18) 0 1.5px, transparent 1.8px), radial-gradient(circle at 23px 17px, rgba(94, 129, 111, .13) 0 1px, transparent 1.3px), linear-gradient(135deg, transparent 46%, rgba(94, 129, 111, .11) 47% 52%, transparent 53%), linear-gradient(45deg, transparent 46%, rgba(94, 129, 111, .08) 47% 52%, transparent 53%) !important; }
+body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer {
+  background: linear-gradient(118deg, rgba(3, 15, 28, .55), rgba(4, 20, 36, .3) 48%, rgba(3, 14, 27, .48)), var(--dialog-panel-background) !important;
+  background-size: 180% 180%, cover;
+  background-position: 0% 50%, center;
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+}
+
+/* Slow live wallpaper: colours rest longer and move without abrupt switches. */
+@keyframes prism-colors-slow {
+  0%, 10%, 100% { --prism-a: #ff91d1; --prism-b: #61e7df; --prism-c: #382a83; --prism-d: #245fae; --prism-e: #116b80; }
+  16%, 26% { --prism-a: #ffd277; --prism-b: #ff8d9d; --prism-c: #7a315d; --prism-d: #b8525f; --prism-e: #d17b4b; }
+  32%, 42% { --prism-a: #8bffcf; --prism-b: #71bdff; --prism-c: #164e65; --prism-d: #277d86; --prism-e: #3570a7; }
+  48%, 58% { --prism-a: #e5b1ff; --prism-b: #9ba5ff; --prism-c: #48296e; --prism-d: #6b4ca8; --prism-e: #4768ab; }
+  64%, 74% { --prism-a: #ffae86; --prism-b: #ffe073; --prism-c: #773644; --prism-d: #ad5d45; --prism-e: #c98a39; }
+  80%, 90% { --prism-a: #8ff3bf; --prism-b: #a7f4e2; --prism-c: #21595a; --prism-d: #34836f; --prism-e: #4c9c81; }
+}
+body.chat-theme-prism,
+body.chat-theme-live,
+.chat-background-prism,
+.chat-background-live,
+.site-background-prism,
+.site-background-live {
+  animation: prism-colors-slow 300s ease-in-out infinite !important;
+}
+
+/* The neutral wallpaper must have a genuinely dark base in night mode. */
+body.theme-dark.chat-theme-default {
+  --dialog-panel-text: #edf5fb;
+  --dialog-panel-muted: #a7bacb;
+  --dialog-panel-line: rgba(176, 205, 227, .18);
+  --dialog-panel-card: rgba(10, 22, 35, .8);
+  --dialog-panel-background: radial-gradient(circle at 12% 4%, rgba(46, 98, 126, .18), transparent 34%), linear-gradient(135deg, #0a1623, #0d1b2a 55%, #08131f);
+  --panel-divider: rgba(131, 187, 220, .22);
+  --panel-divider-glow: rgba(57, 143, 194, .13);
+}
+
+/* Additional dark wallpapers keep their colour under the night panel layer. */
+body.chat-theme-jade,
+body.chat-theme-violet,
+body.chat-theme-cobalt,
+body.chat-theme-amber {
+  --dialog-panel-text: #f5f9ff;
+  --dialog-panel-muted: #c7d4e2;
+  --dialog-panel-line: rgba(232, 244, 255, .2);
+  --dialog-panel-card: rgba(8, 18, 33, .62);
+  --panel-divider: rgba(194, 227, 255, .26);
+  --panel-divider-glow: rgba(93, 188, 255, .18);
+  --panel-hover-background: rgba(210, 242, 255, .13);
+  --panel-hover-color: #fff;
+  --panel-hover-shadow: rgba(99, 196, 255, .22);
+}
+body.chat-theme-jade { --dialog-panel-background: radial-gradient(circle at 13% 13%, rgba(65, 222, 159, .27), transparent 39%), radial-gradient(circle at 90% 86%, rgba(18, 163, 172, .26), transparent 42%), linear-gradient(135deg, #061e20, #093c3a 52%, #09252c); }
+body.chat-theme-violet { --dialog-panel-background: radial-gradient(circle at 10% 10%, rgba(188, 110, 255, .3), transparent 40%), radial-gradient(circle at 88% 82%, rgba(255, 81, 184, .2), transparent 42%), linear-gradient(135deg, #21103b, #452467 52%, #231745); }
+body.chat-theme-cobalt { --dialog-panel-background: radial-gradient(circle at 12% 12%, rgba(73, 163, 255, .29), transparent 40%), radial-gradient(circle at 90% 84%, rgba(48, 224, 255, .19), transparent 42%), linear-gradient(135deg, #071b42, #103e82 52%, #092a5e); }
+body.chat-theme-amber { --dialog-panel-background: radial-gradient(circle at 12% 10%, rgba(255, 179, 61, .27), transparent 39%), radial-gradient(circle at 88% 86%, rgba(231, 95, 47, .21), transparent 42%), linear-gradient(135deg, #25170d, #4b3015 52%, #2a1c13); }
+.chat-background-jade, .site-background-jade { background: radial-gradient(ellipse 76% 100% at 8% 12%, rgba(63, 231, 159, .55), transparent 52%), radial-gradient(ellipse 76% 100% at 94% 88%, rgba(13, 170, 185, .45), transparent 56%), linear-gradient(135deg, #062021, #07524a 53%, #082b34); }
+.chat-background-violet, .site-background-violet { background: radial-gradient(ellipse 70% 100% at 10% 12%, rgba(189, 102, 255, .62), transparent 52%), radial-gradient(ellipse 75% 100% at 93% 88%, rgba(249, 74, 172, .4), transparent 57%), linear-gradient(135deg, #21103a, #5c2b82 54%, #2b194e); }
+.chat-background-cobalt, .site-background-cobalt { background: radial-gradient(ellipse 72% 100% at 10% 10%, rgba(65, 161, 255, .62), transparent 52%), radial-gradient(ellipse 70% 100% at 92% 87%, rgba(40, 226, 255, .38), transparent 56%), linear-gradient(135deg, #071a42, #154b9b 54%, #0a306d); }
+.chat-background-amber, .site-background-amber { background: radial-gradient(ellipse 74% 100% at 10% 10%, rgba(255, 176, 58, .57), transparent 52%), radial-gradient(ellipse 70% 100% at 93% 86%, rgba(240, 86, 50, .4), transparent 56%), linear-gradient(135deg, #26170d, #6d4218 54%, #322014); }
+
+/* Reduce the bright bloom in the upper-left corner of dark panels. */
+body.theme-dark .app-shell .sidebar,
+body.theme-dark .app-shell .rightbar,
+body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) {
+  background-image: linear-gradient(118deg, rgba(2, 11, 21, .62), rgba(3, 16, 29, .44) 48%, rgba(2, 11, 21, .54)), var(--dialog-panel-background) !important;
+}
+body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer {
+  background-image: linear-gradient(118deg, rgba(2, 11, 21, .74), rgba(3, 16, 29, .56) 48%, rgba(2, 11, 21, .66)), var(--dialog-panel-background) !important;
+}
+
+/* New dark wallpapers stay subdued; Cobalt remains bright as @andrei's chosen theme. */
+.chat-background-jade, .site-background-jade { background: radial-gradient(ellipse 76% 100% at 8% 12%, rgba(63, 231, 159, .34), transparent 52%), radial-gradient(ellipse 76% 100% at 94% 88%, rgba(13, 170, 185, .26), transparent 56%), linear-gradient(135deg, #061d20, #073b38 53%, #081f2a); }
+.chat-background-violet, .site-background-violet { background: radial-gradient(ellipse 70% 100% at 10% 12%, rgba(189, 102, 255, .38), transparent 52%), radial-gradient(ellipse 75% 100% at 93% 88%, rgba(249, 74, 172, .22), transparent 57%), linear-gradient(135deg, #1e1034, #42215f 54%, #24163f); }
+.chat-background-amber, .site-background-amber { background: radial-gradient(ellipse 74% 100% at 10% 10%, rgba(255, 176, 58, .34), transparent 52%), radial-gradient(ellipse 70% 100% at 93% 86%, rgba(240, 86, 50, .23), transparent 56%), linear-gradient(135deg, #22170e, #51351a 54%, #2b1e15); }
+body.chat-theme-jade { --dialog-panel-background: radial-gradient(circle at 13% 13%, rgba(65, 222, 159, .17), transparent 39%), radial-gradient(circle at 90% 86%, rgba(18, 163, 172, .16), transparent 42%), linear-gradient(135deg, #06191c, #082e2d 52%, #091d24); }
+body.chat-theme-violet { --dialog-panel-background: radial-gradient(circle at 10% 10%, rgba(188, 110, 255, .19), transparent 40%), radial-gradient(circle at 88% 82%, rgba(255, 81, 184, .13), transparent 42%), linear-gradient(135deg, #1d102f, #352052 52%, #21163b); }
+body.chat-theme-amber { --dialog-panel-background: radial-gradient(circle at 12% 10%, rgba(255, 179, 61, .17), transparent 39%), radial-gradient(circle at 88% 86%, rgba(231, 95, 47, .14), transparent 42%), linear-gradient(135deg, #21170f, #3f2b17 52%, #291e16); }
+
+/* Timestamps use the same quiet colour on both sides of a dialog. */
+.message .message__meta { color: color-mix(in srgb, currentColor 54%, transparent) !important; font-weight: 600; }
+.row__title { font-weight: 700; }
+.chat-row.has-unread .row__title { font-weight: 700; }
+.chat-head__body strong, .chat-profile-name strong, .profile__body strong { font-weight: 650; }
+
+/* Search takes the full header layer rather than appearing below it. */
+body.theme-dark .app-shell .chat-search-panel {
+  background: linear-gradient(135deg, rgba(5, 18, 32, .98), rgba(10, 31, 50, .98));
+  border-color: rgba(133, 207, 241, .18);
+}
+.app-shell .chat-search-panel { min-height: var(--chat-head-height, 60px); }
+
+/* Account entry stays dark while its background slowly shifts on arrival. */
+.auth-shell {
+  background: radial-gradient(ellipse at 12% 14%, rgba(31, 104, 151, .32), transparent 42%), radial-gradient(ellipse at 88% 84%, rgba(57, 46, 120, .3), transparent 46%), linear-gradient(135deg, #030a12, #081a2a 48%, #10142a);
+}
+.auth-shell::before {
+  z-index: 0;
+  inset: -35%;
+  background: radial-gradient(ellipse at 22% 30%, rgba(22, 141, 188, .3), transparent 38%), radial-gradient(ellipse at 78% 72%, rgba(91, 58, 161, .28), transparent 42%), linear-gradient(118deg, transparent 26%, rgba(21, 78, 118, .24) 50%, transparent 74%);
+  background-size: 150% 150%;
+  filter: blur(34px);
+  opacity: .9;
+  animation: auth-dark-ambient 12s ease-in-out both;
+}
+.auth-card {
+  border-color: rgba(160, 215, 244, .18);
+  background: linear-gradient(145deg, rgba(8, 25, 42, .94), rgba(12, 36, 58, .88));
+  box-shadow: 0 28px 72px rgba(0, 0, 0, .42), inset 0 1px rgba(190, 232, 255, .1);
+  color: #edf8ff;
+}
+.auth-card .auth-brand-title { color: #edf8ff; }
+.auth-card .brand p, .auth-card label, .auth-card .saved-account__login .row__sub { color: #aac4d5; }
+.auth-card input { border-color: rgba(133, 207, 241, .2); background: rgba(2, 13, 24, .62); box-shadow: inset 0 1px rgba(189, 233, 255, .07); color: #effaff; }
+.auth-card input:focus { border-color: rgba(93, 202, 244, .7); box-shadow: 0 0 0 4px rgba(53, 165, 215, .16), inset 0 1px rgba(189, 233, 255, .1); }
+.auth-card .tab, .auth-card .button:not(.primary), .auth-card .saved-account__login { border-color: rgba(133, 207, 241, .16); background: linear-gradient(135deg, rgba(20, 53, 78, .92), rgba(12, 33, 54, .92)); color: #eaf8ff; box-shadow: 0 8px 18px rgba(0, 0, 0, .2), inset 0 1px rgba(189, 233, 255, .08); }
+.auth-card > .card { border-color: rgba(133, 207, 241, .14); background: rgba(3, 17, 30, .46); box-shadow: inset 0 1px rgba(189, 233, 255, .06), 0 10px 24px rgba(0, 0, 0, .16); }
+.auth-card .saved-account__remove { border-color: rgba(133, 207, 241, .16); background: rgba(125, 187, 218, .1); color: #bdddeb; }
+.auth-card .auth-link { color: #79d7fa; }
+@keyframes auth-dark-ambient {
+  0% { background-position: 100% 0; opacity: 0; transform: scale(1.08); }
+  30% { opacity: .92; }
+  100% { background-position: 0 100%; opacity: .9; transform: scale(1); }
+}
+
+/* Direct-chat bars stay lightly glassy, while their controls retain a solid surface. */
+.app-shell .chat-panel--direct .chat-head:not(.chat-head--with-pinned),
+.app-shell .chat-panel--direct > .composer {
+  border-color: rgba(173, 210, 231, .2);
+  background-color: rgba(241, 249, 254, .36) !important;
+  box-shadow: 0 6px 20px rgba(37, 75, 105, .1) !important;
+  backdrop-filter: blur(16px) saturate(1.08) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(1.08) !important;
+}
+body.theme-dark .app-shell .chat-panel--direct .chat-head:not(.chat-head--with-pinned),
+body.theme-dark .app-shell .chat-panel--direct > .composer {
+  border-color: rgba(129, 199, 235, .18);
+  background-color: rgba(4, 18, 32, .5) !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .22) !important;
+}
+.app-shell .chat-panel--direct .call-button,
+.app-shell .chat-panel--direct .composer-icon {
+  border-color: rgba(167, 212, 235, .42) !important;
+  background: rgba(246, 252, 255, .9) !important;
+  box-shadow: 0 4px 12px rgba(29, 71, 103, .14), inset 0 1px rgba(255, 255, 255, .72) !important;
+}
+body.theme-dark .app-shell .chat-panel--direct .call-button,
+body.theme-dark .app-shell .chat-panel--direct .composer-icon {
+  border-color: rgba(123, 207, 247, .34) !important;
+  background: rgba(9, 37, 57, .92) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .28), inset 0 1px rgba(188, 234, 255, .1) !important;
+}
+
+/* Keep channel audience information beside attachments without restoring a header subtitle. */
+.channel-subscriber-count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.chat-head--channel .channel-subscriber-count { color: color-mix(in srgb, var(--channel-panel-text, var(--text)) 72%, transparent); }
+
+/* Dividers no longer compete with the conversation content. */
+.sidebar, .rightbar, .chat-panel {
+  --panel-divider: rgba(126, 158, 179, .18);
+  --panel-divider-glow: rgba(109, 159, 187, .06);
+}
+.sidebar::before, .rightbar::before {
+  width: 1px;
+  border-color: rgba(255, 255, 255, .16);
+  background: rgba(129, 162, 184, .18);
+  box-shadow: none;
+}
+.chat-head::before {
+  height: 1px;
+  background: rgba(129, 162, 184, .2);
+  box-shadow: none;
+}
+
+/* Timestamps must remain neutral grey on every message bubble. */
+.message .message__meta,
+.message--audio .message__meta { color: #8d98a5 !important; }
+
+/* Override the dark incoming bubble text inheritance for the timestamp only. */
+body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) .message:not(.own) .message__meta {
+  color: #8d98a5 !important;
+}
+
+.channel-subscriber-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+
+.channel-subscriber-count__icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.channel-gift-settings { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: rgba(var(--primary-rgb), .045); }
+.channel-gift-settings summary { cursor: pointer; color: var(--text); font-weight: 700; }
+.channel-gift-settings .channel-setting { background: var(--card); }
+.channel-package-gift { display: block; margin: -4px 0 9px; color: #9a6900; font-weight: 700; text-align: center; }
+
+/* The live prism keeps its movement but uses a calmer, darker palette. */
+body.chat-theme-prism,
+body.chat-theme-live {
+  --dialog-panel-background: radial-gradient(circle at 18% 22%, color-mix(in srgb, var(--prism-a, #ff91d1) 16%, transparent), transparent 40%), radial-gradient(circle at 83% 76%, color-mix(in srgb, var(--prism-b, #61e7df) 13%, transparent), transparent 44%), linear-gradient(130deg, color-mix(in srgb, var(--prism-c, #382a83) 78%, #17243f), color-mix(in srgb, var(--prism-d, #245fae) 48%, #17243f) 52%, color-mix(in srgb, var(--prism-e, #116b80) 55%, #17243f));
+}
+.chat-background-prism,
+.chat-background-live,
+.site-background-prism,
+.site-background-live { filter: saturate(.82) brightness(.88); }
+
+
+@media (prefers-reduced-motion: reduce) {
+  body.chat-theme-prism,
+  body.chat-theme-live,
+  .chat-background-prism,
+  .chat-background-live,
+  .site-background-prism,
+  .site-background-live,
+  .auth-shell::before { animation: none !important; }
+}
+
+/* Daylight dialog wallpapers: preserve each palette while keeping chat-list text legible. */
+body:not(.theme-dark).chat-theme-default,
+body:not(.theme-dark).chat-theme-whatsapp,
+body:not(.theme-dark).chat-theme-mint,
+body:not(.theme-dark).chat-theme-sunset,
+body:not(.theme-dark).chat-theme-ocean,
+body:not(.theme-dark).chat-theme-lavender,
+body:not(.theme-dark).chat-theme-forest {
+  --day-surface: linear-gradient(135deg, #f5fbff, #e4f1f8 55%, #dcebf4);
+  --day-header: linear-gradient(135deg, rgba(229, 245, 252, .98), rgba(203, 229, 240, .95));
+  --day-card: linear-gradient(135deg, rgba(255, 255, 255, .97), rgba(240, 248, 252, .94));
+  --day-card-active: linear-gradient(135deg, rgba(230, 243, 249, .99), rgba(211, 232, 241, .97));
+  --day-ink: #17212b;
+  --day-muted: #4e6473;
+  --day-line: rgba(53, 105, 130, .2);
+  --day-ai-surface: linear-gradient(135deg, rgba(255, 255, 255, .94), rgba(223, 241, 248, .9));
+  --day-ai-input: linear-gradient(135deg, #ffffff, #edf7fb);
+}
+body:not(.theme-dark).chat-theme-whatsapp {
+  --day-surface: linear-gradient(135deg, #f4fbf4, #e1f1e4 55%, #d8ebdc);
+  --day-header: linear-gradient(135deg, rgba(231, 247, 232, .98), rgba(194, 228, 202, .95));
+  --day-card: linear-gradient(135deg, rgba(255, 255, 255, .98), rgba(238, 248, 239, .95));
+  --day-card-active: linear-gradient(135deg, rgba(226, 244, 229, .99), rgba(205, 234, 211, .97));
+  --day-ink: #193327;
+  --day-muted: #4a6956;
+  --day-line: rgba(54, 120, 75, .21);
+  --day-ai-surface: linear-gradient(135deg, rgba(255, 255, 255, .95), rgba(220, 242, 225, .91));
+  --day-ai-input: linear-gradient(135deg, #ffffff, #edf8ef);
+}
+body:not(.theme-dark).chat-theme-mint {
+  --day-surface: linear-gradient(135deg, #f3fff5, #dff6e3 55%, #d2edda);
+  --day-header: linear-gradient(135deg, rgba(223, 248, 230, .98), rgba(178, 226, 195, .95));
+  --day-card: linear-gradient(135deg, rgba(255, 255, 255, .98), rgba(235, 249, 238, .95));
+  --day-card-active: linear-gradient(135deg, rgba(217, 243, 224, .99), rgba(188, 230, 202, .97));
+  --day-ink: #16392a;
+  --day-muted: #43705a;
+  --day-line: rgba(42, 128, 80, .22);
+  --day-ai-surface: linear-gradient(135deg, rgba(255, 255, 255, .95), rgba(213, 243, 222, .91));
+  --day-ai-input: linear-gradient(135deg, #ffffff, #eaf8ee);
+}
+body:not(.theme-dark).chat-theme-sunset {
+  --day-surface: linear-gradient(135deg, #fff9f4, #ffe9dc 55%, #f1e2f2);
+  --day-header: linear-gradient(135deg, rgba(255, 237, 221, .98), rgba(238, 207, 222, .95));
+  --day-card: linear-gradient(135deg, rgba(255, 255, 255, .98), rgba(255, 243, 237, .95));
+  --day-card-active: linear-gradient(135deg, rgba(255, 232, 221, .99), rgba(244, 216, 228, .97));
+  --day-ink: #3b2730;
+  --day-muted: #755766;
+  --day-line: rgba(166, 94, 112, .22);
+  --day-ai-surface: linear-gradient(135deg, rgba(255, 255, 255, .95), rgba(255, 226, 221, .91));
+  --day-ai-input: linear-gradient(135deg, #ffffff, #fff2ee);
+}
+body:not(.theme-dark).chat-theme-ocean {
+  --day-surface: linear-gradient(135deg, #f1fcff, #dcedf7 55%, #dbe4f6);
+  --day-header: linear-gradient(135deg, rgba(221, 242, 250, .98), rgba(191, 220, 238, .95));
+  --day-card: linear-gradient(135deg, rgba(255, 255, 255, .98), rgba(237, 248, 253, .95));
+  --day-card-active: linear-gradient(135deg, rgba(220, 241, 250, .99), rgba(195, 225, 242, .97));
+  --day-ink: #17354a;
+  --day-muted: #4a6e83;
+  --day-line: rgba(42, 118, 168, .22);
+  --day-ai-surface: linear-gradient(135deg, rgba(255, 255, 255, .95), rgba(215, 239, 249, .91));
+  --day-ai-input: linear-gradient(135deg, #ffffff, #eaf6fb);
+}
+body:not(.theme-dark).chat-theme-lavender {
+  --day-surface: linear-gradient(135deg, #fffaff, #eee7fb 55%, #e0e3f7);
+  --day-header: linear-gradient(135deg, rgba(241, 231, 251, .98), rgba(216, 213, 242, .95));
+  --day-card: linear-gradient(135deg, rgba(255, 255, 255, .98), rgba(247, 242, 253, .95));
+  --day-card-active: linear-gradient(135deg, rgba(238, 229, 250, .99), rgba(218, 216, 243, .97));
+  --day-ink: #302943;
+  --day-muted: #655d7a;
+  --day-line: rgba(104, 79, 160, .22);
+  --day-ai-surface: linear-gradient(135deg, rgba(255, 255, 255, .95), rgba(232, 225, 249, .91));
+  --day-ai-input: linear-gradient(135deg, #ffffff, #f4effb);
+}
+body:not(.theme-dark).chat-theme-forest {
+  --day-surface: linear-gradient(135deg, #f5fcf4, #e0f0df 55%, #d7ebe1);
+  --day-header: linear-gradient(135deg, rgba(225, 243, 224, .98), rgba(190, 221, 202, .95));
+  --day-card: linear-gradient(135deg, rgba(255, 255, 255, .98), rgba(237, 248, 237, .95));
+  --day-card-active: linear-gradient(135deg, rgba(220, 241, 224, .99), rgba(195, 228, 207, .97));
+  --day-ink: #1c3428;
+  --day-muted: #4e6c5a;
+  --day-line: rgba(42, 111, 76, .22);
+  --day-ai-surface: linear-gradient(135deg, rgba(255, 255, 255, .95), rgba(218, 240, 223, .91));
+  --day-ai-input: linear-gradient(135deg, #ffffff, #edf7ef);
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar,
+body:not(.theme-dark).chat-theme-default .app-shell .rightbar,
+body:not(.theme-dark).chat-theme-default .app-shell .chat-panel:not(.chat-panel--channel-themed),
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .rightbar,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .chat-panel:not(.chat-panel--channel-themed),
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar,
+body:not(.theme-dark).chat-theme-mint .app-shell .rightbar,
+body:not(.theme-dark).chat-theme-mint .app-shell .chat-panel:not(.chat-panel--channel-themed),
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar,
+body:not(.theme-dark).chat-theme-sunset .app-shell .rightbar,
+body:not(.theme-dark).chat-theme-sunset .app-shell .chat-panel:not(.chat-panel--channel-themed),
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar,
+body:not(.theme-dark).chat-theme-ocean .app-shell .rightbar,
+body:not(.theme-dark).chat-theme-ocean .app-shell .chat-panel:not(.chat-panel--channel-themed),
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar,
+body:not(.theme-dark).chat-theme-lavender .app-shell .rightbar,
+body:not(.theme-dark).chat-theme-lavender .app-shell .chat-panel:not(.chat-panel--channel-themed),
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar,
+body:not(.theme-dark).chat-theme-forest .app-shell .rightbar,
+body:not(.theme-dark).chat-theme-forest .app-shell .chat-panel:not(.chat-panel--channel-themed) {
+  background: var(--day-surface) !important;
+  color: var(--day-ink) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar > .profile,
+body:not(.theme-dark).chat-theme-default .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body:not(.theme-dark).chat-theme-default .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar > .profile,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar > .profile,
+body:not(.theme-dark).chat-theme-mint .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body:not(.theme-dark).chat-theme-mint .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar > .profile,
+body:not(.theme-dark).chat-theme-sunset .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body:not(.theme-dark).chat-theme-sunset .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar > .profile,
+body:not(.theme-dark).chat-theme-ocean .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body:not(.theme-dark).chat-theme-ocean .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar > .profile,
+body:not(.theme-dark).chat-theme-lavender .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body:not(.theme-dark).chat-theme-lavender .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar > .profile,
+body:not(.theme-dark).chat-theme-forest .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body:not(.theme-dark).chat-theme-forest .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer {
+  border-color: var(--day-line) !important;
+  background: var(--day-header) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .row,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .row,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .row,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .row,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .row,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .row,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .row {
+  border-color: var(--day-line) !important;
+  background: var(--day-card) !important;
+  color: var(--day-ink) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .72), 0 4px 12px rgba(32, 68, 82, .08) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .row:hover,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .row.active,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .row:hover,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .row.active,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .row:hover,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .row.active,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .row:hover,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .row.active,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .row:hover,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .row.active,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .row:hover,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .row.active,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .row:hover,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .row.active {
+  background: var(--day-card-active) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .row__title,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .row__title,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .row__title,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .row__title,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .row__title,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .row__title,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .row__title,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .chat-menu-button {
+  color: var(--day-ink) !important;
+  text-shadow: none !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .chat-menu-button,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .chat-menu-button {
+  color: var(--day-muted) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .profile-trigger,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .profile__body strong,
+body:not(.theme-dark).chat-theme-default .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head__body strong,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .profile-trigger,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .profile__body strong,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head__body strong,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .profile-trigger,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .profile__body strong,
+body:not(.theme-dark).chat-theme-mint .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head__body strong,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .profile-trigger,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .profile__body strong,
+body:not(.theme-dark).chat-theme-sunset .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head__body strong,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .profile-trigger,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .profile__body strong,
+body:not(.theme-dark).chat-theme-ocean .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head__body strong,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .profile-trigger,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .profile__body strong,
+body:not(.theme-dark).chat-theme-lavender .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head__body strong,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .profile-trigger,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .profile__body strong,
+body:not(.theme-dark).chat-theme-forest .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head__body strong {
+  color: var(--day-ink) !important;
+  text-shadow: none !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .profile__body span,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .profile-menu-arrow,
+body:not(.theme-dark).chat-theme-default .app-shell .chat-head__body span,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .profile__body span,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .profile-menu-arrow,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .chat-head__body span,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .profile__body span,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .profile-menu-arrow,
+body:not(.theme-dark).chat-theme-mint .app-shell .chat-head__body span,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .profile__body span,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .profile-menu-arrow,
+body:not(.theme-dark).chat-theme-sunset .app-shell .chat-head__body span,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .profile__body span,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .profile-menu-arrow,
+body:not(.theme-dark).chat-theme-ocean .app-shell .chat-head__body span,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .profile__body span,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .profile-menu-arrow,
+body:not(.theme-dark).chat-theme-lavender .app-shell .chat-head__body span,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .profile__body span,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .profile-menu-arrow,
+body:not(.theme-dark).chat-theme-forest .app-shell .chat-head__body span {
+  color: var(--day-muted) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .chat-filters,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .chat-filters,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .chat-filters,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .chat-filters,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .chat-filters,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .chat-filters,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .chat-filters {
+  border-color: var(--day-line) !important;
+  background: rgba(255, 255, 255, .6) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar .chat-filters .chip,
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar #globalSearch,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar .chat-filters .chip,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar #globalSearch,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar .chat-filters .chip,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar #globalSearch,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar .chat-filters .chip,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar #globalSearch,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar .chat-filters .chip,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar #globalSearch,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar .chat-filters .chip,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar #globalSearch,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar .chat-filters .chip,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar #globalSearch {
+  border-color: var(--day-line) !important;
+  background: rgba(255, 255, 255, .78) !important;
+  color: var(--day-ink) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .sidebar #globalSearch::placeholder,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .sidebar #globalSearch::placeholder,
+body:not(.theme-dark).chat-theme-mint .app-shell .sidebar #globalSearch::placeholder,
+body:not(.theme-dark).chat-theme-sunset .app-shell .sidebar #globalSearch::placeholder,
+body:not(.theme-dark).chat-theme-ocean .app-shell .sidebar #globalSearch::placeholder,
+body:not(.theme-dark).chat-theme-lavender .app-shell .sidebar #globalSearch::placeholder,
+body:not(.theme-dark).chat-theme-forest .app-shell .sidebar #globalSearch::placeholder {
+  color: var(--day-muted) !important;
+  opacity: 1;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea,
+body:not(.theme-dark).chat-theme-mint .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea,
+body:not(.theme-dark).chat-theme-sunset .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea,
+body:not(.theme-dark).chat-theme-ocean .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea,
+body:not(.theme-dark).chat-theme-lavender .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea,
+body:not(.theme-dark).chat-theme-forest .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea {
+  border-color: var(--day-line) !important;
+  background: var(--day-ai-input) !important;
+  color: var(--day-ink) !important;
+}
+body:not(.theme-dark).chat-theme-default .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea::placeholder,
+body:not(.theme-dark).chat-theme-whatsapp .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea::placeholder,
+body:not(.theme-dark).chat-theme-mint .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea::placeholder,
+body:not(.theme-dark).chat-theme-sunset .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea::placeholder,
+body:not(.theme-dark).chat-theme-ocean .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea::placeholder,
+body:not(.theme-dark).chat-theme-lavender .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea::placeholder,
+body:not(.theme-dark).chat-theme-forest .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea::placeholder {
+  color: var(--day-muted) !important;
+}
+body:not(.theme-dark).chat-theme-default .ai-agent-panel,
+body:not(.theme-dark).chat-theme-default .ai-agent-panel .card,
+body:not(.theme-dark).chat-theme-default .ai-agent-help,
+body:not(.theme-dark).chat-theme-default .ai-agent-panel__notice,
+body:not(.theme-dark).chat-theme-default .ai-agent-message:not(.ai-agent-message--user),
+body:not(.theme-dark).chat-theme-default .ai-agent-answer,
+body:not(.theme-dark).chat-theme-default .ai-agent-global-item,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-panel,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-panel .card,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-help,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-panel__notice,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-message:not(.ai-agent-message--user),
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-answer,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-global-item,
+body:not(.theme-dark).chat-theme-mint .ai-agent-panel,
+body:not(.theme-dark).chat-theme-mint .ai-agent-panel .card,
+body:not(.theme-dark).chat-theme-mint .ai-agent-help,
+body:not(.theme-dark).chat-theme-mint .ai-agent-panel__notice,
+body:not(.theme-dark).chat-theme-mint .ai-agent-message:not(.ai-agent-message--user),
+body:not(.theme-dark).chat-theme-mint .ai-agent-answer,
+body:not(.theme-dark).chat-theme-mint .ai-agent-global-item,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-panel,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-panel .card,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-help,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-panel__notice,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-message:not(.ai-agent-message--user),
+body:not(.theme-dark).chat-theme-sunset .ai-agent-answer,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-global-item,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-panel,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-panel .card,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-panel__notice,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-help,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-message:not(.ai-agent-message--user),
+body:not(.theme-dark).chat-theme-ocean .ai-agent-answer,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-global-item,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-panel,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-panel .card,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-help,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-panel__notice,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-message:not(.ai-agent-message--user),
+body:not(.theme-dark).chat-theme-lavender .ai-agent-answer,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-global-item,
+body:not(.theme-dark).chat-theme-forest .ai-agent-panel,
+body:not(.theme-dark).chat-theme-forest .ai-agent-panel .card,
+body:not(.theme-dark).chat-theme-forest .ai-agent-help,
+body:not(.theme-dark).chat-theme-forest .ai-agent-panel__notice,
+body:not(.theme-dark).chat-theme-forest .ai-agent-message:not(.ai-agent-message--user),
+body:not(.theme-dark).chat-theme-forest .ai-agent-answer,
+body:not(.theme-dark).chat-theme-forest .ai-agent-global-item {
+  border-color: var(--day-line) !important;
+  background: var(--day-ai-surface) !important;
+  color: var(--day-ink) !important;
+}
+body:not(.theme-dark).chat-theme-default .ai-agent-panel .muted,
+body:not(.theme-dark).chat-theme-default .ai-agent-panel small,
+body:not(.theme-dark).chat-theme-default .ai-agent-global-item span,
+body:not(.theme-dark).chat-theme-default .ai-agent-help .muted,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-panel .muted,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-panel small,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-global-item span,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-help .muted,
+body:not(.theme-dark).chat-theme-mint .ai-agent-panel .muted,
+body:not(.theme-dark).chat-theme-mint .ai-agent-panel small,
+body:not(.theme-dark).chat-theme-mint .ai-agent-global-item span,
+body:not(.theme-dark).chat-theme-mint .ai-agent-help .muted,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-panel .muted,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-panel small,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-global-item span,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-help .muted,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-panel .muted,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-panel small,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-global-item span,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-help .muted,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-panel .muted,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-panel small,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-global-item span,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-help .muted,
+body:not(.theme-dark).chat-theme-forest .ai-agent-panel .muted,
+body:not(.theme-dark).chat-theme-forest .ai-agent-panel small,
+body:not(.theme-dark).chat-theme-forest .ai-agent-global-item span,
+body:not(.theme-dark).chat-theme-forest .ai-agent-help .muted {
+  color: var(--day-muted) !important;
+}
+body:not(.theme-dark).chat-theme-default .ai-agent-panel textarea,
+body:not(.theme-dark).chat-theme-default .ai-agent-panel select,
+body:not(.theme-dark).chat-theme-default .ai-agent-help textarea,
+body:not(.theme-dark).chat-theme-default .ai-agent-help select,
+body:not(.theme-dark).chat-theme-default .ai-agent-model-picker__options,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-panel textarea,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-panel select,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-help textarea,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-help select,
+body:not(.theme-dark).chat-theme-whatsapp .ai-agent-model-picker__options,
+body:not(.theme-dark).chat-theme-mint .ai-agent-panel textarea,
+body:not(.theme-dark).chat-theme-mint .ai-agent-panel select,
+body:not(.theme-dark).chat-theme-mint .ai-agent-help textarea,
+body:not(.theme-dark).chat-theme-mint .ai-agent-help select,
+body:not(.theme-dark).chat-theme-mint .ai-agent-model-picker__options,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-panel textarea,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-panel select,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-help textarea,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-help select,
+body:not(.theme-dark).chat-theme-sunset .ai-agent-model-picker__options,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-panel textarea,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-panel select,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-help textarea,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-help select,
+body:not(.theme-dark).chat-theme-ocean .ai-agent-model-picker__options,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-panel textarea,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-panel select,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-help textarea,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-help select,
+body:not(.theme-dark).chat-theme-lavender .ai-agent-model-picker__options,
+body:not(.theme-dark).chat-theme-forest .ai-agent-panel textarea,
+body:not(.theme-dark).chat-theme-forest .ai-agent-panel select,
+body:not(.theme-dark).chat-theme-forest .ai-agent-help textarea,
+body:not(.theme-dark).chat-theme-forest .ai-agent-help select,
+body:not(.theme-dark).chat-theme-forest .ai-agent-model-picker__options {
+  border-color: var(--day-line) !important;
+  background: var(--day-ai-input) !important;
+  color: var(--day-ink) !important;
+}
+
+/* Daylight Jade keeps the original dark-green surface and light chat cards. */
+body:not(.theme-dark).chat-theme-jade {
+  --jade-surface: radial-gradient(circle at 11% 12%, rgba(104, 238, 181, .24), transparent 39%), radial-gradient(circle at 88% 84%, rgba(45, 191, 187, .22), transparent 43%), linear-gradient(135deg, #062523, #0a5147 52%, #07352f);
+  --jade-header: linear-gradient(135deg, rgba(82, 198, 163, .94), rgba(31, 145, 137, .91));
+  --jade-card: linear-gradient(135deg, rgba(231, 250, 242, .98), rgba(190, 235, 219, .96));
+  --jade-card-active: linear-gradient(135deg, rgba(210, 244, 229, .99), rgba(165, 224, 204, .98));
+  --jade-ink: #103a38;
+  --jade-muted: #356966;
+}
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar,
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) { background: var(--jade-surface) !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar > .profile,
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) .chat-head,
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) > .composer { background: var(--jade-header) !important; border-color: rgba(205, 255, 236, .22) !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .row { border-color: rgba(23, 105, 91, .24) !important; background: var(--jade-card) !important; color: var(--jade-ink) !important; box-shadow: inset 0 1px rgba(255, 255, 255, .68), 0 4px 12px rgba(2, 49, 43, .1) !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .row:hover,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .row.active { background: var(--jade-card-active) !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .row__title,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .chat-menu-button { color: var(--jade-ink) !important; text-shadow: none !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .row__sub,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .chat-row__time,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .chat-menu-button { color: var(--jade-muted) !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .profile-trigger,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .profile__body strong,
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-head__body strong { color: #f3fff9 !important; text-shadow: 0 1px rgba(0, 49, 42, .26) !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .profile__body span,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .profile-menu-arrow,
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-head__body span { color: rgba(238, 255, 248, .8) !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea { border-color: rgba(152, 241, 207, .44) !important; background: linear-gradient(135deg, rgba(4, 54, 48, .94), rgba(8, 83, 70, .92)) !important; color: #effff7 !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) .composer textarea::placeholder { color: rgba(222, 250, 239, .74) !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) .empty__card,
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) .empty-chat-notice { border-color: rgba(169, 246, 213, .3) !important; background: linear-gradient(135deg, rgba(9, 83, 70, .88), rgba(12, 119, 94, .8)) !important; color: #f0fff7 !important; }
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) .empty__card p,
+body:not(.theme-dark).chat-theme-jade .app-shell .chat-panel:not(.chat-panel--channel-themed) .empty-chat-notice p { color: rgba(229, 255, 244, .82) !important; }
+body:not(.theme-dark).chat-theme-jade .ai-agent-panel,
+body:not(.theme-dark).chat-theme-jade .ai-agent-panel .card,
+body:not(.theme-dark).chat-theme-jade .ai-agent-panel__notice,
+body:not(.theme-dark).chat-theme-jade .ai-agent-message,
+body:not(.theme-dark).chat-theme-jade .ai-agent-answer,
+body:not(.theme-dark).chat-theme-jade .ai-agent-global-item { border-color: rgba(138, 236, 199, .25) !important; background: linear-gradient(135deg, rgba(7, 75, 65, .92), rgba(10, 112, 88, .84)) !important; color: #effff7 !important; }
+body:not(.theme-dark).chat-theme-jade .ai-agent-panel .muted,
+body:not(.theme-dark).chat-theme-jade .ai-agent-panel small,
+body:not(.theme-dark).chat-theme-jade .ai-agent-global-item span { color: rgba(225, 255, 241, .76) !important; }
+body:not(.theme-dark).chat-theme-jade .ai-agent-panel textarea,
+body:not(.theme-dark).chat-theme-jade .ai-agent-panel select,
+body:not(.theme-dark).chat-theme-jade .ai-agent-model-picker__options { border-color: rgba(138, 236, 199, .32) !important; background: linear-gradient(135deg, #063d36, #075c4b) !important; color: #effff7 !important; }
+
+
+/* Restored loaders and the isolated night welcome title flow. */
+.page-loader__spinner {
+  position: relative;
+  width: 74px;
+  height: 74px;
+  margin: auto;
+  border: 0;
+  border-radius: 0;
+  perspective: 420px;
+  transform-style: preserve-3d;
+  animation: none;
+}
+
+.page-loader__spinner::before,
+.page-loader__spinner::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background-image: radial-gradient(circle, rgba(var(--primary-rgb), .92) 0 1.15px, transparent 1.7px);
+  background-size: 8px 8px;
+  transform-origin: center;
+}
+
+.page-loader__spinner::before {
+  animation: page-loader-points 2.25s cubic-bezier(.55, .05, .45, .95) infinite;
+}
+
+.page-loader__spinner::after {
+  opacity: .4;
+  animation: page-loader-points 2.25s cubic-bezier(.55, .05, .45, .95) -.85s infinite reverse;
+}
+
+@keyframes page-loader-points {
+  0%, 100% { transform: rotateX(16deg) rotateY(-24deg) rotateZ(-8deg) scale(.9); }
+  25% { transform: rotateX(64deg) rotateY(10deg) rotateZ(26deg) scale(1); }
+  50% { transform: rotateX(12deg) rotateY(64deg) rotateZ(45deg) scale(.94); }
+  75% { transform: rotateX(-54deg) rotateY(12deg) rotateZ(68deg) scale(1); }
+}
+
+.ai-agent-thinking {
+  display: inline-flex;
+  width: fit-content;
+  height: 22px;
+  gap: 5px;
+  align-items: center;
+}
+
+.ai-agent-thinking i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: ai-agent-thinking-bounce .9s ease-in-out infinite;
+}
+
+.ai-agent-thinking i:nth-child(2) { animation-delay: .12s; }
+.ai-agent-thinking i:nth-child(3) { animation-delay: .24s; }
+
+@keyframes ai-agent-thinking-bounce {
+  0%, 60%, 100% { opacity: .32; transform: translateY(2px) scale(.78); }
+  30% { opacity: 1; transform: translateY(-2px) scale(1); }
+}
+
+/* Daylight Jade uses a light, readable search and filter surface. */
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .chat-filters {
+  border-color: rgba(23, 105, 91, .24) !important;
+  background: rgba(229, 250, 241, .68) !important;
+  box-shadow: inset 0 1px rgba(255, 255, 255, .62) !important;
+}
+
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .chat-filters .chip,
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar #globalSearch {
+  border-color: rgba(23, 105, 91, .24) !important;
+  background: rgba(245, 255, 250, .88) !important;
+  color: var(--jade-ink) !important;
+}
+
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar .chat-filters .chip.active {
+  background: #0d6b5f !important;
+  color: #effff7 !important;
+  box-shadow: 0 4px 10px rgba(2, 73, 62, .24) !important;
+}
+
+body:not(.theme-dark).chat-theme-jade .app-shell .sidebar #globalSearch::placeholder {
+  color: var(--jade-muted) !important;
+  opacity: 1;
+}
+
+@keyframes night-welcome-title-flow {
+  from { background-position: 0% 50%; }
+  to { background-position: 200% 50%; }
+}
+
+body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) .empty__title-gradient {
+  background: linear-gradient(100deg, #ffffff 0%, #8ee7ff 24%, #bd9cff 50%, #7df0c8 74%, #ffffff 100%) !important;
+  background-position: 0% 50% !important;
+  background-size: 280% 100% !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  color: transparent !important;
+  animation: night-welcome-title-flow 7s linear infinite !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-loader__spinner::before,
+  .page-loader__spinner::after,
+  .ai-agent-thinking i,
+  body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) .empty__title-gradient {
+    animation: none !important;
+  }
+
+  .ai-agent-thinking i {
+    opacity: .8;
+    transform: none;
+  }
+
+  body.theme-dark .app-shell .chat-panel:not(.chat-panel--channel-themed) .empty__title-gradient {
+    background-position: 50% 50% !important;
+  }
+}
+
+
+/* Keep the complete image visible above the zoom controls, including portrait photos. */
+.media-overlay { box-sizing: border-box; }
+.media-overlay__photo-viewer { display: grid; grid-template-rows: minmax(0, 1fr) auto; width: min(1200px, 100%); height: 100%; min-height: 0; gap: 12px; padding: 42px 0 8px; box-sizing: border-box; }
+.media-overlay__image-stage { display: grid; width: 100%; min-height: 0; place-items: center; overflow: hidden; touch-action: none; }
+.media-overlay__image-stage img { display: block; width: auto; height: auto; max-width: 100%; max-height: 100%; object-fit: contain; transform-origin: center; transition: transform .12s ease-out; }
+.media-overlay__image-stage.is-pannable { cursor: grab; }
+.media-overlay__image-stage.is-pannable:active { cursor: grabbing; }
+.media-overlay__zoom-controls { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; align-items: center; max-width: 620px; margin: 0 auto; padding: 7px 10px; border-radius: 14px; background: rgba(5, 12, 20, .6); color: #fff; font-size: 12px; }
+.media-overlay__zoom-controls button { min-height: 30px; padding: 4px 10px; border: 0; border-radius: 9px; background: rgba(255, 255, 255, .16); color: inherit; font: inherit; font-weight: 700; }
+.media-overlay__zoom-controls button:disabled { opacity: .45; }
+.media-overlay__zoom-controls output { min-width: 42px; text-align: center; font-weight: 700; }
+.media-overlay__zoom-controls small { flex: 1 0 100%; text-align: center; opacity: .82; }
+.media-overlay__vk-player { width: min(960px, 100%); aspect-ratio: 16 / 9; max-height: 100%; border: 0; border-radius: 12px; background: #000; box-shadow: 0 24px 80px rgba(0, 0, 0, .45); }
+@media (max-height: 540px) { .media-overlay__photo-viewer { gap: 6px; padding-top: 0; } .media-overlay__zoom-controls { padding: 4px 7px; } .media-overlay__zoom-controls small { display: none; } }
+
+.vk-video-card { border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; }
+
+
+/* The image itself must be bounded by the viewport, not by a grid track. */
+.media-overlay__photo-viewer { height: min(100%, calc(100dvh - 56px)); }
+.media-overlay__image-stage img { width: auto !important; height: auto !important; max-width: 100% !important; max-height: calc(100dvh - 170px) !important; object-fit: contain !important; }
+@media (max-height: 540px) { .media-overlay__image-stage img { max-height: calc(100dvh - 92px) !important; } }
+
+/* Visible feedback while channel photos and videos are transferred or buffered. */
+.message-media-loading {
+  display: grid;
+  min-height: 132px;
+  padding: 18px;
+  place-items: center;
+  gap: 9px;
+  background: linear-gradient(135deg, rgba(16, 33, 54, .92), rgba(var(--primary-rgb), .52));
+  color: #fff;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+}
+.message-media-loading i {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgba(255, 255, 255, .35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: message-media-spin .8s linear infinite;
+}
+.message-photo-button[data-media-loading], .message-video[data-media-loading] { position: relative; min-width: min(260px, 100%); background: #102136; }
+.message-photo-button[data-media-loading] .message-media-loading, .message-video[data-media-loading] .message-media-loading { position: absolute; inset: 0; z-index: 1; transition: opacity .18s ease, visibility .18s ease; }
+.message-photo-button[data-media-loading].is-loaded .message-media-loading, .message-video[data-media-loading].is-loaded .message-media-loading { visibility: hidden; opacity: 0; pointer-events: none; }
+.message-photo-button[data-media-loading] .message-photo { min-height: 132px; }
+@keyframes message-media-spin { to { transform: rotate(360deg); } }
+
+
+/* Profile channels are dedicated navigation cards, not generic list rows. */
+.profile-hero__body { min-width: 0; }
+.profile-hero__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.profile-description-card, .profile-channels-card { margin-top: 14px; }
+.profile-description-card > b, .profile-channels-card > b { display: block; margin-bottom: 10px; }
+.profile-description { margin: 0; white-space: pre-wrap; }
+.profile-channels { display: grid; gap: 10px; }
+.profile-channel { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 10px; border: 1px solid rgba(var(--primary-rgb), .18); border-radius: 18px; background: rgba(var(--primary-rgb), .055); }
+.profile-channel__open { display: flex; min-width: 0; flex: 1; align-items: center; gap: 11px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.profile-channel__open:hover .profile-channel__body b, .profile-channel__open:focus-visible .profile-channel__body b { color: var(--primary-dark); }
+.profile-channel__open:focus-visible { border-radius: 12px; outline: 2px solid var(--primary); outline-offset: 3px; }
+.profile-channel__avatar { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; overflow: hidden; border-radius: 14px; background: linear-gradient(135deg, var(--primary), #65d2c0); color: #fff; font-weight: 800; object-fit: cover; }
+.profile-channel__body { min-width: 0; display: grid; gap: 3px; }
+.profile-channel__body b, .profile-channel__body small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-channel__body small { color: var(--muted); }
+.profile-channel__arrow { margin-left: auto; color: var(--primary); font-size: 29px; line-height: 1; }
+.profile-channel__visibility { flex: 0 0 auto; padding: 7px 9px; border: 1px solid rgba(var(--primary-rgb), .24); border-radius: 10px; background: transparent; color: var(--primary-dark); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+body.theme-dark .profile-channel { border-color: rgba(168, 226, 246, .2); background: rgba(7, 26, 45, .64); }
+body.theme-dark .profile-channel__body small { color: #b7d4e5; }
+@media (max-width: 620px) { .profile-hero__actions { gap: 7px; } .profile-hero__actions .button { flex: 1 1 auto; } .profile-channel { align-items: flex-start; } }
+
+
+/* Compact post engagement metadata. */
+.message__views { display: inline-flex; align-items: center; gap: 3px; margin-right: 5px; color: var(--muted); font-size: 10px; font-weight: 700; line-height: 1; vertical-align: middle; }
+.message__views svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.reacts { gap: 4px; margin-top: 4px; }
+.reacts button { padding: 2px 6px; font-size: 12px; line-height: 1.25; }

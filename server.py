@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Chat-Pro local backend with admin panel.
 
 Run: python3 server.py
@@ -18,6 +19,7 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import mimetypes
 import os
 import re
@@ -27,14 +29,14 @@ import sqlite3
 import smtplib
 import threading
 import time
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from email.message import EmailMessage
 from html import unescape
 from http import HTTPStatus
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib import error as urlerror
-from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urljoin, urlparse, urlunparse
 from urllib import request as urlrequest
 from xml.etree import ElementTree
 
@@ -50,8 +52,14 @@ RSS_POLL_INTERVAL = 300
 RSS_MAX_BYTES = 512_000
 RSS_MAX_ENTRIES = 100
 RSS_IMAGE_MAX_BYTES = 2_500_000
+CIRCLE_PREVIEW_MAX_BYTES = 400_000
 VK_POLL_INTERVAL = 300
 VK_API_VERSION = "5.199"
+VK_OAUTH_CLIENT_ID = os.environ.get("VK_OAUTH_CLIENT_ID", "").strip()
+VK_OAUTH_CLIENT_SECRET = os.environ.get("VK_OAUTH_CLIENT_SECRET", "").strip()
+VK_OAUTH_REDIRECT_URI = os.environ.get("VK_OAUTH_REDIRECT_URI", "").strip()
+VK_OAUTH_SCOPE = os.environ.get("VK_OAUTH_SCOPE", "").strip()
+VK_ID_SERVICE_TOKEN = os.environ.get("VK_ID_SERVICE_TOKEN", "").strip()
 AUTH_CODE_TTL = 600
 AUTH_CODE_MAX_ATTEMPTS = 5
 CHAT_ACTIVITY_TTL = 6
@@ -73,7 +81,7 @@ def read_genapi_settings() -> dict[str, str]:
     try:
         for line in Path("/etc/chat-pro/genapi.env").read_text(encoding="utf-8").splitlines():
             key, separator, value = line.strip().partition("=")
-            if separator and key in {"GENAPI_API_KEY", "GENAPI_BASE_URL", "GENAPI_MODEL"}:
+            if separator and key in {"GENAPI_API_KEY", "GENAPI_BASE_URL", "GENAPI_MODEL", "GENAPI_ADMIN_MODEL"}:
                 settings[key] = value.strip()
     except OSError:
         pass
@@ -84,14 +92,82 @@ GENAPI_SETTINGS = read_genapi_settings()
 GENAPI_API_KEY = os.environ.get("GENAPI_API_KEY", GENAPI_SETTINGS.get("GENAPI_API_KEY", "")).strip()
 GENAPI_BASE_URL = os.environ.get("GENAPI_BASE_URL", GENAPI_SETTINGS.get("GENAPI_BASE_URL", "https://proxy.gen-api.ru/v1")).strip().rstrip("/")
 GENAPI_MODEL = os.environ.get("GENAPI_MODEL", GENAPI_SETTINGS.get("GENAPI_MODEL", "deepseek-v4-flash")).strip()
+GENAPI_ADMIN_MODEL = os.environ.get("GENAPI_ADMIN_MODEL", GENAPI_SETTINGS.get("GENAPI_ADMIN_MODEL", GENAPI_MODEL)).strip()
 
 
-def genapi_configuration() -> tuple[str, str, str]:
+DIALOG_APPEARANCE_FIELDS = (
+    "theme", "dialog_color", "other_dialog_color", "dialog_panel_color", "dialog_panel_style",
+    "dialog_bubble_style", "dialog_font", "text_scale", "chat_background", "chat_background_data",
+)
+DIALOG_APPEARANCE_FALLBACK = {
+    "theme": "dark",
+    "dialog_color": "#004d65",
+    "other_dialog_color": "#004d65",
+    "dialog_panel_color": "#f4f8fc",
+    "dialog_panel_style": "custom",
+    "dialog_bubble_style": "custom",
+    "dialog_font": "rounded",
+    "text_scale": "system",
+    "chat_background": "jade",
+    "chat_background_data": None,
+}
+
+
+def dialog_appearance_defaults(con: sqlite3.Connection) -> dict:
+    source = con.execute(
+        f"SELECT {', '.join(DIALOG_APPEARANCE_FIELDS)} FROM users WHERE lower(username) = 'andrei'"
+    ).fetchone()
+    if not source:
+        return DIALOG_APPEARANCE_FALLBACK.copy()
+    appearance = {field: source[field] for field in DIALOG_APPEARANCE_FIELDS}
+    appearance["chat_background"] = "jade"
+    appearance["chat_background_data"] = None
+    return appearance
+
+
+def genapi_configuration(admin: bool = False) -> tuple[str, str, str]:
     settings = read_genapi_settings()
     api_key = settings.get("GENAPI_API_KEY", "").strip() or GENAPI_API_KEY
     base_url = settings.get("GENAPI_BASE_URL", "").strip().rstrip("/") or GENAPI_BASE_URL
-    model = settings.get("GENAPI_MODEL", "").strip() or GENAPI_MODEL
+    model = (settings.get("GENAPI_ADMIN_MODEL", "").strip() or GENAPI_ADMIN_MODEL) if admin else (settings.get("GENAPI_MODEL", "").strip() or GENAPI_MODEL)
     return api_key, base_url, model
+
+
+GENAPI_ADDITIONAL_MODELS = {
+    "gemini-3-1-pro": {"label": "Gemini 3.1 Pro", "description": "Модель Google для подготовки текстов и управления каналами."},
+    "claude-sonnet-5-5": {"label": "Claude Sonnet 5.5", "description": "Модель Anthropic для подготовки текстов и управления каналами."},
+    "gpt-5-4": {"label": "GPT-5.4", "description": "Модель OpenAI для подготовки текстов и управления каналами."},
+}
+
+
+def genapi_configuration_for_profile(profile_id, admin: bool = False) -> tuple[str, str, str]:
+    if profile_id in GENAPI_ADDITIONAL_MODELS:
+        api_key, base_url, _ = genapi_configuration()
+        return api_key, base_url, profile_id
+    return genapi_configuration(admin=admin if profile_id is None else profile_id == "extended")
+
+
+def genapi_model_profiles() -> list[dict[str, str]]:
+    default_model = genapi_configuration()[2]
+    extended_model = genapi_configuration(admin=True)[2]
+    profiles = [{
+        "id": "default",
+        "label": "DeepSeek",
+        "description": "Основная модель, настроенная для вашего аккаунта.",
+    }]
+    profiles.extend({"id": profile_id, **metadata} for profile_id, metadata in GENAPI_ADDITIONAL_MODELS.items())
+    if extended_model and extended_model != default_model:
+        profiles.append({
+            "id": "extended",
+            "label": "Расширенная модель",
+            "description": "Дополнительный серверный профиль для более сложных задач ИИ.",
+        })
+    return profiles
+
+
+def normalize_genapi_model_profile(value) -> str:
+    profile_id = str(value or "").strip().casefold()
+    return profile_id if profile_id in {profile["id"] for profile in genapi_model_profiles()} else "default"
 
 
 def read_s3_settings() -> dict[str, str]:
@@ -205,9 +281,9 @@ LEVEL_LIMIT_KEYS = {
     "channelsJoined", "channelsCreated", "savedAccounts", "autopostSourcesTotal", "autopostSourcesPerChannel",
 }
 ACTIVITY_METRIC_KEYS = {
-    "stars_balance", "direct_chats", "channels_joined", "communities_joined",
+    "stars_balance", "direct_chats", "channels_joined", "channel_subscriptions", "communities_joined",
     "channels_created", "communities_created", "channel_subscribers",
-    "community_subscribers", "messages", "posts", "stories", "reviews",
+    "community_subscribers", "messages", "posts", "channel_comments_written", "stories", "reviews",
     "donations_sent", "stars_donated", "donations_received", "login_streak", "completed_calls",
     "call_partners", "chat_pro_review_video",
 }
@@ -222,6 +298,23 @@ DEFAULT_STAR_PACKAGES = [
     {"id": "stars-550", "stars": 550, "price": "449.00"},
     {"id": "stars-1200", "stars": 1200, "price": "899.00"},
 ]
+DEFAULT_CHANNEL_MONETIZATION = {
+    "starRateRubles": "0.50",
+    "tiers": [
+        {"minSubscribers": 1, "maxSubscribers": 101, "percent": 1},
+        {"minSubscribers": 101, "maxSubscribers": 501, "percent": 10},
+        {"minSubscribers": 501, "maxSubscribers": None, "percent": 20},
+    ],
+}
+DEFAULT_CHANNEL_ACTIVITY_REGULATOR = {
+    "enabled": True,
+    "viewRatePercent": 35.0,
+    "reactionRatePercent": 4.0,
+    "weeklyUnsubscribePercent": 1.0,
+    "initialUnsubscribeMonths": 3,
+    "settledWeeklyUnsubscribePercent": 0.1,
+}
+MONETIZED_CHAT_TYPES = ("channel", "group", "community")
 DEFAULT_PUBLIC_LEGAL = {
     "sellerStatus": "самозанятый", "sellerName": "Ковнерев Андрей Александрович", "inn": "440601014935",
     "vkUrl": "https://vk.ru/id_ne_naidi", "telegram": "Qwerty248i", "email": "andreikovnerev333@gmail.com",
@@ -267,6 +360,44 @@ def channel_reaction_emojis(con: sqlite3.Connection) -> tuple[str, ...]:
     except ValueError:
         reactions = list(DEFAULT_CHANNEL_REACTIONS)
     return tuple(reactions)
+
+
+def normalize_channel_activity_regulator(value) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Настройки регулятора активности должны быть объектом.")
+    allowed = set(DEFAULT_CHANNEL_ACTIVITY_REGULATOR)
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError("В настройках регулятора активности есть неподдерживаемые поля.")
+
+    def percentage(key: str) -> float:
+        try:
+            result = float(value.get(key, DEFAULT_CHANNEL_ACTIVITY_REGULATOR[key]))
+        except (TypeError, ValueError):
+            raise ValueError(f"Поле «{key}» должно быть числом.") from None
+        if not math.isfinite(result) or result < 0 or result > 100:
+            raise ValueError(f"Поле «{key}» должно быть от 0 до 100.")
+        return round(result, 2)
+
+    return {
+        "enabled": bool(value.get("enabled", DEFAULT_CHANNEL_ACTIVITY_REGULATOR["enabled"])),
+        "viewRatePercent": percentage("viewRatePercent"),
+        "reactionRatePercent": percentage("reactionRatePercent"),
+        "weeklyUnsubscribePercent": percentage("weeklyUnsubscribePercent"),
+        "initialUnsubscribeMonths": nonnegative_int(
+            value.get("initialUnsubscribeMonths", DEFAULT_CHANNEL_ACTIVITY_REGULATOR["initialUnsubscribeMonths"]),
+            "initialUnsubscribeMonths", 120,
+        ),
+        "settledWeeklyUnsubscribePercent": percentage("settledWeeklyUnsubscribePercent"),
+    }
+
+
+def channel_activity_regulator_settings(con: sqlite3.Connection) -> dict:
+    row = con.execute("SELECT value FROM settings WHERE key = 'channel_activity_regulator'").fetchone()
+    try:
+        return normalize_channel_activity_regulator(loads(row["value"], {}) if row else DEFAULT_CHANNEL_ACTIVITY_REGULATOR)
+    except ValueError:
+        return DEFAULT_CHANNEL_ACTIVITY_REGULATOR.copy()
 
 
 def normalize_ui_appearance(value) -> dict:
@@ -331,14 +462,53 @@ def normalize_star_packages(value) -> list[dict]:
             raise ValueError("Каждый пакет звёзд должен быть объектом.")
         package_id = str(package.get("id", "")).strip().lower()
         stars = nonnegative_int(package.get("stars"), "stars", 1_000_000)
-        price = str(package.get("price", "")).strip()
-        if not re.fullmatch(r"[1-9]\d{0,6}\.\d{2}", price):
-            raise ValueError("Цена пакета должна быть в формате 99.00.")
+        price = normalize_money(package.get("price"), "Цена пакета", 9_999_999)
         if not re.fullmatch(r"[a-z0-9_-]{3,40}", package_id) or package_id in package_ids or not stars:
             raise ValueError("Некорректный ID или количество звёзд в пакете.")
         package_ids.add(package_id)
         normalized.append({"id": package_id, "stars": stars, "price": price})
     return normalized
+
+
+def normalize_money(value, field_name: str, maximum: int = 9_999_999) -> str:
+    raw = str(value if value is not None else "").strip().replace(",", ".")
+    if not re.fullmatch(r"\d{1,7}(?:\.\d{1,2})?", raw):
+        raise ValueError(f"Поле «{field_name}» должно быть положительной суммой в рублях, например 0.50.")
+    try:
+        amount = Decimal(raw)
+    except InvalidOperation:
+        raise ValueError(f"Поле «{field_name}» содержит некорректную сумму.") from None
+    if not amount.is_finite() or amount <= 0 or amount > maximum:
+        raise ValueError(f"Поле «{field_name}» должно быть больше нуля и не превышать {maximum} ₽.")
+    return str(amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def normalize_channel_monetization(value) -> dict:
+    if value in (None, ""):
+        value = DEFAULT_CHANNEL_MONETIZATION
+    if not isinstance(value, dict) or set(value) - {"starRateRubles", "tiers"}:
+        raise ValueError("Настройки монетизации каналов содержат неподдерживаемые поля.")
+    rate = normalize_money(value.get("starRateRubles", DEFAULT_CHANNEL_MONETIZATION["starRateRubles"]), "Цена звезды")
+    raw_tiers = value.get("tiers", DEFAULT_CHANNEL_MONETIZATION["tiers"])
+    if not isinstance(raw_tiers, list) or not raw_tiers or len(raw_tiers) > 30:
+        raise ValueError("Укажите от одного до 30 уровней комиссии.")
+    tiers, previous_max = [], None
+    for index, raw_tier in enumerate(raw_tiers):
+        if not isinstance(raw_tier, dict) or set(raw_tier) - {"minSubscribers", "maxSubscribers", "percent"}:
+            raise ValueError("Каждый уровень комиссии должен содержать границы и процент.")
+        minimum = nonnegative_int(raw_tier.get("minSubscribers"), "minSubscribers", 10_000_000)
+        maximum_value = raw_tier.get("maxSubscribers")
+        maximum = None if maximum_value in (None, "") else nonnegative_int(maximum_value, "maxSubscribers", 10_000_000)
+        percent = nonnegative_int(raw_tier.get("percent"), "percent", 100)
+        if minimum < 1 or not percent or (maximum is not None and maximum <= minimum):
+            raise ValueError("Проверьте границы и процент комиссии канала.")
+        if previous_max is not None and minimum < previous_max:
+            raise ValueError("Уровни комиссии не должны пересекаться.")
+        if maximum is None and index != len(raw_tiers) - 1:
+            raise ValueError("Уровень без верхней границы должен быть последним.")
+        tiers.append({"minSubscribers": minimum, "maxSubscribers": maximum, "percent": percent})
+        previous_max = maximum
+    return {"starRateRubles": rate, "tiers": tiers}
 
 
 def normalize_public_url(value, field_name: str) -> str:
@@ -447,6 +617,16 @@ def normalize_account_levels(value) -> list[dict]:
             for key in criteria if key in LEVEL_CRITERIA_KEYS and nonnegative_int(criteria[key], key)
         }
         normalized_limits = {key: nonnegative_int(limits[key], key) for key in limits if key in LEVEL_LIMIT_KEYS}
+        monthly_price_raw = str(raw_level.get("monthlyPrice", "0") if raw_level.get("monthlyPrice") is not None else "").strip().replace(",", ".")
+        if not monthly_price_raw:
+            monthly_price = "0.00"
+        else:
+            try:
+                is_zero_monthly_price = Decimal(monthly_price_raw) == 0
+            except InvalidOperation:
+                monthly_price = normalize_money(monthly_price_raw, "monthlyPrice")
+            else:
+                monthly_price = "0.00" if is_zero_monthly_price else normalize_money(monthly_price_raw, "monthlyPrice")
         levels.append({
             "id": level_id,
             "title": title,
@@ -455,6 +635,7 @@ def normalize_account_levels(value) -> list[dict]:
             "limits": normalized_limits,
             "reward": normalize_level_reward(raw_level.get("reward", {}), "reward"),
             "starsPrice": nonnegative_int(raw_level.get("starsPrice", 0), "starsPrice"),
+            "monthlyPrice": monthly_price,
             "purchaseReward": normalize_level_reward(raw_level.get("purchaseReward", {}), "purchaseReward"),
         })
     return levels
@@ -462,6 +643,26 @@ def normalize_account_levels(value) -> list[dict]:
 
 def now() -> int:
     return int(time.time())
+
+
+CHANNEL_POSTS_PER_DAY = 5
+
+
+def channel_post_limit_reached(con: sqlite3.Connection, channel_id: str, current: int | None = None) -> bool:
+    current = current or now()
+    start_of_day = int(datetime.datetime.fromtimestamp(current).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    published = con.execute(
+        """SELECT count(*) AS count FROM messages
+           WHERE chat_id = ? AND created_at >= ? AND deleted_by_admin = 0
+             AND COALESCE(media_type, '') != 'system'""",
+        (channel_id, start_of_day),
+    ).fetchone()["count"]
+    return published >= CHANNEL_POSTS_PER_DAY
+
+
+def enforce_channel_post_limit(con: sqlite3.Connection, channel_id: str, current: int | None = None) -> None:
+    if channel_post_limit_reached(con, channel_id, current):
+        raise ValueError(f"В канале можно публиковать до {CHANNEL_POSTS_PER_DAY} постов за текущий день.")
 
 
 def connect() -> sqlite3.Connection:
@@ -602,6 +803,7 @@ def public_user(row: sqlite3.Row | dict | None) -> dict | None:
         "hiddenStatusIds": loads(row["hidden_status_ids"], []),
         "groupInvitePrivacy": row["group_invite_privacy"] if "group_invite_privacy" in row.keys() else "contacts",
         "directMessagePrivacy": row["direct_message_privacy"] if "direct_message_privacy" in row.keys() else "everyone",
+        "profileDescription": row["profile_description"] if "profile_description" in row.keys() else "",
         "avatarData": row["avatar_data"],
         "createdAt": row["created_at"],
     }
@@ -637,6 +839,8 @@ def message_to_dict(row: sqlite3.Row) -> dict:
         "profileUserId": row["profile_user_id"] if "profile_user_id" in row.keys() else None,
         "text": row["text"],
         "mediaType": row["media_type"],
+        "hasMedia": bool(row["has_media"]) if "has_media" in row.keys() else bool(row["media_data"]) if "media_data" in row.keys() else False,
+        "mediaEmbedUrl": row["media_embed_url"] if "media_embed_url" in row.keys() else None,
         "voiceWaveform": loads(row["voice_waveform_json"], []) if "voice_waveform_json" in row.keys() else [],
         "views": int(row["views"] or 0) + int(row["views_boost"] or 0) if "views" in row.keys() else 0,
         "reactions": reactions,
@@ -689,20 +893,43 @@ def init_db() -> None:
               night_outline_color TEXT,
               night_glow_color TEXT,
               night_glow_intensity INTEGER,
-              call_ringtone TEXT NOT NULL DEFAULT 'classic',
-              hidden_status_ids TEXT NOT NULL DEFAULT '[]',
+               call_ringtone TEXT NOT NULL DEFAULT 'classic',
+               call_ringtone_data TEXT,
+               hidden_status_ids TEXT NOT NULL DEFAULT '[]',
               group_invite_privacy TEXT NOT NULL DEFAULT 'contacts',
               direct_message_privacy TEXT NOT NULL DEFAULT 'everyone',
               avatar_data TEXT,
               last_login_day TEXT,
               login_streak INTEGER NOT NULL DEFAULT 0,
               agreement_accepted_at INTEGER,
+              deletion_requested_at INTEGER,
+              deletion_due_at INTEGER,
               created_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
               token TEXT PRIMARY KEY,
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS oauth_identities (
+              provider TEXT NOT NULL,
+              provider_user_id TEXT NOT NULL,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (provider, provider_user_id),
+              UNIQUE (provider, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS oauth_states (
+              state TEXT PRIMARY KEY,
+              provider TEXT NOT NULL,
+              user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
+              agreement_accepted INTEGER NOT NULL DEFAULT 0,
+              code_verifier TEXT,
+              expires_at INTEGER NOT NULL,
               created_at INTEGER NOT NULL
             );
 
@@ -745,6 +972,17 @@ def init_db() -> None:
               PRIMARY KEY (chat_id, user_id)
             );
 
+            CREATE TABLE IF NOT EXISTS channel_join_requests (
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
+              created_at INTEGER NOT NULL,
+              resolved_at INTEGER,
+              resolved_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+              PRIMARY KEY (channel_id, user_id)
+            );
+            CREATE INDEX IF NOT EXISTS channel_join_requests_pending_idx ON channel_join_requests(channel_id, status, created_at);
+
             CREATE TABLE IF NOT EXISTS pinned_chats (
               chat_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -786,6 +1024,8 @@ def init_db() -> None:
               text TEXT NOT NULL,
               media_type TEXT,
               media_data TEXT,
+              media_embed_url TEXT,
+               circle_preview_data TEXT,
               voice_waveform_json TEXT,
               profile_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
               views INTEGER NOT NULL DEFAULT 0,
@@ -804,11 +1044,47 @@ def init_db() -> None:
               user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
               instruction TEXT NOT NULL DEFAULT '',
               style TEXT NOT NULL DEFAULT 'friendly',
+              model_profile TEXT NOT NULL DEFAULT 'default',
               autopilot_enabled INTEGER NOT NULL DEFAULT 0,
               allowed_chat_ids_json TEXT NOT NULL DEFAULT '[]',
               template_message_ids_json TEXT NOT NULL DEFAULT '[]',
+              agent_name TEXT NOT NULL DEFAULT 'ИИ-администратор',
+              booking_config_json TEXT NOT NULL DEFAULT '{}',
               updated_at INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_tasks (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              title TEXT NOT NULL,
+              instruction TEXT NOT NULL DEFAULT '',
+              scope TEXT NOT NULL CHECK(scope IN ('all_direct', 'selected_direct')),
+              chat_ids_json TEXT NOT NULL DEFAULT '[]',
+              enabled INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ai_agent_tasks_user_enabled
+              ON ai_agent_tasks(user_id, enabled, updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS ai_agent_bookings (
+              id TEXT PRIMARY KEY,
+              owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              customer_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+              source_chat_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+              customer_name TEXT NOT NULL,
+              contact TEXT NOT NULL DEFAULT '',
+              booking_type TEXT NOT NULL,
+              resource_name TEXT NOT NULL,
+              start_at INTEGER NOT NULL,
+              end_at INTEGER NOT NULL,
+              details_json TEXT NOT NULL DEFAULT '{}',
+              status TEXT NOT NULL CHECK(status IN ('pending', 'confirmed', 'cancelled')) DEFAULT 'pending',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ai_agent_bookings_owner_time
+              ON ai_agent_bookings(owner_id, start_at, resource_name);
 
             CREATE TABLE IF NOT EXISTS ai_agent_processed_messages (
               message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
@@ -881,10 +1157,76 @@ def init_db() -> None:
               created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS ai_agent_comment_moderation_rules (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              blocked_words_json TEXT NOT NULL DEFAULT '[]',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              PRIMARY KEY (user_id, channel_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_moderated_comments (
+              comment_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              moderated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_pending_actions (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              action TEXT NOT NULL,
+              payload_json TEXT NOT NULL DEFAULT '{}',
+              summary TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              expires_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ai_agent_pending_actions_user_created
+              ON ai_agent_pending_actions(user_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS ai_agent_action_log (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              action TEXT NOT NULL,
+              status TEXT NOT NULL,
+              summary TEXT NOT NULL,
+              payload_json TEXT NOT NULL DEFAULT '{}',
+              result_text TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS ai_agent_action_log_user_created
+              ON ai_agent_action_log(user_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS ai_agent_moderation_events (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              target_type TEXT NOT NULL,
+              target_id TEXT NOT NULL,
+              source TEXT NOT NULL DEFAULT 'chat-pro',
+              text TEXT NOT NULL DEFAULT '',
+              decision TEXT NOT NULL,
+              reason TEXT NOT NULL DEFAULT '',
+              confidence REAL,
+              created_at INTEGER NOT NULL,
+              resolved_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS ai_agent_moderation_events_user_created
+              ON ai_agent_moderation_events(user_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS automated_commenters (
               id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
               created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS automated_commenter_rotations (
+              scope_key TEXT PRIMARY KEY,
+              commenter_ids_json TEXT NOT NULL DEFAULT '[]',
+              order_json TEXT NOT NULL DEFAULT '[]',
+              position INTEGER NOT NULL DEFAULT 0,
+              last_commenter_id TEXT,
+              updated_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS avatar_history (
@@ -923,6 +1265,18 @@ def init_db() -> None:
               created_at INTEGER NOT NULL,
               UNIQUE(rule_id, message_id, commenter_id)
             );
+
+            CREATE TABLE IF NOT EXISTS activity_comment_jobs (
+              id TEXT PRIMARY KEY,
+              source_key TEXT NOT NULL,
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              commenter_id TEXT NOT NULL REFERENCES automated_commenters(id) ON DELETE CASCADE,
+              categories_json TEXT NOT NULL DEFAULT '[]',
+              publish_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS activity_comment_jobs_publish_idx
+              ON activity_comment_jobs(publish_at);
 
             CREATE TABLE IF NOT EXISTS media_uploads (
               key TEXT PRIMARY KEY,
@@ -984,8 +1338,56 @@ def init_db() -> None:
               target_id TEXT NOT NULL,
               reason TEXT NOT NULL DEFAULT '',
               created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+              admin_response TEXT NOT NULL DEFAULT '',
+              responded_at INTEGER,
+              responded_by TEXT,
               created_at INTEGER NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS channel_share_submissions (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              submitter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              platform TEXT NOT NULL,
+              external_url TEXT NOT NULL UNIQUE,
+              description TEXT NOT NULL DEFAULT '',
+              screenshot_data TEXT NOT NULL,
+              reward_stars INTEGER NOT NULL,
+              status TEXT NOT NULL CHECK(status IN ('pending', 'credited', 'rejected', 'revoked')) DEFAULT 'pending',
+              eligible_at INTEGER NOT NULL,
+              credited_at INTEGER,
+              rejected_at INTEGER,
+              admin_response TEXT NOT NULL DEFAULT '',
+              responded_at INTEGER,
+              responded_by TEXT,
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS channel_share_submissions_due_idx ON channel_share_submissions(status, eligible_at);
+            CREATE INDEX IF NOT EXISTS channel_share_submissions_channel_idx ON channel_share_submissions(channel_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS vk_review_submissions (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+              submitter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              vk_target_id TEXT REFERENCES vk_channel_targets(id) ON DELETE SET NULL,
+              external_url TEXT NOT NULL UNIQUE,
+              vk_kind TEXT NOT NULL CHECK(vk_kind IN ('post', 'video')),
+              vk_owner_id INTEGER NOT NULL,
+              vk_item_id INTEGER NOT NULL,
+              verified_title TEXT NOT NULL,
+              likes_count INTEGER NOT NULL,
+              reward_stars INTEGER NOT NULL,
+              status TEXT NOT NULL CHECK(status IN ('pending', 'credited', 'rejected', 'revoked')) DEFAULT 'pending',
+              eligible_at INTEGER NOT NULL,
+              credited_at INTEGER,
+              rejected_at INTEGER,
+              admin_response TEXT NOT NULL DEFAULT '',
+              responded_at INTEGER,
+              responded_by TEXT,
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS vk_review_submissions_due_idx ON vk_review_submissions(status, eligible_at);
+            CREATE INDEX IF NOT EXISTS vk_review_submissions_channel_idx ON vk_review_submissions(channel_id, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS promotions (
               id TEXT PRIMARY KEY,
@@ -1067,6 +1469,12 @@ def init_db() -> None:
               created_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS channel_activity_regulator_state (
+              channel_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+              unsubscribe_progress REAL NOT NULL DEFAULT 0,
+              last_unsubscribe_tick_at INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS demo_activity_packages (
               id TEXT PRIMARY KEY,
               title TEXT NOT NULL,
@@ -1078,7 +1486,26 @@ def init_db() -> None:
               duration_days INTEGER NOT NULL DEFAULT 7,
               fade_duration_days INTEGER NOT NULL DEFAULT 30,
               indefinite INTEGER NOT NULL DEFAULT 0,
+              price_stars INTEGER NOT NULL DEFAULT 0,
+              apply_to_new_channels INTEGER NOT NULL DEFAULT 0,
+              required_account_level_id TEXT NOT NULL DEFAULT '',
+              commenter_ids_json TEXT NOT NULL DEFAULT '[]',
+              donation_count INTEGER NOT NULL DEFAULT 0,
+              donation_post_interval INTEGER NOT NULL DEFAULT 4,
+              donation_min_stars INTEGER NOT NULL DEFAULT 0,
+              donation_max_stars INTEGER NOT NULL DEFAULT 0,
+              inactivity_days INTEGER NOT NULL DEFAULT 3,
               created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS demo_activity_donations (
+              subscription_id TEXT NOT NULL REFERENCES demo_activity_subscriptions(id) ON DELETE CASCADE,
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              donation_number INTEGER NOT NULL,
+              recipient_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              amount INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (subscription_id, message_id, donation_number)
             );
 
             CREATE TABLE IF NOT EXISTS demo_activity_subscriptions (
@@ -1093,6 +1520,14 @@ def init_db() -> None:
               reactions_added INTEGER NOT NULL DEFAULT 0,
               comments_added INTEGER NOT NULL DEFAULT 0,
               active INTEGER NOT NULL DEFAULT 1,
+              level_paused_at INTEGER,
+              activity_last_tick_at INTEGER,
+              activity_progress_json TEXT NOT NULL DEFAULT '{}',
+              metric_variation_json TEXT NOT NULL DEFAULT '{}',
+              spike_multiplier INTEGER NOT NULL DEFAULT 1,
+              spike_starts_at INTEGER,
+              spike_ends_at INTEGER,
+              next_spike_at INTEGER,
               created_at INTEGER NOT NULL
             );
 
@@ -1164,6 +1599,15 @@ def init_db() -> None:
               PRIMARY KEY (owner_id, blocked_user_id)
             );
 
+            CREATE TABLE IF NOT EXISTS user_blocks (
+              owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              blocked_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (owner_id, blocked_user_id),
+              CHECK (owner_id != blocked_user_id)
+            );
+            CREATE INDEX IF NOT EXISTS user_blocks_blocked_user_idx ON user_blocks(blocked_user_id);
+
             CREATE TABLE IF NOT EXISTS account_level_rewards (
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
               level_id TEXT NOT NULL,
@@ -1178,12 +1622,51 @@ def init_db() -> None:
               PRIMARY KEY (user_id, level_id)
             );
 
+            CREATE TABLE IF NOT EXISTS account_level_achievements (
+              user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+              highest_level_index INTEGER NOT NULL DEFAULT 0,
+              updated_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS account_level_subscriptions (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              level_id TEXT NOT NULL,
+              monthly_price TEXT NOT NULL,
+              payment_method_id TEXT,
+              active_until INTEGER NOT NULL,
+              next_charge_at INTEGER NOT NULL,
+              status TEXT NOT NULL CHECK(status IN ('active', 'cancelled', 'payment_failed')) DEFAULT 'active',
+              terms_accepted_at INTEGER NOT NULL,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              UNIQUE(user_id, level_id)
+            );
+            CREATE INDEX IF NOT EXISTS account_level_subscriptions_due_idx ON account_level_subscriptions(status, next_charge_at);
+            CREATE TABLE IF NOT EXISTS account_level_subscription_payments (
+              id TEXT PRIMARY KEY,
+              subscription_id TEXT NOT NULL REFERENCES account_level_subscriptions(id) ON DELETE CASCADE,
+              amount_value TEXT NOT NULL,
+              yookassa_payment_id TEXT UNIQUE,
+              status TEXT NOT NULL DEFAULT 'creating',
+              paid_at INTEGER,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS account_level_subscription_payments_subscription_idx ON account_level_subscription_payments(subscription_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS account_level_reward_grants (
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
               level_id TEXT NOT NULL,
               reward_id TEXT NOT NULL REFERENCES activity_rewards(id) ON DELETE CASCADE,
               granted_at INTEGER NOT NULL,
               PRIMARY KEY (user_id, reward_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS admin_account_level_grants (
+              user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+              level_id TEXT NOT NULL,
+              granted_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS telegram_channel_links (
@@ -1268,6 +1751,84 @@ def init_db() -> None:
               PRIMARY KEY (source_id, post_id)
             );
 
+            CREATE TABLE IF NOT EXISTS vk_source_published_messages (
+              source_id TEXT NOT NULL REFERENCES vk_channel_sources(id) ON DELETE CASCADE,
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              vk_post_id INTEGER,
+              status TEXT NOT NULL DEFAULT 'pending',
+              last_error TEXT,
+              published_at INTEGER NOT NULL,
+              PRIMARY KEY (source_id, message_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS vk_source_moderated_comments (
+              source_id TEXT NOT NULL REFERENCES vk_channel_sources(id) ON DELETE CASCADE,
+              post_id INTEGER NOT NULL,
+              comment_id INTEGER NOT NULL,
+              decision TEXT NOT NULL DEFAULT 'allow',
+              last_error TEXT,
+              moderated_at INTEGER NOT NULL,
+              PRIMARY KEY (source_id, post_id, comment_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS vk_proposed_posts (
+              id TEXT PRIMARY KEY,
+              source_id TEXT NOT NULL REFERENCES vk_channel_sources(id) ON DELETE CASCADE,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              proposer_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              text TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              vk_post_id INTEGER,
+              decision_reason TEXT NOT NULL DEFAULT '',
+              last_error TEXT,
+              created_at INTEGER NOT NULL,
+              reviewed_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+              reviewed_at INTEGER,
+              published_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS vk_proposed_posts_channel_status
+              ON vk_proposed_posts(channel_id, status, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS vk_channel_targets (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              target_url TEXT NOT NULL,
+              target_ref TEXT NOT NULL,
+              target_title TEXT NOT NULL DEFAULT '',
+              owner_id INTEGER NOT NULL,
+              access_token TEXT NOT NULL,
+              publish_enabled INTEGER NOT NULL DEFAULT 1,
+              moderation_enabled INTEGER NOT NULL DEFAULT 0,
+              last_publish_at INTEGER,
+              last_moderation_sync_at INTEGER,
+              last_error TEXT,
+              created_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              created_at INTEGER NOT NULL,
+              UNIQUE(channel_id, target_url)
+            );
+            CREATE INDEX IF NOT EXISTS vk_channel_targets_channel_idx
+              ON vk_channel_targets(channel_id, created_at);
+
+            CREATE TABLE IF NOT EXISTS vk_target_published_messages (
+              target_id TEXT NOT NULL REFERENCES vk_channel_targets(id) ON DELETE CASCADE,
+              message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+              vk_post_id INTEGER,
+              status TEXT NOT NULL DEFAULT 'pending',
+              last_error TEXT,
+              published_at INTEGER NOT NULL,
+              PRIMARY KEY (target_id, message_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS vk_target_moderated_comments (
+              target_id TEXT NOT NULL REFERENCES vk_channel_targets(id) ON DELETE CASCADE,
+              post_id INTEGER NOT NULL,
+              comment_id INTEGER NOT NULL,
+              decision TEXT NOT NULL DEFAULT 'review',
+              last_error TEXT,
+              moderated_at INTEGER NOT NULL,
+              PRIMARY KEY (target_id, post_id, comment_id)
+            );
+
             CREATE TABLE IF NOT EXISTS star_transactions (
               id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1310,6 +1871,32 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS channel_star_purchases_channel_idx ON channel_star_purchases(channel_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS channel_payout_accruals (
+              id TEXT PRIMARY KEY,
+              purchase_id TEXT NOT NULL UNIQUE REFERENCES channel_star_purchases(id) ON DELETE CASCADE,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              amount_value TEXT NOT NULL,
+              commission_percent INTEGER NOT NULL,
+              star_rate_rubles TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS channel_payout_accruals_owner_idx ON channel_payout_accruals(owner_user_id, channel_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS channel_payout_requests (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+              owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              amount_value TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'pending',
+              admin_note TEXT NOT NULL DEFAULT '',
+              created_at INTEGER NOT NULL,
+              processed_at INTEGER
+            );
+
+            CREATE INDEX IF NOT EXISTS channel_payout_requests_owner_idx ON channel_payout_requests(owner_user_id, channel_id, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS activity_rewards (
               id TEXT PRIMARY KEY,
@@ -1401,6 +1988,28 @@ def init_db() -> None:
             con.execute("ALTER TABLE users ADD COLUMN site_background TEXT NOT NULL DEFAULT 'default'")
         if "site_background_data" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN site_background_data TEXT")
+        ai_agent_columns = {row["name"] for row in con.execute("PRAGMA table_info(ai_agent_settings)").fetchall()}
+        if "model_profile" not in ai_agent_columns:
+            con.execute("ALTER TABLE ai_agent_settings ADD COLUMN model_profile TEXT NOT NULL DEFAULT 'default'")
+        if "agent_name" not in ai_agent_columns:
+            con.execute("ALTER TABLE ai_agent_settings ADD COLUMN agent_name TEXT NOT NULL DEFAULT 'ИИ-администратор'")
+        if "booking_config_json" not in ai_agent_columns:
+            con.execute("ALTER TABLE ai_agent_settings ADD COLUMN booking_config_json TEXT NOT NULL DEFAULT '{}'")
+        if "autopilot_all_direct" not in ai_agent_columns:
+            con.execute("ALTER TABLE ai_agent_settings ADD COLUMN autopilot_all_direct INTEGER NOT NULL DEFAULT 0")
+        task_migration_key = "ai_agent_tasks_migration_v1"
+        if not con.execute("SELECT 1 FROM settings WHERE key = ?", (task_migration_key,)).fetchone():
+            for legacy in con.execute("SELECT * FROM ai_agent_settings WHERE autopilot_enabled = 1").fetchall():
+                scope = "all_direct" if legacy["autopilot_all_direct"] else "selected_direct"
+                chat_ids = [] if scope == "all_direct" else loads(legacy["allowed_chat_ids_json"], [])
+                if scope == "all_direct" or chat_ids:
+                    title = "Отвечать на все новые входящие" if scope == "all_direct" else "Отвечать в выбранных диалогах"
+                    con.execute(
+                        "INSERT INTO ai_agent_tasks(id,user_id,title,instruction,scope,chat_ids_json,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (uid("ai_task"), legacy["user_id"], title, legacy["instruction"], scope, dumps(chat_ids), 1, legacy["updated_at"], legacy["updated_at"]),
+                    )
+            con.execute("UPDATE ai_agent_settings SET autopilot_enabled = 0, autopilot_all_direct = 0, allowed_chat_ids_json = '[]'")
+            con.execute("INSERT INTO settings(key,value) VALUES (?,?)", (task_migration_key, dumps({"completedAt": now()})))
         channel_rule_columns = {row["name"] for row in con.execute("PRAGMA table_info(ai_agent_channel_rules)").fetchall()}
         if "rewrite_posts" not in channel_rule_columns:
             con.execute("ALTER TABLE ai_agent_channel_rules ADD COLUMN rewrite_posts INTEGER NOT NULL DEFAULT 0")
@@ -1429,6 +2038,14 @@ def init_db() -> None:
             con.execute("ALTER TABLE channel_star_purchases ADD COLUMN buyer_gift_stars INTEGER NOT NULL DEFAULT 0")
         if "buyer_message" not in channel_purchase_columns:
             con.execute("ALTER TABLE channel_star_purchases ADD COLUMN buyer_message TEXT NOT NULL DEFAULT ''")
+        payment_columns = {row["name"] for row in con.execute("PRAGMA table_info(yookassa_payments)").fetchall()}
+        if "buyer_gift_stars" not in payment_columns:
+            con.execute("ALTER TABLE yookassa_payments ADD COLUMN buyer_gift_stars INTEGER NOT NULL DEFAULT 0")
+        message_columns = {row["name"] for row in con.execute("PRAGMA table_info(messages)").fetchall()}
+        if "circle_preview_data" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN circle_preview_data TEXT")
+        if "source_channel_id" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN source_channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL")
         automated_comment_rule_columns = {row["name"] for row in con.execute("PRAGMA table_info(automated_comment_rules)").fetchall()}
         if "target_scope" not in automated_comment_rule_columns:
             con.execute("ALTER TABLE automated_comment_rules ADD COLUMN target_scope TEXT NOT NULL DEFAULT 'future'")
@@ -1438,6 +2055,9 @@ def init_db() -> None:
             con.execute("ALTER TABLE automated_comment_rules ADD COLUMN comment_mode TEXT NOT NULL DEFAULT 'manual'")
         if "categories_json" not in automated_comment_rule_columns:
             con.execute("ALTER TABLE automated_comment_rules ADD COLUMN categories_json TEXT NOT NULL DEFAULT '[]'")
+        # Old templates and local phrase generation made comments visibly repetitive.
+        # Every automated text now goes through the configured DeepSeek profile instead.
+        con.execute("UPDATE automated_comment_rules SET comment_mode = 'ai', texts_json = '[]' WHERE comment_mode IN ('manual', 'local')")
         if "night_appearance_custom" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN night_appearance_custom INTEGER NOT NULL DEFAULT 0")
         if "night_outline_color" not in columns:
@@ -1448,6 +2068,19 @@ def init_db() -> None:
             con.execute("ALTER TABLE users ADD COLUMN night_glow_intensity INTEGER")
         if "call_ringtone" not in columns:
             con.execute("ALTER TABLE users ADD COLUMN call_ringtone TEXT NOT NULL DEFAULT 'classic'")
+        if "call_ringtone_data" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN call_ringtone_data TEXT")
+        if "text_scale" not in columns:
+            con.execute("ALTER TABLE users ADD COLUMN text_scale TEXT NOT NULL DEFAULT 'system'")
+        appearance_migration_key = "dialog_appearance_defaults_from_andrei_20260920"
+        if not con.execute("SELECT 1 FROM settings WHERE key = ?", (appearance_migration_key,)).fetchone():
+            appearance = dialog_appearance_defaults(con)
+            assignments = ", ".join(f"{field} = ?" for field in DIALOG_APPEARANCE_FIELDS)
+            con.execute(
+                f"UPDATE users SET {assignments} WHERE lower(username) != 'andrei'",
+                tuple(appearance[field] for field in DIALOG_APPEARANCE_FIELDS),
+            )
+            con.execute("INSERT INTO settings(key,value) VALUES (?,?)", (appearance_migration_key, dumps({"completedAt": now()})))
         message_columns = {row["name"] for row in con.execute("PRAGMA table_info(messages)").fetchall()}
         if "ai_agent" not in message_columns:
             con.execute("ALTER TABLE messages ADD COLUMN ai_agent INTEGER NOT NULL DEFAULT 0")
@@ -1463,6 +2096,38 @@ def init_db() -> None:
             con.execute("ALTER TABLE demo_activity_packages ADD COLUMN fade_duration_days INTEGER NOT NULL DEFAULT 30")
         if "indefinite" not in demo_package_columns:
             con.execute("ALTER TABLE demo_activity_packages ADD COLUMN indefinite INTEGER NOT NULL DEFAULT 0")
+        if "price_stars" not in demo_package_columns:
+            con.execute("ALTER TABLE demo_activity_packages ADD COLUMN price_stars INTEGER NOT NULL DEFAULT 0")
+        if "apply_to_new_channels" not in demo_package_columns:
+            con.execute("ALTER TABLE demo_activity_packages ADD COLUMN apply_to_new_channels INTEGER NOT NULL DEFAULT 0")
+        if "commenter_ids_json" not in demo_package_columns:
+            con.execute("ALTER TABLE demo_activity_packages ADD COLUMN commenter_ids_json TEXT NOT NULL DEFAULT '[]'")
+        if "required_account_level_id" not in demo_package_columns:
+            con.execute("ALTER TABLE demo_activity_packages ADD COLUMN required_account_level_id TEXT NOT NULL DEFAULT ''")
+        for column, definition in (
+            ("donation_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("donation_post_interval", "INTEGER NOT NULL DEFAULT 4"),
+            ("donation_min_stars", "INTEGER NOT NULL DEFAULT 0"),
+            ("donation_max_stars", "INTEGER NOT NULL DEFAULT 0"),
+            ("inactivity_days", "INTEGER NOT NULL DEFAULT 3"),
+        ):
+            if column not in demo_package_columns:
+                con.execute(f"ALTER TABLE demo_activity_packages ADD COLUMN {column} {definition}")
+        demo_subscription_columns = {row["name"] for row in con.execute("PRAGMA table_info(demo_activity_subscriptions)").fetchall()}
+        for column, definition in (
+            ("level_paused_at", "INTEGER"),
+            ("activity_last_tick_at", "INTEGER"),
+            ("activity_progress_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("metric_variation_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("spike_multiplier", "INTEGER NOT NULL DEFAULT 1"),
+            ("spike_starts_at", "INTEGER"),
+            ("spike_ends_at", "INTEGER"),
+            ("next_spike_at", "INTEGER"),
+            ("content_paused_at", "INTEGER"),
+            ("inactivity_fade_started_at", "INTEGER"),
+        ):
+            if column not in demo_subscription_columns:
+                con.execute(f"ALTER TABLE demo_activity_subscriptions ADD COLUMN {column} {definition}")
         # «Автор» was the former channel-manager role. Keep its permissions as a
         # compatibility fallback, but normalize stored rows to the current name.
         con.execute(
@@ -1476,6 +2141,8 @@ def init_db() -> None:
             con.execute("ALTER TABLE messages ADD COLUMN media_type TEXT")
         if "media_data" not in message_columns:
             con.execute("ALTER TABLE messages ADD COLUMN media_data TEXT")
+        if "media_embed_url" not in message_columns:
+            con.execute("ALTER TABLE messages ADD COLUMN media_embed_url TEXT")
         if "profile_user_id" not in message_columns:
             con.execute("ALTER TABLE messages ADD COLUMN profile_user_id TEXT REFERENCES users(id) ON DELETE SET NULL")
         if "pinned" not in message_columns:
@@ -1501,6 +2168,31 @@ def init_db() -> None:
             con.execute("ALTER TABLE channel_comments ADD COLUMN media_data TEXT")
         if "automated" not in comment_columns:
             con.execute("ALTER TABLE channel_comments ADD COLUMN automated INTEGER NOT NULL DEFAULT 0")
+        moderation_rule_columns = {row["name"] for row in con.execute("PRAGMA table_info(ai_agent_comment_moderation_rules)").fetchall()}
+        for column, definition in (
+            ("semantic_rules_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("action_mode", "TEXT NOT NULL DEFAULT 'delete'"),
+            ("notify_owner", "INTEGER NOT NULL DEFAULT 1"),
+            ("target_scope", "TEXT NOT NULL DEFAULT 'comments'"),
+            ("ai_enabled", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if column not in moderation_rule_columns:
+                con.execute(f"ALTER TABLE ai_agent_comment_moderation_rules ADD COLUMN {column} {definition}")
+        vk_source_columns = {row["name"] for row in con.execute("PRAGMA table_info(vk_channel_sources)").fetchall()}
+        for column, definition in (
+            ("publish_enabled", "INTEGER NOT NULL DEFAULT 1"),
+            ("moderation_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("moderation_rules_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ):
+            if column not in vk_source_columns:
+                con.execute(f"ALTER TABLE vk_channel_sources ADD COLUMN {column} {definition}")
+        published_message_columns = {row["name"] for row in con.execute("PRAGMA table_info(vk_source_published_messages)").fetchall()}
+        for column, definition in (
+            ("status", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("last_error", "TEXT"),
+        ):
+            if column not in published_message_columns:
+                con.execute(f"ALTER TABLE vk_source_published_messages ADD COLUMN {column} {definition}")
         con.execute(
             """INSERT OR IGNORE INTO chat_read_states(chat_id, user_id, read_at)
                SELECT cm.chat_id, cm.user_id, COALESCE(MAX(m.created_at), 0)
@@ -1516,6 +2208,37 @@ def init_db() -> None:
                SET read_rowid = COALESCE((SELECT MAX(m.rowid) FROM messages m WHERE m.chat_id = chat_read_states.chat_id AND m.created_at <= chat_read_states.read_at), 0)
                WHERE read_rowid = 0"""
         )
+        report_columns = {row["name"] for row in con.execute("PRAGMA table_info(reports)").fetchall()}
+        for column, definition in (("admin_response", "TEXT NOT NULL DEFAULT ''"), ("responded_at", "INTEGER"), ("responded_by", "TEXT")):
+            if column not in report_columns:
+                con.execute(f"ALTER TABLE reports ADD COLUMN {column} {definition}")
+        vk_review_columns = {row["name"]: row for row in con.execute("PRAGMA table_info(vk_review_submissions)").fetchall()}
+        if vk_review_columns and (vk_review_columns["channel_id"]["notnull"] or vk_review_columns["vk_target_id"]["notnull"]):
+            con.execute("DROP INDEX IF EXISTS vk_review_submissions_due_idx")
+            con.execute("DROP INDEX IF EXISTS vk_review_submissions_channel_idx")
+            con.execute("""CREATE TABLE vk_review_submissions_new (
+              id TEXT PRIMARY KEY,
+              channel_id TEXT REFERENCES chats(id) ON DELETE SET NULL,
+              submitter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              vk_target_id TEXT REFERENCES vk_channel_targets(id) ON DELETE SET NULL,
+              external_url TEXT NOT NULL UNIQUE,
+              vk_kind TEXT NOT NULL CHECK(vk_kind IN ('post', 'video')),
+              vk_owner_id INTEGER NOT NULL,
+              vk_item_id INTEGER NOT NULL,
+              verified_title TEXT NOT NULL,
+              likes_count INTEGER NOT NULL,
+              reward_stars INTEGER NOT NULL,
+              status TEXT NOT NULL CHECK(status IN ('pending', 'credited', 'rejected', 'revoked')) DEFAULT 'pending',
+              eligible_at INTEGER NOT NULL,
+              credited_at INTEGER, rejected_at INTEGER,
+              admin_response TEXT NOT NULL DEFAULT '', responded_at INTEGER, responded_by TEXT,
+              created_at INTEGER NOT NULL
+            )""")
+            con.execute("""INSERT INTO vk_review_submissions_new SELECT id, channel_id, submitter_id, vk_target_id, external_url, vk_kind, vk_owner_id, vk_item_id, verified_title, likes_count, reward_stars, status, eligible_at, credited_at, rejected_at, admin_response, responded_at, responded_by, created_at FROM vk_review_submissions""")
+            con.execute("DROP TABLE vk_review_submissions")
+            con.execute("ALTER TABLE vk_review_submissions_new RENAME TO vk_review_submissions")
+            con.execute("CREATE INDEX IF NOT EXISTS vk_review_submissions_due_idx ON vk_review_submissions(status, eligible_at)")
+            con.execute("CREATE INDEX IF NOT EXISTS vk_review_submissions_channel_idx ON vk_review_submissions(channel_id, created_at DESC)")
         review_columns = {row["name"] for row in con.execute("PRAGMA table_info(reviews)").fetchall()}
         if "media_data" not in review_columns:
             con.execute("ALTER TABLE reviews ADD COLUMN media_data TEXT")
@@ -1526,8 +2249,18 @@ def init_db() -> None:
         user_columns = {row["name"] for row in con.execute("PRAGMA table_info(users)").fetchall()}
         if "agreement_accepted_at" not in user_columns:
             con.execute("ALTER TABLE users ADD COLUMN agreement_accepted_at INTEGER")
-        if "text_scale" not in user_columns:
-            con.execute("ALTER TABLE users ADD COLUMN text_scale TEXT NOT NULL DEFAULT 'system'")
+        if "deletion_requested_at" not in user_columns:
+            con.execute("ALTER TABLE users ADD COLUMN deletion_requested_at INTEGER")
+        if "deletion_due_at" not in user_columns:
+            con.execute("ALTER TABLE users ADD COLUMN deletion_due_at INTEGER")
+        if "profile_description" not in user_columns:
+            con.execute("ALTER TABLE users ADD COLUMN profile_description TEXT NOT NULL DEFAULT ''")
+        con.execute("CREATE INDEX IF NOT EXISTS users_deletion_due_at_idx ON users(deletion_due_at) WHERE deletion_due_at IS NOT NULL")
+        oauth_state_columns = {row["name"] for row in con.execute("PRAGMA table_info(oauth_states)").fetchall()}
+        if "code_verifier" not in oauth_state_columns:
+            con.execute("ALTER TABLE oauth_states ADD COLUMN code_verifier TEXT")
+        level_columns = {row["name"] for row in con.execute("PRAGMA table_info(account_level_subscriptions)").fetchall()}
+        # The table is created above for both fresh and existing databases.
         yookassa_payment_columns = {row["name"] for row in con.execute("PRAGMA table_info(yookassa_payments)").fetchall()}
         if "terms_accepted_at" not in yookassa_payment_columns:
             con.execute("ALTER TABLE yookassa_payments ADD COLUMN terms_accepted_at INTEGER")
@@ -1574,6 +2307,8 @@ def init_db() -> None:
             },
             "ui_appearance": DEFAULT_UI_APPEARANCE,
             "channel_reactions": list(DEFAULT_CHANNEL_REACTIONS),
+            "channel_monetization": DEFAULT_CHANNEL_MONETIZATION,
+            "channel_activity_regulator": DEFAULT_CHANNEL_ACTIVITY_REGULATOR,
             "public_branding": DEFAULT_PUBLIC_BRANDING,
             "public_legal": DEFAULT_PUBLIC_LEGAL,
         }
@@ -1593,6 +2328,20 @@ def init_db() -> None:
             normalized_appearance = DEFAULT_UI_APPEARANCE
         if not appearance_row or loads(appearance_row["value"], {}) != normalized_appearance:
             con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('ui_appearance', ?)", (dumps(normalized_appearance),))
+        monetization_row = con.execute("SELECT value FROM settings WHERE key = 'channel_monetization'").fetchone()
+        try:
+            normalized_monetization = normalize_channel_monetization(loads(monetization_row["value"], {}) if monetization_row else DEFAULT_CHANNEL_MONETIZATION)
+        except ValueError:
+            normalized_monetization = DEFAULT_CHANNEL_MONETIZATION
+        if not monetization_row or loads(monetization_row["value"], {}) != normalized_monetization:
+            con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('channel_monetization', ?)", (dumps(normalized_monetization),))
+        regulator_row = con.execute("SELECT value FROM settings WHERE key = 'channel_activity_regulator'").fetchone()
+        try:
+            normalized_regulator = normalize_channel_activity_regulator(loads(regulator_row["value"], {}) if regulator_row else DEFAULT_CHANNEL_ACTIVITY_REGULATOR)
+        except ValueError:
+            normalized_regulator = DEFAULT_CHANNEL_ACTIVITY_REGULATOR
+        if not regulator_row or loads(regulator_row["value"], {}) != normalized_regulator:
+            con.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('channel_activity_regulator', ?)", (dumps(normalized_regulator),))
         branding_row = con.execute("SELECT value FROM settings WHERE key = 'public_branding'").fetchone()
         try:
             normalized_branding = normalize_public_branding(loads(branding_row["value"], {}) if branding_row else DEFAULT_PUBLIC_BRANDING)
@@ -1624,12 +2373,17 @@ def init_db() -> None:
         if not con.execute("SELECT 1 FROM settings WHERE key = ?", (review_reward_key,)).fetchone():
             add_activity_reward(
                 con,
-                "Видеообзор Chat‑Pro",
-                "Опубликуйте видео в своём канале и добавьте в подпись «Chat-Pro обзор» или «Чат-Про обзор».",
+                "Ролик или пост о Chat‑Pro",
+                "Опубликуйте ролик или пост в своём канале и добавьте «Chat-Pro» или «Чат-Про» в текст или подпись.",
                 {"chat_pro_review_video": 1},
                 {"stars": 100, "premiumDays": 0},
             )
             con.execute("INSERT INTO settings(key, value) VALUES (?, ?)", (review_reward_key, dumps({"createdAt": now()})))
+        vk_review_transition_key = "vk_review_reward_transition_v1"
+        if not con.execute("SELECT 1 FROM settings WHERE key = ?", (vk_review_transition_key,)).fetchone():
+            # The former fixed 100-star local-channel reward is replaced by VK verification and like-based rewards.
+            con.execute("UPDATE activity_rewards SET active = 0 WHERE title IN ('Видеообзор Chat‑Pro', 'Ролик или пост о Chat‑Pro') AND criteria_json LIKE '%chat_pro_review_video%'")
+            con.execute("INSERT INTO settings(key, value) VALUES (?, ?)", (vk_review_transition_key, dumps({"createdAt": now()})))
 
 
 def uid(prefix: str) -> str:
@@ -1671,9 +2425,20 @@ def get_user_by_token(con: sqlite3.Connection, headers) -> sqlite3.Row | None:
     if not token:
         return None
     return con.execute(
-        "SELECT users.* FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = ?",
+        "SELECT users.* FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = ? AND users.deletion_due_at IS NULL",
         (token,),
     ).fetchone()
+
+
+ACCOUNT_DELETION_GRACE_SECONDS = 7 * 24 * 60 * 60
+
+
+def cleanup_expired_deleted_accounts(con: sqlite3.Connection, current: int | None = None) -> int:
+    timestamp = now() if current is None else current
+    return con.execute(
+        "DELETE FROM users WHERE deletion_due_at IS NOT NULL AND deletion_due_at <= ?",
+        (timestamp,),
+    ).rowcount
 
 
 def username_taken(con: sqlite3.Connection, username: str, exclude_user_id: str | None = None) -> bool:
@@ -1730,11 +2495,132 @@ def weighted_channel_post(con: sqlite3.Connection, channel_id: str) -> sqlite3.R
     return posts[0]
 
 
+def automated_commenter_pool(con: sqlite3.Connection, commenter_ids=None) -> list[sqlite3.Row]:
+    requested = []
+    if isinstance(commenter_ids, list):
+        requested = list(dict.fromkeys(str(item).strip() for item in commenter_ids if str(item).strip()))
+    if requested:
+        placeholders = ",".join("?" for _ in requested)
+        rows = con.execute(
+            f"SELECT id, user_id FROM automated_commenters WHERE id IN ({placeholders})",
+            requested,
+        ).fetchall()
+        by_id = {row["id"]: row for row in rows}
+        return [by_id[item] for item in requested if item in by_id]
+    return con.execute("SELECT id, user_id FROM automated_commenters ORDER BY created_at, id").fetchall()
+
+
+def next_automated_commenter(con: sqlite3.Connection, scope_key: str, commenters: list[sqlite3.Row]) -> sqlite3.Row | None:
+    if not commenters:
+        return None
+    commenter_ids = [row["id"] for row in commenters]
+    current = con.execute(
+        "SELECT * FROM automated_commenter_rotations WHERE scope_key = ?",
+        (scope_key,),
+    ).fetchone()
+    stored_ids = loads(current["commenter_ids_json"], []) if current else []
+    order = loads(current["order_json"], []) if current else []
+    if stored_ids != commenter_ids or not isinstance(order, list) or set(order) != set(commenter_ids):
+        order = commenter_ids[:]
+        secrets.SystemRandom().shuffle(order)
+        position = 0
+        last_commenter_id = None
+    else:
+        position = max(0, min(int(current["position"] or 0), len(order) - 1))
+        last_commenter_id = current["last_commenter_id"]
+    if len(order) > 1 and order[position] == last_commenter_id:
+        position = (position + 1) % len(order)
+    selected_id = order[position]
+    next_position = position + 1
+    if next_position >= len(order):
+        secrets.SystemRandom().shuffle(order)
+        if len(order) > 1 and order[0] == selected_id:
+            order[0], order[1] = order[1], order[0]
+        next_position = 0
+    con.execute(
+        """INSERT INTO automated_commenter_rotations(scope_key,commenter_ids_json,order_json,position,last_commenter_id,updated_at)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(scope_key) DO UPDATE SET commenter_ids_json=excluded.commenter_ids_json,
+             order_json=excluded.order_json, position=excluded.position,
+             last_commenter_id=excluded.last_commenter_id, updated_at=excluded.updated_at""",
+        (scope_key, dumps(commenter_ids), dumps(order), next_position, selected_id, now()),
+    )
+    return next(row for row in commenters if row["id"] == selected_id)
+
+
+def queue_ai_activity_comment(con: sqlite3.Connection, source_key: str, message_id: str, commenter_id: str, current: int) -> None:
+    con.execute(
+        """INSERT INTO activity_comment_jobs(id,source_key,message_id,commenter_id,categories_json,publish_at,created_at)
+           VALUES (?,?,?,?,?,?,?)""",
+        (uid("activitycomment"), source_key, message_id, commenter_id,
+         dumps(["support", "opinion", "question"]), current, current),
+    )
+
+
+def tick_channel_activity_regulator(con: sqlite3.Connection) -> None:
+    """Maintain organic-looking channel counters without requiring an account level."""
+    settings = channel_activity_regulator_settings(con)
+    if not settings["enabled"]:
+        return
+    current = now()
+    reactions = channel_reaction_emojis(con)
+    channels = con.execute(
+        """SELECT id, created_at, subscriber_count, subscriber_boost
+           FROM chats WHERE type = 'channel' AND subscriber_count + subscriber_boost > 0"""
+    ).fetchall()
+    for channel in channels:
+        subscribers = max(0, int(channel["subscriber_count"] or 0) + int(channel["subscriber_boost"] or 0))
+        posts = con.execute(
+            """SELECT id, created_at, views, views_boost, reactions_json FROM messages
+               WHERE chat_id = ? AND media_type != 'system' AND deleted_by_admin = 0
+               ORDER BY created_at DESC, rowid DESC LIMIT 500""",
+            (channel["id"],),
+        ).fetchall()
+        for post in posts:
+            age_ratio = min(1.0, max(0.0, current - int(post["created_at"] or current)) / 86400)
+            target_views = math.ceil(subscribers * settings["viewRatePercent"] / 100 * age_ratio)
+            current_views = max(0, int(post["views"] or 0) + int(post["views_boost"] or 0))
+            if target_views > current_views:
+                con.execute("UPDATE messages SET views_boost = views_boost + ? WHERE id = ?", (target_views - current_views, post["id"]))
+                current_views = target_views
+            target_reactions = math.floor(current_views * settings["reactionRatePercent"] / 100)
+            current_reactions = sum(max(0, int(value or 0)) for value in (loads(post["reactions_json"], {}) or {}).values())
+            if target_reactions > current_reactions:
+                reaction_map = loads(post["reactions_json"], {}) or {}
+                for _ in range(target_reactions - current_reactions):
+                    emoji = reactions[secrets.randbelow(len(reactions))]
+                    reaction_map[emoji] = int(reaction_map.get(emoji, 0)) + 1
+                con.execute("UPDATE messages SET reactions_json = ? WHERE id = ?", (dumps(reaction_map), post["id"]))
+        state = con.execute(
+            "SELECT unsubscribe_progress, last_unsubscribe_tick_at FROM channel_activity_regulator_state WHERE channel_id = ?",
+            (channel["id"],),
+        ).fetchone()
+        if not state:
+            con.execute(
+                "INSERT INTO channel_activity_regulator_state(channel_id,unsubscribe_progress,last_unsubscribe_tick_at) VALUES (?,?,?)",
+                (channel["id"], 0, current),
+            )
+            continue
+        elapsed = max(0, current - int(state["last_unsubscribe_tick_at"] or current))
+        initial_period = settings["initialUnsubscribeMonths"] * 30 * 86400
+        channel_age = max(0, current - int(channel["created_at"] or current))
+        weekly_percent = settings["weeklyUnsubscribePercent"] if channel_age < initial_period else settings["settledWeeklyUnsubscribePercent"]
+        progress = float(state["unsubscribe_progress"] or 0) + subscribers * weekly_percent / 100 * elapsed / (7 * 86400)
+        remove_count = min(max(0, int(channel["subscriber_boost"] or 0)), int(progress))
+        if remove_count:
+            con.execute("UPDATE chats SET subscriber_boost = subscriber_boost - ? WHERE id = ?", (remove_count, channel["id"]))
+            progress -= remove_count
+        con.execute(
+            "UPDATE channel_activity_regulator_state SET unsubscribe_progress = ?, last_unsubscribe_tick_at = ? WHERE channel_id = ?",
+            (progress, current, channel["id"]),
+        )
+
+
 def tick_channel_growth(con: sqlite3.Connection) -> None:
     current = now()
     jobs = con.execute("SELECT * FROM channel_growth_jobs WHERE active = 1").fetchall()
     reaction_icons = channel_reaction_emojis(con)
-    commenters = con.execute("SELECT user_id FROM automated_commenters ORDER BY created_at").fetchall()
+    commenters = automated_commenter_pool(con)
     for job in jobs:
         elapsed = max(0, min(current, job["ends_at"]) - job["starts_at"])
         targets = {metric: elapsed * job[f"{metric}_per_hour"] // 3600 for metric in ("subscribers", "views", "reactions", "comments")}
@@ -1756,66 +2642,212 @@ def tick_channel_growth(con: sqlite3.Connection) -> None:
             for _ in range(additions["comments"]):
                 post = weighted_channel_post(con, job["channel_id"])
                 if post:
-                    commenter = commenters[secrets.randbelow(len(commenters))]
-                    text = local_automated_comment(post["text"], post["media_type"] == "photo", ["support", "opinion", "question"])
-                    con.execute("INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)", (uid("comment"), post["id"], commenter["user_id"], text, None, 1, current))
+                    commenter = next_automated_commenter(con, f"channel-growth:{job['id']}", commenters)
+                    if not commenter:
+                        continue
+                    queue_ai_activity_comment(con, f"channel-growth:{job['id']}", post["id"], commenter["id"], current)
         con.execute("UPDATE channel_growth_jobs SET subscribers_added = ?, views_added = ?, reactions_added = ?, comments_added = ?, active = ? WHERE id = ?", (targets["subscribers"], targets["views"], targets["reactions"], targets["comments"], 1 if current < job["ends_at"] else 0, job["id"]))
 
 
-def demo_activity_post(con: sqlite3.Connection, channel_id: str, post_limit: int) -> sqlite3.Row | None:
+def demo_activity_post(con: sqlite3.Connection, channel_id: str, metric: str = "views") -> sqlite3.Row | None:
+    """Choose an eligible post with the lowest activity for the requested metric."""
     posts = con.execute(
-        """SELECT id, text, media_type, reactions_json FROM messages
-           WHERE chat_id = ? AND media_type != 'system' AND deleted_by_admin = 0
-           ORDER BY created_at DESC, rowid DESC LIMIT ?""",
-        (channel_id, post_limit),
+        """SELECT message.id, message.text, message.media_type, message.reactions_json, message.views_boost,
+                  (SELECT count(*) FROM channel_comments comment WHERE comment.message_id = message.id) AS comments_count
+           FROM messages message
+           WHERE message.chat_id = ? AND message.media_type != 'system' AND message.deleted_by_admin = 0
+           ORDER BY message.created_at, message.rowid""",
+        (channel_id,),
     ).fetchall()
-    return posts[secrets.randbelow(len(posts))] if posts else None
+    if not posts:
+        return None
+    if metric == "views":
+        scores = [max(0, int(post["views_boost"] or 0)) for post in posts]
+    elif metric == "reactions":
+        scores = [sum(max(0, int(value or 0)) for value in (loads(post["reactions_json"], {}) or {}).values()) for post in posts]
+    elif metric == "comments":
+        scores = [max(0, int(post["comments_count"] or 0)) for post in posts]
+    else:
+        raise ValueError("Неизвестный показатель активности.")
+    lowest = min(scores)
+    candidates = [post for post, score in zip(posts, scores) if score == lowest]
+    return candidates[secrets.randbelow(len(candidates))]
+
+
+def account_level_available_for_user(con: sqlite3.Connection, user_id: str, required_level_id: str) -> bool:
+    required_level_id = str(required_level_id or "").strip()
+    if not required_level_id:
+        return True
+    processor = object.__new__(Handler)
+    data = processor.account_level_data(con, user_id)
+    levels = data.get("levels", [])
+    indexes = {level["id"]: index for index, level in enumerate(levels)}
+    return required_level_id in indexes and indexes.get(data.get("current", {}).get("id"), -1) >= indexes[required_level_id]
+
+
+def demo_activity_variations() -> dict[str, float]:
+    return {metric: round(.86 + secrets.randbelow(29) / 100, 2) for metric in ("subscribers", "views", "reactions", "comments")}
+
+
+def apply_demo_activity_donations(con: sqlite3.Connection, subscription, current: int) -> None:
+    count = int(subscription["donation_count"] or 0)
+    minimum = int(subscription["donation_min_stars"] or 0)
+    maximum = int(subscription["donation_max_stars"] or 0)
+    if not count or minimum <= 0 or maximum < minimum:
+        return
+    interval = max(1, int(subscription["donation_post_interval"] or 1))
+    posts = con.execute(
+        """SELECT id, sender_id, text, views, views_boost, reactions_json FROM messages
+           WHERE chat_id = ? AND media_type != 'system' AND deleted_by_admin = 0 AND created_at >= ?
+           ORDER BY created_at, rowid""",
+        (subscription["channel_id"], subscription["starts_at"]),
+    ).fetchall()
+    for index, post in enumerate(posts, start=1):
+        if index % interval:
+            continue
+        reactions = sum(max(0, int(value or 0)) for value in (loads(post["reactions_json"], {}) or {}).values())
+        views = max(0, int(post["views"] or 0) + int(post["views_boost"] or 0))
+        engagement = min(1.0, views / 1000 + reactions / 100)
+        for donation_number in range(1, count + 1):
+            if con.execute("SELECT 1 FROM demo_activity_donations WHERE subscription_id = ? AND message_id = ? AND donation_number = ?", (subscription["id"], post["id"], donation_number)).fetchone():
+                continue
+            spread = maximum - minimum
+            variation = .80 + secrets.randbelow(41) / 100
+            amount = minimum + int(round(spread * min(1, (.2 + .8 * engagement) * variation)))
+            try:
+                Handler.credit_stars(object.__new__(Handler), con, post["sender_id"], amount)
+            except ValueError:
+                continue
+            con.execute("INSERT INTO demo_activity_donations(subscription_id,message_id,donation_number,recipient_user_id,amount,created_at) VALUES (?,?,?,?,?,?)", (subscription["id"], post["id"], donation_number, post["sender_id"], amount, current))
+            Handler.record_star_transaction(object.__new__(Handler), con, post["sender_id"], amount, "demo_activity_donation", f"Автодонат за публикацию «{post['text'][:60] or post['id']}»")
+
+
+def sync_account_level_activity_packages(con: sqlite3.Connection) -> None:
+    """Attach free level-gated packages to every eligible channel with a post."""
+    packages = con.execute(
+        """SELECT * FROM demo_activity_packages
+           WHERE required_account_level_id != '' AND price_stars = 0"""
+    ).fetchall()
+    current = now()
+    for package in packages:
+        channels = con.execute(
+            """SELECT channel.id, channel.owner_id FROM chats channel
+               WHERE channel.type = 'channel' AND channel.owner_id IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM messages post
+                             WHERE post.chat_id = channel.id AND post.media_type != 'system' AND post.deleted_by_admin = 0)"""
+        ).fetchall()
+        for channel in channels:
+            if not account_level_available_for_user(con, channel["owner_id"], package["required_account_level_id"]):
+                continue
+            exists = con.execute(
+                "SELECT 1 FROM demo_activity_subscriptions WHERE package_id = ? AND channel_id = ? AND active = 1",
+                (package["id"], channel["id"]),
+            ).fetchone()
+            if exists:
+                continue
+            con.execute(
+                """INSERT INTO demo_activity_subscriptions(id,package_id,channel_id,starts_at,ends_at,auto_renew,activity_last_tick_at,created_at)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (uid("demosubscription"), package["id"], channel["id"], current,
+                 current + max(1, package["duration_days"]) * 86400, 1 if package["indefinite"] else 0, current, current),
+            )
 
 
 def tick_demo_activity(con: sqlite3.Connection) -> None:
     current = now()
     reaction_icons = channel_reaction_emojis(con)
-    commenters = con.execute("SELECT user_id FROM automated_commenters ORDER BY created_at").fetchall()
     rows = con.execute(
         """SELECT subscription.*, package.subscribers_per_day, package.views_per_day, package.reactions_per_day,
                   package.comments_per_day, package.post_limit, package.duration_days, package.fade_duration_days,
-                  package.indefinite
+                  package.indefinite, package.commenter_ids_json, package.required_account_level_id,
+                   package.donation_count, package.donation_post_interval, package.donation_min_stars,
+                   package.donation_max_stars, package.inactivity_days, chat.owner_id
            FROM demo_activity_subscriptions subscription
            JOIN demo_activity_packages package ON package.id = subscription.package_id
+           JOIN chats chat ON chat.id = subscription.channel_id
            WHERE subscription.active = 1"""
-        ).fetchall()
+    ).fetchall()
     for row in rows:
-        in_fade = False
+        required_level_id = str(row["required_account_level_id"] or "")
+        if required_level_id and not account_level_available_for_user(con, row["owner_id"], required_level_id):
+            if row["level_paused_at"] is None:
+                con.execute("UPDATE demo_activity_subscriptions SET level_paused_at = ? WHERE id = ?", (current, row["id"]))
+            continue
+        if row["level_paused_at"] is not None:
+            paused_for = max(0, current - int(row["level_paused_at"]))
+            con.execute("""UPDATE demo_activity_subscriptions
+                           SET starts_at = starts_at + ?, ends_at = ends_at + ?, level_paused_at = ?, activity_last_tick_at = ?
+                           WHERE id = ?""", (paused_for, paused_for, None, current, row["id"]))
+            continue
+        latest_post = con.execute(
+            """SELECT created_at FROM messages
+               WHERE chat_id = ? AND media_type != 'system' AND deleted_by_admin = 0
+               ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+            (row["channel_id"],),
+        ).fetchone()
+        inactivity_days = max(1, int(row["inactivity_days"] or 3))
+        inactivity_fade_started_at = None
+        if latest_post is None:
+            inactivity_fade_started_at = int(row["starts_at"]) + inactivity_days * 86400
+        elif current >= int(latest_post["created_at"]) + inactivity_days * 86400:
+            inactivity_fade_started_at = int(latest_post["created_at"]) + inactivity_days * 86400
+        if inactivity_fade_started_at is not None:
+            fade_duration = int(row["fade_duration_days"] or 0) * 86400
+            if not fade_duration or current >= inactivity_fade_started_at + fade_duration:
+                con.execute("UPDATE demo_activity_subscriptions SET active = 0, inactivity_fade_started_at = ? WHERE id = ?", (inactivity_fade_started_at, row["id"]))
+                continue
+            con.execute("UPDATE demo_activity_subscriptions SET inactivity_fade_started_at = ? WHERE id = ?", (inactivity_fade_started_at, row["id"]))
+        elif row["inactivity_fade_started_at"] is not None:
+            con.execute("UPDATE demo_activity_subscriptions SET inactivity_fade_started_at = NULL WHERE id = ?", (row["id"],))
+        in_fade = inactivity_fade_started_at is not None
         if not row["indefinite"] and current >= row["ends_at"]:
             if row["auto_renew"]:
                 duration = row["duration_days"] * 86400
-                con.execute(
-                    "UPDATE demo_activity_subscriptions SET starts_at=?, ends_at=?, subscribers_added=0, views_added=0, reactions_added=0, comments_added=0 WHERE id=?",
-                    (current, current + duration, row["id"]),
-                )
+                con.execute("""UPDATE demo_activity_subscriptions
+                               SET starts_at=?, ends_at=?, subscribers_added=0, views_added=0, reactions_added=0,
+                                   comments_added=0, activity_last_tick_at=?, activity_progress_json='{}'
+                               WHERE id=?""", (current, current + duration, current, row["id"]))
                 continue
             fade_duration = row["fade_duration_days"] * 86400
             if not fade_duration or current >= row["ends_at"] + fade_duration:
                 con.execute("UPDATE demo_activity_subscriptions SET active = 0 WHERE id = ?", (row["id"],))
                 continue
             in_fade = True
-        elapsed = max(0, current - row["starts_at"])
-        # Uneven but bounded progress: short pauses and bursts while preserving the daily total.
-        wave = 1 if in_fade else .55 + (secrets.randbelow(91) / 100)
-        fade_elapsed_days = max(0, current - row["ends_at"]) / 86400
-        fade_days = max(1, row["fade_duration_days"])
-        fade_progress_days = min(fade_elapsed_days, fade_days)
-        effective_days = elapsed / 86400 if row["indefinite"] or not in_fade else row["duration_days"] + (fade_progress_days / 3) * (1 - fade_progress_days / (2 * fade_days))
-        targets = {
-            metric: max(row[f"{metric}_added"], int(row[f"{metric}_per_day"] * effective_days * wave))
-            for metric in ("subscribers", "views", "reactions", "comments")
-        }
-        additions = {metric: max(0, targets[metric] - row[f"{metric}_added"]) for metric in targets}
+        last_tick = int(row["activity_last_tick_at"] or row["starts_at"] or current)
+        elapsed = max(0, current - last_tick)
+        if not elapsed:
+            continue
+        multiplier = 1
+        stored_multiplier = max(1, int(row["spike_multiplier"] or 1))
+        spike_starts = row["spike_starts_at"]
+        spike_ends = row["spike_ends_at"]
+        next_spike = row["next_spike_at"]
+        if spike_starts and spike_ends and int(spike_starts) <= current < int(spike_ends):
+            multiplier = stored_multiplier
+        elif not next_spike or current >= int(next_spike):
+            spike_starts = current + (15 + secrets.randbelow(346)) * 60
+            spike_ends = int(spike_starts) + (2 + secrets.randbelow(5)) * 3600
+            next_spike = int(spike_ends) + (12 + secrets.randbelow(49)) * 3600
+            stored_multiplier = (3, 4, 5, 10)[secrets.randbelow(4)]
+        progress = loads(row["activity_progress_json"], {}) or {}
+        variations = loads(row["metric_variation_json"], {}) or demo_activity_variations()
+        fade_started_at = inactivity_fade_started_at if inactivity_fade_started_at is not None else row["ends_at"]
+        fade_factor = 1.0 if not in_fade else max(.12, 1 - (current - fade_started_at) / max(1, row["fade_duration_days"] * 86400))
+        additions = {}
+        for metric in ("subscribers", "views", "reactions", "comments"):
+            previous = float(progress.get(metric, 0))
+            increment = row[f"{metric}_per_day"] * elapsed / 86400 * float(variations.get(metric, 1)) * multiplier * fade_factor
+            updated = previous + increment
+            additions[metric] = max(0, int(updated) - int(previous))
+            progress[metric] = updated
         if additions["subscribers"]:
             con.execute("UPDATE chats SET subscriber_boost = subscriber_boost + ? WHERE id = ?", (additions["subscribers"], row["channel_id"]))
+        apply_demo_activity_donations(con, row, current)
+        commenters = automated_commenter_pool(con)
+        applied = {"subscribers": additions["subscribers"], "views": 0, "reactions": 0, "comments": 0}
         for metric in ("views", "reactions", "comments"):
             for _ in range(additions[metric]):
-                post = demo_activity_post(con, row["channel_id"], row["post_limit"])
+                post = demo_activity_post(con, row["channel_id"], metric)
                 if not post:
                     break
                 if metric == "views":
@@ -1825,26 +2857,34 @@ def tick_demo_activity(con: sqlite3.Connection) -> None:
                     icon = reaction_icons[secrets.randbelow(len(reaction_icons))]
                     reactions[icon] = int(reactions.get(icon, 0)) + 1
                     con.execute("UPDATE messages SET reactions_json = ? WHERE id = ?", (dumps(reactions), post["id"]))
-                elif commenters:
-                    author = commenters[secrets.randbelow(len(commenters))]
-                    text = local_automated_comment(post["text"], post["media_type"] == "photo", ["support", "opinion", "question"])
-                    con.execute("INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)", (uid("comment"), post["id"], author["user_id"], text, None, 1, current))
+                elif not commenters:
+                    break
+                else:
+                    author = next_automated_commenter(con, f"demo-package:{row['id']}", commenters)
+                    if not author:
+                        break
+                    queue_ai_activity_comment(con, f"demo-package:{row['id']}", post["id"], author["id"], current)
+                applied[metric] += 1
         con.execute(
-            "UPDATE demo_activity_subscriptions SET subscribers_added=?, views_added=?, reactions_added=?, comments_added=? WHERE id=?",
-            (targets["subscribers"], targets["views"], targets["reactions"], targets["comments"], row["id"]),
+            """UPDATE demo_activity_subscriptions
+               SET subscribers_added=subscribers_added + ?, views_added=views_added + ?, reactions_added=reactions_added + ?,
+                   comments_added=comments_added + ?, activity_last_tick_at=?, activity_progress_json=?, metric_variation_json=?,
+                   spike_multiplier=?, spike_starts_at=?, spike_ends_at=?, next_spike_at=? WHERE id=?""",
+            (applied["subscribers"], applied["views"], applied["reactions"], applied["comments"], current, dumps(progress), dumps(variations), stored_multiplier, spike_starts, spike_ends, next_spike, row["id"]),
         )
-
 
 def publish_scheduled_posts(con: sqlite3.Connection) -> None:
     due_posts = con.execute("SELECT * FROM scheduled_posts WHERE publish_at <= ? ORDER BY publish_at, created_at", (now(),)).fetchall()
     for post in due_posts:
+        if channel_post_limit_reached(con, post["chat_id"]):
+            continue
         message_id = uid("msg")
         con.execute(
             "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (message_id, post["chat_id"], post["sender_id"], post["text"], post["media_type"], post["media_data"], 1, post["publish_at"]),
+            (message_id, post["chat_id"], post["sender_id"], post["text"], post["media_type"], post["media_data"], 1, now()),
         )
-        schedule_automated_comments(con, message_id, post["chat_id"], post["publish_at"])
-        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (post["publish_at"], post["chat_id"]))
+        schedule_automated_comments(con, message_id, post["chat_id"])
+        con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), post["chat_id"]))
         link = con.execute("SELECT target_chat_id FROM channel_links WHERE channel_id = ?", (post["chat_id"],)).fetchone()
         if link:
             channel = con.execute("SELECT title FROM chats WHERE id = ?", (post["chat_id"],)).fetchone()
@@ -2007,8 +3047,8 @@ def fetch_rss_image(image_url: str) -> str | None:
 def validate_vk_group_url(value) -> tuple[str, str]:
     source_url = str(value or "").strip()
     parsed = urlparse(source_url)
-    if parsed.scheme != "https" or parsed.hostname not in {"vk.com", "www.vk.com", "m.vk.com"}:
-        raise ValueError("Укажите ссылку на публичную группу VK вида https://vk.com/имя_группы.")
+    if parsed.scheme != "https" or parsed.hostname not in {"vk.com", "www.vk.com", "m.vk.com", "vk.ru", "www.vk.ru", "m.vk.ru"}:
+        raise ValueError("Укажите ссылку на публичную группу VK вида https://vk.com/имя_группы или https://vk.ru/имя_группы.")
     source_ref = parsed.path.strip("/").split("/", 1)[0]
     if not re.fullmatch(r"[A-Za-z0-9_.-]{2,80}", source_ref):
         raise ValueError("В ссылке VK не найдено корректное имя публичной группы.")
@@ -2045,6 +3085,8 @@ def vk_api(access_token: str, method: str, params: dict | None = None):
 
 def vk_group_data(access_token: str, source_ref: str) -> tuple[int, str]:
     groups = vk_api(access_token, "groups.getById", {"group_id": source_ref})
+    if isinstance(groups, dict):
+        groups = groups.get("groups", [])
     group = groups[0] if isinstance(groups, list) and groups else None
     group_id = int(group.get("id", 0) or 0) if isinstance(group, dict) else 0
     if not group_id:
@@ -2052,14 +3094,107 @@ def vk_group_data(access_token: str, source_ref: str) -> tuple[int, str]:
     return -group_id, str(group.get("name", source_ref))[:120]
 
 
+def vk_target_message_text(message) -> str:
+    text = " ".join(str(message["text"] or "").split())
+    if str(message["source_type"] or "") == "vk":
+        original_url = str(message["source_id"] or "").strip()
+        if original_url.startswith("https://vk.") and original_url not in text:
+            text = f"{text}\n\nИсточник: {original_url}".strip()
+    return text[:10_000]
+
+
 def vk_post_image_url(post: dict) -> str:
     for attachment in post.get("attachments", []) if isinstance(post.get("attachments"), list) else []:
-        photo = attachment.get("photo") if isinstance(attachment, dict) else None
+        photo = attachment.get("photo") if isinstance(attachment, dict) and attachment.get("type") == "photo" else None
         sizes = photo.get("sizes") if isinstance(photo, dict) else None
         images = [item for item in sizes if isinstance(item, dict) and item.get("url")] if isinstance(sizes, list) else []
         if images:
             return str(max(images, key=lambda item: int(item.get("width", 0) or 0) * int(item.get("height", 0) or 0))["url"])
     return ""
+
+
+def vk_official_video_player_url(access_token: str, video: dict, fallback_owner_id: int) -> str:
+    try:
+        owner_id = int(video.get("owner_id", fallback_owner_id) or fallback_owner_id)
+        video_id = int(video.get("id", 0) or 0)
+    except (TypeError, ValueError):
+        return ""
+    if not owner_id or video_id <= 0:
+        return ""
+    access_key = str(video.get("access_key", "") or "")
+    video_ref = f"{owner_id}_{video_id}" + (f"_{access_key}" if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", access_key) else "")
+    try:
+        result = vk_api(access_token, "video.get", {"videos": video_ref})
+    except ValueError:
+        return ""
+    items = result.get("items", []) if isinstance(result, dict) else []
+    player_url = str(items[0].get("player", "") or "") if items and isinstance(items[0], dict) else ""
+    parsed = urlparse(player_url)
+    params = parse_qs(parsed.query)
+    if (
+        parsed.scheme == "https"
+        and parsed.hostname in {"vk.com", "www.vk.com", "vkvideo.ru", "www.vkvideo.ru"}
+        and parsed.path == "/video_ext.php"
+        and params.get("oid")
+        and params.get("id")
+        and params.get("hash")
+    ):
+        return player_url
+    return ""
+
+
+def vk_post_video(access_token: str, post: dict) -> tuple[bool, str, str]:
+    for attachment in post.get("attachments", []) if isinstance(post.get("attachments"), list) else []:
+        video = attachment.get("video") if isinstance(attachment, dict) and attachment.get("type") == "video" else None
+        if not isinstance(video, dict):
+            continue
+        thumbnail_url = ""
+        for field in ("image", "first_frame"):
+            images = video.get(field)
+            candidates = [item for item in images if isinstance(item, dict) and item.get("url")] if isinstance(images, list) else []
+            if candidates:
+                thumbnail = max(candidates, key=lambda item: int(item.get("width", 0) or 0) * int(item.get("height", 0) or 0))
+                thumbnail_url = str(thumbnail["url"])
+                break
+        return True, thumbnail_url, vk_official_video_player_url(access_token, video, int(post.get("owner_id", 0) or 0))
+    return False, "", ""
+
+
+def discover_rss_feed(site_url: str) -> str:
+    """Find a public RSS/Atom URL advertised by a site's HTML page."""
+    site_url = validate_rss_url(site_url)
+    request = urlrequest.Request(
+        site_url,
+        headers={"User-Agent": "Chat-Pro RSS importer/1.0", "Accept": "text/html,application/xhtml+xml", "Accept-Encoding": "identity", "Connection": "close"},
+    )
+    try:
+        with urlrequest.build_opener(SafeRssRedirect).open(request, timeout=15) as response:
+            page = response.read(RSS_MAX_BYTES + 1).decode("utf-8", "replace")
+    except (urlerror.URLError, socket.timeout, TimeoutError, OSError) as error:
+        raise ValueError("Не удалось открыть сайт и найти его RSS-ленту.") from error
+    if len(page.encode("utf-8")) > RSS_MAX_BYTES:
+        raise ValueError("Страница сайта слишком большая для поиска RSS-ленты.")
+    candidates = []
+    for tag in re.findall(r"<(?:link|a)\b[^>]*>", page, flags=re.IGNORECASE):
+        href = re.search(r"\bhref\s*=\s*['\"]([^'\"]+)", tag, flags=re.IGNORECASE)
+        if not href:
+            continue
+        relation = re.search(r"\brel\s*=\s*['\"]([^'\"]+)", tag, flags=re.IGNORECASE)
+        content_type = re.search(r"\btype\s*=\s*['\"]([^'\"]+)", tag, flags=re.IGNORECASE)
+        candidate = urljoin(site_url, unescape(href.group(1).strip()))
+        if ((relation and "alternate" in relation.group(1).casefold()) or (content_type and "xml" in content_type.group(1).casefold()) or re.search(r"(?:rss|feed|\.xml)(?:[/?#]|$)", candidate, re.IGNORECASE)):
+            candidates.append(candidate)
+    # Some sites do not advertise their feed, but use a conventional public path.
+    candidates.extend([urljoin(site_url, path) for path in ("/rss", "/rss/", "/feed", "/feed/", "/feed.xml", "/rss.xml")])
+    for candidate in list(dict.fromkeys(candidates))[:12]:
+        try:
+            candidate = validate_rss_url(candidate)
+            _, entries = fetch_rss_feed(candidate)
+            if entries:
+                return candidate
+        except ValueError:
+            continue
+    raise ValueError("На сайте не удалось найти доступную RSS-ленту. Пришлите её прямую ссылку или выберите другой источник.")
 
 
 def fetch_rss_feed(feed_url: str) -> tuple[str, list[dict]]:
@@ -2121,6 +3256,8 @@ def poll_rss_channels(con: sqlite3.Connection) -> None:
                     # Re-check before every import so no new posts appear after disconnect.
                     if not con.execute("SELECT 1 FROM rss_channel_sources WHERE id = ? AND channel_id = ?", (source["id"], source["channel_id"])).fetchone():
                         break
+                    if channel_post_limit_reached(con, source["channel_id"], current):
+                        break
                     imported = con.execute(
                         "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
                         (source["id"], entry["id"], current),
@@ -2131,6 +3268,16 @@ def poll_rss_channels(con: sqlite3.Connection) -> None:
                     summary = entry["summary"] or page_summary
                     text = "\n\n".join(part for part in (entry["title"], summary) if part)[:10_000]
                     media_data = fetch_rss_image(entry["imageUrl"] or page_image_url)
+                    if not media_data and entry["link"]:
+                        # An RSS image URL can be stale, oversized or blocked by a CDN.
+                        # In that case, use the article's og:image as a verified fallback.
+                        if not page_image_url:
+                            fallback_summary, page_image_url = fetch_rss_article_metadata(entry["link"])
+                            if not summary:
+                                summary = fallback_summary
+                                text = "\n\n".join(part for part in (entry["title"], summary) if part)[:10_000]
+                        if page_image_url and page_image_url != entry["imageUrl"]:
+                            media_data = fetch_rss_image(page_image_url)
                     message_id = uid("msg")
                     con.execute(
                         """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at)
@@ -2144,7 +3291,7 @@ def poll_rss_channels(con: sqlite3.Connection) -> None:
             con.execute("UPDATE rss_channel_sources SET last_sync_at = ?, last_error = ? WHERE id = ?", (current, str(error)[:300], source["id"]))
 
 
-def poll_vk_channels(con: sqlite3.Connection) -> None:
+def poll_vk_channels(con: sqlite3.Connection, moderator=None) -> None:
     current = now()
     due_sources = con.execute("SELECT * FROM vk_channel_sources WHERE next_poll_at <= ? ORDER BY next_poll_at LIMIT 20", (current,)).fetchall()
     for source in due_sources:
@@ -2172,69 +3319,274 @@ def poll_vk_channels(con: sqlite3.Connection) -> None:
                     text = str(post.get("text", "")).strip()[:10_000]
                     if keywords and not any(keyword in text.casefold() for keyword in keywords):
                         continue
-                    image_url = vk_post_image_url(post)
-                    if not text and not image_url:
+                    has_video, video_thumbnail_url, video_embed_url = vk_post_video(source["access_token"], post)
+                    image_url = "" if has_video else vk_post_image_url(post)
+                    if not text and not image_url and not has_video:
                         continue
+                    if channel_post_limit_reached(con, source["channel_id"], current):
+                        break
+                    owner_id = int(post.get("owner_id", source["owner_id"]) or source["owner_id"])
+                    original_url = f"https://vk.com/wall{owner_id}_{post_id}"
                     imported = con.execute(
                         "INSERT OR IGNORE INTO vk_source_imported_posts(source_id,post_id,imported_at) VALUES (?,?,?)",
                         (source["id"], post_id, current),
                     ).rowcount
                     if not imported:
+                        if has_video and video_embed_url:
+                            con.execute(
+                                """UPDATE messages SET media_embed_url = ?
+                                   WHERE source_type = 'vk' AND source_id = ? AND media_type = 'vk_video'
+                                     AND COALESCE(media_embed_url, '') != ?""",
+                                (video_embed_url, original_url, video_embed_url),
+                            )
                         continue
-                    owner_id = int(post.get("owner_id", source["owner_id"]) or source["owner_id"])
-                    original_url = f"https://vk.com/wall{owner_id}_{post_id}"
-                    media_data = fetch_rss_image(image_url)
+                    media_data = fetch_rss_image(video_thumbnail_url if has_video else image_url)
                     message_id = uid("msg")
                     con.execute(
-                        """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at)
-                           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                        (message_id, source["channel_id"], sender["id"], text, "photo" if media_data else None, media_data, 1,
-                         f"VK · {source['source_title']}", "vk", original_url, int(post.get("date", current) or current)),
+                        """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,media_embed_url,views,forwarded_from,source_type,source_id,created_at)
+                           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (message_id, source["channel_id"], sender["id"], text, "vk_video" if has_video else "photo" if media_data else None, media_data, video_embed_url or None, 1,
+                         f"VK · {source['source_title']}", "vk", original_url, current),
                     )
                     schedule_automated_comments(con, message_id, source["channel_id"], current)
                     con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (current, source["channel_id"]))
+            if moderator and source["moderation_enabled"]:
+                moderate_vk_source_comments(con, source, posts if isinstance(posts, list) else [], current, moderator)
             con.execute("UPDATE vk_channel_sources SET last_sync_at = ?, last_error = NULL WHERE id = ?", (current, source["id"]))
         except ValueError as error:
             con.execute("UPDATE vk_channel_sources SET last_sync_at = ?, last_error = ? WHERE id = ?", (current, str(error)[:300], source["id"]))
 
 
+def moderate_vk_source_comments(con: sqlite3.Connection, source, posts: list[dict], current: int, moderator) -> None:
+    rule = con.execute(
+        "SELECT * FROM ai_agent_comment_moderation_rules WHERE user_id = ? AND channel_id = ?",
+        (source["created_by"], source["channel_id"]),
+    ).fetchone()
+    if not rule or rule["target_scope"] not in {"comments", "all"}:
+        return
+    words = [str(word).casefold() for word in loads(rule["blocked_words_json"], []) if str(word).strip()]
+    semantic_rules = [str(item) for item in loads(rule["semantic_rules_json"], []) if str(item).strip()]
+    model_profile = moderator.ai_agent_settings(con, source["created_by"])["modelProfile"]
+    semantic_budget = 1
+    for post in posts[:5]:
+        if not isinstance(post, dict):
+            continue
+        post_id = int(post.get("id", 0) or 0)
+        if not post_id:
+            continue
+        comments = vk_api(source["access_token"], "wall.getComments", {"owner_id": source["owner_id"], "post_id": post_id, "count": 100, "sort": "desc"})
+        items = comments.get("items", []) if isinstance(comments, dict) else []
+        for comment in items if isinstance(items, list) else []:
+            if not isinstance(comment, dict):
+                continue
+            comment_id = int(comment.get("id", 0) or 0)
+            target_text = " ".join(str(comment.get("text", "") or "").split())[:10_000]
+            if not comment_id or not target_text:
+                continue
+            claimed = con.execute(
+                "INSERT OR IGNORE INTO vk_source_moderated_comments(source_id,post_id,comment_id,decision,last_error,moderated_at) VALUES (?,?,?,'pending',NULL,?)",
+                (source["id"], post_id, comment_id, current),
+            ).rowcount
+            if not claimed:
+                continue
+            matched_word = next((word for word in words if word in target_text.casefold()), None)
+            if matched_word:
+                decision = rule["action_mode"] if rule["action_mode"] in {"delete", "review"} else "delete"
+                reason = f"Совпадение с правилом: {matched_word}"
+                confidence = 1.0
+            elif rule["ai_enabled"] and semantic_rules and semantic_budget > 0:
+                semantic_budget -= 1
+                decision, reason, confidence = moderator.ai_agent_semantic_moderation(target_text, semantic_rules, model_profile)
+            else:
+                decision, reason, confidence = "allow", "Нарушение не обнаружено", 0.0
+            source_ref = f"vk:{source['id']}:{post_id}"
+            if decision == "delete":
+                try:
+                    vk_api(source["access_token"], "wall.deleteComment", {"owner_id": source["owner_id"], "comment_id": comment_id})
+                except ValueError as error:
+                    con.execute(
+                        "UPDATE vk_source_moderated_comments SET decision = 'failed', last_error = ? WHERE source_id = ? AND post_id = ? AND comment_id = ?",
+                        (str(error)[:300], source["id"], post_id, comment_id),
+                    )
+                    continue
+            con.execute(
+                "UPDATE vk_source_moderated_comments SET decision = ?, last_error = NULL WHERE source_id = ? AND post_id = ? AND comment_id = ?",
+                (decision, source["id"], post_id, comment_id),
+            )
+            if decision != "allow":
+                moderator.record_ai_moderation_event(
+                    con, rule, source["channel_id"], "comment", str(comment_id), target_text, decision, reason, confidence,
+                    source=source_ref,
+                )
+
+
+def publish_vk_channel_posts(con: sqlite3.Connection) -> None:
+    current = now()
+    sources = con.execute(
+        "SELECT * FROM vk_channel_sources WHERE publish_enabled = 1 ORDER BY created_at LIMIT 20"
+    ).fetchall()
+    for source in sources:
+        posts = con.execute(
+            """SELECT m.id, m.text FROM messages m
+               WHERE m.chat_id = ? AND m.created_at >= ? AND COALESCE(m.media_type, '') != 'system'
+                 AND m.deleted_by_admin = 0 AND COALESCE(m.source_type, '') != 'vk'
+                 AND NOT EXISTS(
+                     SELECT 1 FROM vk_source_published_messages p
+                     WHERE p.source_id = ? AND p.message_id = m.id
+                 )
+               ORDER BY m.created_at, m.rowid LIMIT 10""",
+            (source["channel_id"], source["created_at"], source["id"]),
+        ).fetchall()
+        for message in posts:
+            claimed = con.execute(
+                "INSERT OR IGNORE INTO vk_source_published_messages(source_id,message_id,vk_post_id,status,last_error,published_at) VALUES (?,?,NULL,'pending',NULL,?)",
+                (source["id"], message["id"], current),
+            ).rowcount
+            if not claimed:
+                continue
+            text = " ".join(str(message["text"] or "").split())[:10_000]
+            if not text:
+                con.execute("UPDATE vk_source_published_messages SET status = 'published' WHERE source_id = ? AND message_id = ?", (source["id"], message["id"]))
+                continue
+            try:
+                result = vk_api(source["access_token"], "wall.post", {"owner_id": source["owner_id"], "message": text})
+                vk_post_id = int(result.get("post_id", 0) or 0) if isinstance(result, dict) else int(result or 0)
+                if not vk_post_id:
+                    raise ValueError("VK не вернул ID опубликованного поста.")
+                con.execute(
+                    "UPDATE vk_source_published_messages SET vk_post_id = ?, status = 'published' WHERE source_id = ? AND message_id = ?",
+                    (vk_post_id, source["id"], message["id"]),
+                )
+                con.execute("UPDATE vk_channel_sources SET last_error = NULL WHERE id = ?", (source["id"],))
+            except (ValueError, TypeError) as error:
+                con.execute(
+                    "UPDATE vk_source_published_messages SET status = 'failed', last_error = ? WHERE source_id = ? AND message_id = ?",
+                    (str(error)[:300], source["id"], message["id"]),
+                )
+                con.execute("UPDATE vk_channel_sources SET last_error = ? WHERE id = ?", (str(error)[:300], source["id"]))
+                break
+
+
+def publish_vk_channel_targets(con: sqlite3.Connection) -> None:
+    current = now()
+    targets = con.execute("SELECT * FROM vk_channel_targets WHERE publish_enabled = 1 ORDER BY created_at LIMIT 20").fetchall()
+    for target in targets:
+        posts = con.execute(
+            """SELECT m.id, m.text, m.source_type, m.source_id FROM messages m
+               WHERE m.chat_id = ? AND m.created_at >= ? AND COALESCE(m.media_type, '') != 'system'
+                 AND m.deleted_by_admin = 0 AND NOT EXISTS(
+                   SELECT 1 FROM vk_target_published_messages p WHERE p.target_id = ? AND p.message_id = m.id
+                 ) ORDER BY m.created_at, m.rowid LIMIT 10""",
+            (target["channel_id"], target["created_at"], target["id"]),
+        ).fetchall()
+        for message in posts:
+            claimed = con.execute(
+                "INSERT OR IGNORE INTO vk_target_published_messages(target_id,message_id,vk_post_id,status,last_error,published_at) VALUES (?,?,NULL,'pending',NULL,?)",
+                (target["id"], message["id"], current),
+            ).rowcount
+            if not claimed:
+                continue
+            text = vk_target_message_text(message)
+            if not text:
+                con.execute(
+                    "UPDATE vk_target_published_messages SET status = 'skipped', last_error = 'Пустая публикация без ссылки на оригинал.' WHERE target_id = ? AND message_id = ?",
+                    (target["id"], message["id"]),
+                )
+                continue
+            try:
+                result = vk_api(target["access_token"], "wall.post", {"owner_id": target["owner_id"], "message": text})
+                vk_post_id = int(result.get("post_id", 0) or 0) if isinstance(result, dict) else int(result or 0)
+                if not vk_post_id:
+                    raise ValueError("VK не вернул ID опубликованного поста.")
+                con.execute(
+                    "UPDATE vk_target_published_messages SET vk_post_id = ?, status = 'published', last_error = NULL WHERE target_id = ? AND message_id = ?",
+                    (vk_post_id, target["id"], message["id"]),
+                )
+                con.execute("UPDATE vk_channel_targets SET last_publish_at = ?, last_error = NULL WHERE id = ?", (current, target["id"]))
+            except (ValueError, TypeError) as error:
+                message_error = str(error)[:300]
+                con.execute(
+                    "UPDATE vk_target_published_messages SET status = 'failed', last_error = ? WHERE target_id = ? AND message_id = ?",
+                    (message_error, target["id"], message["id"]),
+                )
+                con.execute("UPDATE vk_channel_targets SET last_error = ? WHERE id = ?", (message_error, target["id"]))
+                break
+
+
+def moderate_vk_target_comments(con: sqlite3.Connection, target, current: int, moderator) -> None:
+    rule = con.execute(
+        "SELECT * FROM ai_agent_comment_moderation_rules WHERE user_id = ? AND channel_id = ?",
+        (target["created_by"], target["channel_id"]),
+    ).fetchone()
+    if not rule or rule["target_scope"] not in {"comments", "all"}:
+        return
+    wall = vk_api(target["access_token"], "wall.get", {"owner_id": target["owner_id"], "count": 30, "filter": "owner"})
+    posts = wall.get("items", []) if isinstance(wall, dict) else []
+    words = [str(word).casefold() for word in loads(rule["blocked_words_json"], []) if str(word).strip()]
+    semantic_rules = [str(item) for item in loads(rule["semantic_rules_json"], []) if str(item).strip()]
+    model_profile = moderator.ai_agent_settings(con, target["created_by"])["modelProfile"]
+    semantic_budget = 1
+    for post in posts[:5] if isinstance(posts, list) else []:
+        if not isinstance(post, dict):
+            continue
+        post_id = int(post.get("id", 0) or 0)
+        if not post_id:
+            continue
+        comments = vk_api(target["access_token"], "wall.getComments", {"owner_id": target["owner_id"], "post_id": post_id, "count": 100, "sort": "desc"})
+        for comment in comments.get("items", []) if isinstance(comments, dict) else []:
+            if not isinstance(comment, dict):
+                continue
+            comment_id = int(comment.get("id", 0) or 0)
+            target_text = " ".join(str(comment.get("text", "") or "").split())[:10_000]
+            if not comment_id or not target_text:
+                continue
+            claimed = con.execute(
+                "INSERT OR IGNORE INTO vk_target_moderated_comments(target_id,post_id,comment_id,decision,last_error,moderated_at) VALUES (?,?,?,'pending',NULL,?)",
+                (target["id"], post_id, comment_id, current),
+            ).rowcount
+            if not claimed:
+                continue
+            matched_word = next((word for word in words if word in target_text.casefold()), None)
+            if matched_word:
+                decision = rule["action_mode"] if rule["action_mode"] in {"delete", "review"} else "review"
+                reason, confidence = f"Совпадение с правилом: {matched_word}", 1.0
+            elif rule["ai_enabled"] and semantic_rules and semantic_budget > 0:
+                semantic_budget -= 1
+                decision, reason, confidence = moderator.ai_agent_semantic_moderation(target_text, semantic_rules, model_profile)
+            else:
+                decision, reason, confidence = "allow", "Нарушение не обнаружено", 0.0
+            if decision == "delete":
+                try:
+                    vk_api(target["access_token"], "wall.deleteComment", {"owner_id": target["owner_id"], "comment_id": comment_id})
+                except ValueError as error:
+                    con.execute(
+                        "UPDATE vk_target_moderated_comments SET decision = 'failed', last_error = ? WHERE target_id = ? AND post_id = ? AND comment_id = ?",
+                        (str(error)[:300], target["id"], post_id, comment_id),
+                    )
+                    continue
+            con.execute(
+                "UPDATE vk_target_moderated_comments SET decision = ?, last_error = NULL WHERE target_id = ? AND post_id = ? AND comment_id = ?",
+                (decision, target["id"], post_id, comment_id),
+            )
+            if decision != "allow":
+                moderator.record_ai_moderation_event(
+                    con, rule, target["channel_id"], "comment", str(comment_id), target_text, decision, reason, confidence,
+                    source=f"vk-target:{target['id']}:{post_id}",
+                )
+
+
+def moderate_vk_channel_targets(con: sqlite3.Connection, moderator) -> None:
+    current = now()
+    targets = con.execute("SELECT * FROM vk_channel_targets WHERE moderation_enabled = 1 ORDER BY COALESCE(last_moderation_sync_at, 0) LIMIT 20").fetchall()
+    for target in targets:
+        try:
+            moderate_vk_target_comments(con, target, current, moderator)
+            con.execute("UPDATE vk_channel_targets SET last_moderation_sync_at = ?, last_error = NULL WHERE id = ?", (current, target["id"]))
+        except ValueError as error:
+            con.execute("UPDATE vk_channel_targets SET last_moderation_sync_at = ?, last_error = ? WHERE id = ?", (current, str(error)[:300], target["id"]))
+
+
 AUTOMATED_COMMENT_CATEGORIES = {"support", "opinion", "question", "humor", "disagreement", "criticism", "irony"}
-
-
-def local_automated_comment(post_text: str, has_image: bool, categories: list[str]) -> str:
-    enabled = [category for category in categories if category in AUTOMATED_COMMENT_CATEGORIES]
-    if not enabled:
-        enabled = ["support", "opinion", "question"]
-    normalized = " ".join(post_text.lower().split())
-    subject = "публикацию с фотографией" if has_image and not normalized else "материал"
-    if any(word in normalized for word in ("спасибо", "благодар", "поздрав", "побед", "успех")):
-        variants = {
-            "support": "Спасибо, очень тёплый и приятный материал.",
-            "opinion": "Хорошая мысль — такие истории действительно вдохновляют.",
-            "question": "Спасибо за публикацию. Что для вас было самым важным в этой истории?",
-        }
-    elif any(word in normalized for word in ("как ", "почему", "зачем", "что делать", "совет", "вопрос")):
-        variants = {
-            "support": "Спасибо за понятную постановку вопроса.",
-            "opinion": "На мой взгляд, здесь важно спокойно рассмотреть несколько вариантов.",
-            "question": "Интересно, какие решения вы уже успели попробовать?",
-            "disagreement": "Возможен и другой взгляд: многое зависит от конкретной ситуации.",
-            "criticism": "Не хватает деталей, чтобы сделать уверенный вывод — полезно добавить примеры или источники.",
-        }
-    else:
-        variants = {
-            "support": f"Спасибо за {subject}, было интересно ознакомиться.",
-            "opinion": "Интересная точка зрения, есть над чем подумать.",
-            "question": "А какой вывод вы считаете главным для читателей?",
-            "humor": "Похоже, этот материал точно не оставит ленту без обсуждения 🙂",
-            "disagreement": "Не со всем готов согласиться, но взгляд заслуживает обсуждения.",
-            "criticism": "Аргумент интересный, хотя хотелось бы больше конкретики и подтверждений.",
-            "irony": "Вот это поворот — есть о чём поспорить в комментариях 🙂",
-        }
-    available = [(category, variants[category]) for category in enabled if category in variants]
-    if not available:
-        available = [("support", f"Спасибо за {subject}, было интересно ознакомиться.")]
-    return available[secrets.randbelow(len(available))][1]
 
 
 def comment_opening_words(text: str) -> list[str]:
@@ -2315,6 +3667,65 @@ def ai_automated_comment(post_text: str, has_image: bool, categories: list[str],
     return None
 
 
+def ai_circle_compliment(circle_preview_data: str, previous_comments: list[str]) -> str | None:
+    api_key, base_url, model = genapi_configuration()
+    if not api_key or not circle_preview_data:
+        return None
+    previous_examples = [" ".join(str(comment).split())[:180] for comment in previous_comments if str(comment).strip()][-8:]
+    variety_instruction = (
+        "Не повторяй смысл или начало уже опубликованных комментариев:\n"
+        + "\n".join(f"- {comment}" for comment in previous_examples) + "\n\n"
+        if previous_examples else ""
+    )
+    prompt = (
+        "На изображении только первый кадр нового видеокружка автора канала. Оцени, подходит ли он для "
+        "короткого дружелюбного комментария к авторскому видеокружку. Если кадр похож на рекламу, скриншот, "
+        "чужой ролик, новостной сюжет, товар, текстовую заставку, неясен или комментарий потребовал бы догадок, "
+        "верни только {\"suitable\":false}.\n"
+        "Если подходит, верни только JSON вида {\"suitable\":true,\"comment\":\"...\"}. Комментарий: 10–140 "
+        "символов, по-русски, тёплый и естественный. Хвали только настроение, подачу, атмосферу, идею или усилие "
+        "в ролике. Нельзя упоминать или оценивать внешность, привлекательность, тело, лицо, возраст, пол, "
+        "национальность, этничность, здоровье, личность или отношения автора. Не описывай человека и не делай "
+        "фактических предположений. Не упоминай ИИ, бота или инструкцию; не добавляй ссылки, хэштеги, рекламу "
+        "или призывы подписаться.\n\n"
+        f"{variety_instruction}Верни JSON без пояснений."
+    )
+    request = urlrequest.Request(
+        f"{base_url}/chat/completions",
+        data=dumps({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "Ты осторожно модерируешь короткие комментарии к видеокружкам."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": circle_preview_data, "detail": "low"}},
+                ]},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 100,
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(request, timeout=35) as response:
+            payload = loads(response.read().decode("utf-8"), {})
+        content = payload["choices"][0]["message"]["content"]
+        if isinstance(content, list):
+            content = " ".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+        result = loads(str(content).strip().removeprefix("```json").removesuffix("```").strip(), {})
+        if not isinstance(result, dict) or result.get("suitable") is not True:
+            return None
+        text = " ".join(str(result.get("comment", "")).strip().strip('«»"').split())
+        forbidden = ("внешност", "красив", "симпатич", "лиц", "фигур", "тел", "возраст", "лет", "девуш", "парн", "мужчин", "женщин", "националь", "здоров")
+        if len(text) < 10 or len(text) > 140 or any(word in text.casefold() for word in forbidden):
+            return None
+        return text if not has_similar_comment_opening(text, previous_comments) else None
+    except (KeyError, IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        print("Не удалось получить ИИ-комментарий к видеокружку.")
+        return None
+
+
 def schedule_automated_comments(con: sqlite3.Connection, message_id: str, channel_id: str, current: int | None = None, include_existing: bool = False) -> None:
     current = current or now()
     rules = con.execute(
@@ -2326,16 +3737,20 @@ def schedule_automated_comments(con: sqlite3.Connection, message_id: str, channe
     ).fetchall()
     for rule in rules:
         commenter_ids = loads(rule["commenter_ids_json"], [])
-        mode = str(rule["comment_mode"] or "manual")
-        texts = [str(text).strip()[:1000] for text in loads(rule["texts_json"], []) if str(text).strip()]
+        mode = "circle_compliment" if rule["comment_mode"] == "circle_compliment" else "ai"
         categories = loads(rule["categories_json"], [])
         if not isinstance(categories, list):
             categories = []
-        if mode not in {"manual", "local", "ai"} or not isinstance(commenter_ids, list) or (mode == "manual" and not texts):
+        if not categories:
+            categories = ["support", "opinion", "question"]
+        if not isinstance(commenter_ids, list):
             continue
-        if mode == "local":
-            post = con.execute("SELECT text, media_type FROM messages WHERE id = ? AND chat_id = ?", (message_id, channel_id)).fetchone()
-            if not post:
+        if mode == "circle_compliment":
+            post = con.execute(
+                "SELECT media_type, circle_preview_data FROM messages WHERE id = ? AND chat_id = ?",
+                (message_id, channel_id),
+            ).fetchone()
+            if not post or post["media_type"] != "circle" or not post["circle_preview_data"]:
                 continue
         minimum = max(0, int(rule["min_delay_seconds"]))
         maximum = max(minimum, int(rule["max_delay_seconds"]))
@@ -2355,7 +3770,7 @@ def schedule_automated_comments(con: sqlite3.Connection, message_id: str, channe
             con.execute(
                 """INSERT OR IGNORE INTO automated_comment_jobs(id,rule_id,message_id,commenter_id,text,publish_at,created_at)
                    VALUES (?,?,?,?,?,?,?)""",
-                (uid("autocomment"), rule["id"], message_id, commenter["id"], local_automated_comment(post["text"], post["media_type"] == "photo", categories) if mode == "local" else "" if mode == "ai" else texts[position % len(texts)], publish_at, current),
+                (uid("autocomment"), rule["id"], message_id, commenter["id"], "", publish_at, current),
             )
 
 
@@ -2364,7 +3779,8 @@ def publish_automated_comments(con: sqlite3.Connection) -> None:
     con.execute("DELETE FROM automated_comment_jobs WHERE rule_id IN (SELECT id FROM automated_comment_rules WHERE active = 0 OR ends_at < ?)", (current,))
     jobs = con.execute(
         """SELECT job.*, commenter.user_id, chat.settings_json, rule.comment_mode, rule.categories_json,
-                  message.text AS message_text, message.media_type AS message_media_type
+                  message.text AS message_text, message.media_type AS message_media_type,
+                  message.circle_preview_data AS circle_preview_data
            FROM automated_comment_jobs job
            JOIN automated_comment_rules rule ON rule.id = job.rule_id
            JOIN automated_commenters commenter ON commenter.id = job.commenter_id
@@ -2389,7 +3805,7 @@ def publish_automated_comments(con: sqlite3.Connection) -> None:
         if not loads(job["settings_json"], {}).get("commentsEnabled", True):
             continue
         text = job["text"]
-        if job["comment_mode"] == "ai":
+        if job["comment_mode"] != "circle_compliment":
             categories = loads(job["categories_json"], [])
             previous_comments = [row["text"] for row in con.execute(
                 "SELECT text FROM channel_comments WHERE message_id = ? AND automated = 1 ORDER BY created_at DESC LIMIT 8",
@@ -2408,6 +3824,57 @@ def publish_automated_comments(con: sqlite3.Connection) -> None:
                     (job["id"], job["rule_id"], job["message_id"], job["commenter_id"], "", current + 60, job["created_at"]),
                 )
                 continue
+        elif job["comment_mode"] == "circle_compliment":
+            previous_comments = [row["text"] for row in con.execute(
+                "SELECT text FROM channel_comments WHERE message_id = ? AND automated = 1 ORDER BY created_at DESC LIMIT 8",
+                (job["message_id"],),
+            ).fetchall()]
+            con.commit()
+            text = ai_circle_compliment(job["circle_preview_data"], previous_comments)
+            if not text:
+                continue
+        if con.execute("SELECT 1 FROM channel_comments WHERE message_id = ? AND text = ?", (job["message_id"], text)).fetchone():
+            continue
+        con.execute(
+            "INSERT INTO channel_comments(id,message_id,user_id,text,media_data,automated,created_at) VALUES (?,?,?,?,?,?,?)",
+            (uid("comment"), job["message_id"], job["user_id"], text, None, 1, current),
+        )
+
+
+def publish_activity_comments(con: sqlite3.Connection) -> None:
+    current = now()
+    jobs = con.execute(
+        """SELECT job.*, commenter.user_id, message.text AS message_text, message.media_type AS message_media_type
+           FROM activity_comment_jobs job
+           JOIN automated_commenters commenter ON commenter.id = job.commenter_id
+           JOIN messages message ON message.id = job.message_id
+           WHERE job.publish_at <= ?
+           ORDER BY job.publish_at LIMIT 30""",
+        (current,),
+    ).fetchall()
+    for job in jobs:
+        if not con.execute("DELETE FROM activity_comment_jobs WHERE id = ?", (job["id"],)).rowcount:
+            continue
+        previous_comments = [row["text"] for row in con.execute(
+            "SELECT text FROM channel_comments WHERE message_id = ? AND automated = 1 ORDER BY created_at DESC LIMIT 8",
+            (job["message_id"],),
+        ).fetchall()]
+        con.commit()
+        categories = loads(job["categories_json"], [])
+        text = ai_automated_comment(
+            job["message_text"],
+            job["message_media_type"] == "photo",
+            categories if isinstance(categories, list) else [],
+            previous_comments,
+        )
+        if not text:
+            con.execute(
+                """INSERT INTO activity_comment_jobs(id,source_key,message_id,commenter_id,categories_json,publish_at,created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (job["id"], job["source_key"], job["message_id"], job["commenter_id"],
+                 job["categories_json"], current + 60, job["created_at"]),
+            )
+            continue
         if con.execute("SELECT 1 FROM channel_comments WHERE message_id = ? AND text = ?", (job["message_id"], text)).fetchone():
             continue
         con.execute(
@@ -2457,6 +3924,8 @@ def poll_telegram_channels(con: sqlite3.Connection) -> None:
                 media_data = telegram_photo_data(link["bot_token"], post.get("photo", [])) if post.get("photo") else None
                 if not text and not media_data:
                     continue
+                if channel_post_limit_reached(con, link["channel_id"], current):
+                    break
                 imported = con.execute(
                     "INSERT OR IGNORE INTO telegram_imported_posts(channel_id,telegram_message_id,imported_at) VALUES (?,?,?)",
                     (link["channel_id"], telegram_message_id, current),
@@ -2474,7 +3943,7 @@ def poll_telegram_channels(con: sqlite3.Connection) -> None:
                     """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (message_id, link["channel_id"], sender["id"], text, "photo" if media_data else None,
-                     media_data, 1, f"Telegram · {source_title}", "telegram", str(telegram_message_id), int(post.get("date", current) or current)),
+                     media_data, 1, f"Telegram · {source_title}", "telegram", str(telegram_message_id), current),
                 )
                 schedule_automated_comments(con, message_id, link["channel_id"], current)
                 con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (current, link["channel_id"]))
@@ -2507,14 +3976,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path.startswith("/api/"):
                 with connect() as con:
+                    cleanup_expired_deleted_accounts(con)
                     return self.handle_api(con, method, path, parse_qs(parsed.query))
             if method in {"GET", "HEAD"} and path.startswith("/media/messages/"):
                 with connect() as con:
+                    cleanup_expired_deleted_accounts(con)
                     media_user = get_user_by_token(con, self.headers)
                     media_token = parse_qs(parsed.query).get("token", [""])[0]
                     if not media_user and media_token:
                         media_user = con.execute(
-                            "SELECT users.* FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = ?",
+                            "SELECT users.* FROM users JOIN sessions ON sessions.user_id = users.id WHERE sessions.token = ? AND users.deletion_due_at IS NULL",
                             (media_token,),
                         ).fetchone()
                     self.require_user(media_user)
@@ -2522,6 +3993,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_message_media(con, media_user, message_id)
             if path in {"/admin", "/admin/"}:
                 return self.send_file(ROOT / "admin.html")
+            if path == "/auth/vk/callback" and method == "GET":
+                with connect() as con:
+                    cleanup_expired_deleted_accounts(con)
+                    return self.complete_vk_oauth(con, parse_qs(parsed.query))
             if path == "/requisites":
                 return self.send_file(ROOT / "requisites.html")
             if path == "/" or path == "/payment-return" or path.startswith("/invite/") or path.startswith("/channel/"):
@@ -2531,8 +4006,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         except ValueError as error:
             return self.json({"ok": False, "error": str(error)}, HTTPStatus.BAD_REQUEST)
-        except PermissionError:
-            return self.json({"ok": False, "error": "Нет доступа."}, HTTPStatus.FORBIDDEN)
+        except PermissionError as error:
+            return self.json({"ok": False, "error": str(error) or "Нет доступа."}, HTTPStatus.FORBIDDEN)
         except Exception as error:  # Keep local demo debuggable.
             return self.json({"ok": False, "error": f"Ошибка сервера: {error}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
@@ -2550,6 +4025,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.resend_auth_challenge(con, body)
         if path == "/api/login" and method == "POST":
             return self.login(con, body)
+        if path == "/api/auth/vk/start" and method == "POST":
+            return self.start_vk_oauth(con, user, body)
         if path == "/api/password-reset/request" and method == "POST":
             return self.request_password_reset(con, body)
         if path == "/api/password-reset/confirm" and method == "POST":
@@ -2565,9 +4042,27 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bootstrap" and method == "GET":
             self.require_user(user)
             return self.bootstrap(con, user)
+        if path == "/api/channel-feed" and method == "GET":
+            self.require_user(user)
+            return self.channel_feed(con, user, query)
         if path == "/api/ai-agent/settings" and method == "POST":
             self.require_user(user)
             return self.update_ai_agent_settings(con, user, body)
+        if path == "/api/ai-agent/tasks" and method == "GET":
+            self.require_user(user)
+            return self.json({"ok": True, "tasks": self.ai_agent_tasks(con, user["id"])})
+        if path == "/api/ai-agent/tasks" and method == "POST":
+            self.require_user(user)
+            return self.save_ai_agent_task(con, user, body)
+        if path == "/api/ai-agent/tasks/toggle" and method == "POST":
+            self.require_user(user)
+            return self.toggle_ai_agent_task(con, user, body)
+        if path == "/api/ai-agent/tasks/delete" and method == "POST":
+            self.require_user(user)
+            return self.delete_ai_agent_task(con, user, body)
+        if path == "/api/ai-agent/model-profile" and method == "POST":
+            self.require_user(user)
+            return self.update_ai_agent_model_profile(con, user, body)
         if path == "/api/ai-agent/global-instructions" and method == "POST":
             self.require_user(user)
             return self.update_ai_agent_global_instruction(con, user, body)
@@ -2577,6 +4072,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ai-agent/ask" and method == "POST":
             self.require_user(user)
             return self.ask_ai_agent(con, user, body)
+        if path == "/api/ai-agent/bookings" and method == "POST":
+            self.require_user(user)
+            return self.create_ai_agent_booking(con, user, body)
+        if path == "/api/ai-agent/bookings/status" and method == "POST":
+            self.require_user(user)
+            return self.update_ai_agent_booking_status(con, user, body)
         if path == "/api/ai-agent/control" and method == "POST":
             self.require_user(user)
             return self.control_ai_agent(con, user, body)
@@ -2589,6 +4090,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ai-agent/channel-rule" and method == "POST":
             self.require_user(user)
             return self.update_ai_agent_channel_rule(con, user, body)
+        if path == "/api/ai-agent/confirm" and method == "POST":
+            self.require_user(user)
+            return self.confirm_ai_agent_action(con, user, body)
+        if path == "/api/ai-agent/moderation/resolve" and method == "POST":
+            self.require_user(user)
+            return self.resolve_ai_agent_moderation_event(con, user, body)
+        if path == "/api/ai-agent/moderation/events" and method == "GET":
+            self.require_user(user)
+            return self.ai_agent_moderation_events(con, user, query)
+        if path == "/api/ai-agent/moderation/rules" and method == "GET":
+            self.require_user(user)
+            return self.ai_agent_moderation_rules(con, user)
+        if path == "/api/ai-agent/moderation/rules" and method == "POST":
+            self.require_user(user)
+            return self.update_ai_agent_moderation_rule(con, user, body)
+        if path == "/api/ai-agent/action-log" and method == "GET":
+            self.require_user(user)
+            return self.ai_agent_action_logs(con, user, query)
         if path == "/api/media/messages/upload" and method == "POST":
             self.require_user(user)
             return self.prepare_message_media_upload(con, user, body)
@@ -2611,13 +4130,16 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError("Этот username уже занят. Выберите другой.")
             con.execute("UPDATE users SET username = ? WHERE id = ?", (username, user["id"]))
             return self.json({"ok": True})
+        if path == "/api/account/delete" and method == "POST":
+            self.require_user(user)
+            return self.request_account_deletion(con, user, body)
         if path == "/api/preferences" and method == "POST":
             self.require_user(user)
             theme = str(body.get("theme", "light"))
             if theme not in {"light", "dark"}:
                 raise ValueError("Неизвестный режим оформления.")
             background = str(body.get("chatBackground", "default"))
-            allowed_backgrounds = {"default", "whatsapp", "mint", "aurora", "noir", "cyan", "mist", "sunset", "ocean", "lavender", "forest", "midnight", "ember", "iris", "prism", "live", "custom"}
+            allowed_backgrounds = {"default", "whatsapp", "mint", "aurora", "noir", "cyan", "mist", "sunset", "ocean", "lavender", "forest", "midnight", "ember", "iris", "jade", "violet", "cobalt", "amber", "prism", "live", "custom"}
             if background not in allowed_backgrounds:
                 raise ValueError("Неизвестный вариант фона.")
             background_data = str(body.get("chatBackgroundData", "")) or None
@@ -2664,10 +4186,25 @@ class Handler(BaseHTTPRequestHandler):
             if direct_message_privacy not in {"everyone", "contacts", "nobody"}:
                 raise ValueError("Неизвестная настройка личных сообщений.")
             call_ringtone = str(body.get("callRingtone", "classic"))
-            if call_ringtone not in {"classic", "pulse", "bright"}:
+            if call_ringtone not in {"classic", "custom"}:
                 raise ValueError("Неизвестная мелодия звонка.")
-            if call_ringtone != "classic":
-                self.require_active_account_level(con, user["id"])
+            call_ringtone_data = None
+            if call_ringtone == "custom":
+                self.require_enhanced_account_level(con, user["id"])
+                call_ringtone_data = str(body.get("callRingtoneData", "")).strip()
+                if not call_ringtone_data:
+                    existing_ringtone = con.execute("SELECT call_ringtone_data FROM users WHERE id = ?", (user["id"],)).fetchone()
+                    call_ringtone_data = existing_ringtone["call_ringtone_data"] if existing_ringtone else ""
+                allowed_ringtone_types = {"audio/mpeg", "audio/mp4", "audio/ogg", "audio/wav", "audio/webm"}
+                match = re.fullmatch(r"data:([^;,]+);base64,([A-Za-z0-9+/=]+)", call_ringtone_data)
+                if not match or match.group(1).lower() not in allowed_ringtone_types:
+                    raise ValueError("Загрузите мелодию в формате MP3, M4A, OGG, WAV или WebM.")
+                try:
+                    ringtone_bytes = base64.b64decode(match.group(2), validate=True)
+                except (ValueError, binascii.Error):
+                    raise ValueError("Не удалось прочитать мелодию звонка.")
+                if not ringtone_bytes or len(ringtone_bytes) > 2_000_000:
+                    raise ValueError("Мелодия звонка должна быть не больше 2 МБ.")
             site_background = str(body.get("siteBackground", "default"))
             if site_background not in allowed_backgrounds:
                 raise ValueError("Неизвестный вариант фона сайта.")
@@ -2678,19 +4215,34 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 site_background_data = None
             con.execute(
-                "UPDATE users SET theme = ?, site_color = ?, site_background = ?, site_background_data = ?, dialog_color = ?, other_dialog_color = ?, dialog_panel_color = ?, dialog_panel_style = ?, dialog_bubble_style = ?, dialog_font = ?, text_scale = ?, chat_background = ?, chat_background_data = ?, sidebar_background_data = ?, hidden_status_ids = ?, group_invite_privacy = ?, direct_message_privacy = ?, night_appearance_custom = ?, night_outline_color = ?, night_glow_color = ?, night_glow_intensity = ?, call_ringtone = ? WHERE id = ?",
-                (theme, site_color, site_background, site_background_data, dialog_color, other_dialog_color, dialog_panel_color, dialog_panel_style, dialog_bubble_style, dialog_font, text_scale, background, background_data, sidebar_background_data, dumps(body.get("hiddenStatusIds", [])), group_invite_privacy, direct_message_privacy, int(night_appearance_custom), night_appearance["outlineColor"] if night_appearance else None, night_appearance["glowColor"] if night_appearance else None, night_appearance["glowIntensity"] if night_appearance else None, call_ringtone, user["id"]),
+                "UPDATE users SET theme = ?, site_color = ?, site_background = ?, site_background_data = ?, dialog_color = ?, other_dialog_color = ?, dialog_panel_color = ?, dialog_panel_style = ?, dialog_bubble_style = ?, dialog_font = ?, text_scale = ?, chat_background = ?, chat_background_data = ?, sidebar_background_data = ?, hidden_status_ids = ?, group_invite_privacy = ?, direct_message_privacy = ?, night_appearance_custom = ?, night_outline_color = ?, night_glow_color = ?, night_glow_intensity = ?, call_ringtone = ?, call_ringtone_data = ? WHERE id = ?",
+                (theme, site_color, site_background, site_background_data, dialog_color, other_dialog_color, dialog_panel_color, dialog_panel_style, dialog_bubble_style, dialog_font, text_scale, background, background_data, sidebar_background_data, dumps(body.get("hiddenStatusIds", [])), group_invite_privacy, direct_message_privacy, int(night_appearance_custom), night_appearance["outlineColor"] if night_appearance else None, night_appearance["glowColor"] if night_appearance else None, night_appearance["glowIntensity"] if night_appearance else None, call_ringtone, call_ringtone_data, user["id"]),
             )
             return self.json({"ok": True})
         if path == "/api/profile/avatar" and method == "POST":
             self.require_user(user)
             return self.update_avatar(con, user, body)
+        if path == "/api/profile/description" and method == "POST":
+            self.require_user(user)
+            return self.update_profile_description(con, user, body)
+        if path == "/api/profile/channels/visibility" and method == "POST":
+            self.require_user(user)
+            return self.update_profile_channel_visibility(con, user, body)
+        if path == "/api/profile/block" and method == "POST":
+            self.require_user(user)
+            return self.set_user_block(con, user, body)
         if path == "/api/my-reactions" and method == "GET":
             self.require_user(user)
             return self.my_reactions(con, user)
         if path == "/api/profile/posts" and method == "POST":
             self.require_user(user)
             return self.create_profile_post(con, user, body)
+        if path == "/api/profile/posts/edit" and method == "POST":
+            self.require_user(user)
+            return self.edit_profile_post(con, user, body)
+        if path == "/api/profile/posts/delete" and method == "POST":
+            self.require_user(user)
+            return self.delete_profile_post(con, user, body)
         if path == "/api/profile/posts/react" and method == "POST":
             self.require_user(user)
             return self.react_to_profile_post(con, user, body)
@@ -2730,6 +4282,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/invites/join" and method == "POST":
             self.require_user(user)
             return self.join_chat_by_invite(con, user, body.get("code"))
+        if path == "/api/channels/join-requests" and method == "GET":
+            self.require_user(user)
+            return self.channel_join_requests(con, user)
+        if path == "/api/channels/join-requests/resolve" and method == "POST":
+            self.require_user(user)
+            return self.resolve_channel_join_request(con, user, body)
         if path == "/api/chats/members" and method == "POST":
             self.require_user(user)
             return self.add_chat_member(con, user, body)
@@ -2751,12 +4309,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/channels/vk" and method == "POST":
             self.require_user(user)
             return self.update_vk_channel_link(con, user, body)
+        if path == "/api/channels/vk/targets" and method == "POST":
+            self.require_user(user)
+            return self.update_vk_channel_target(con, user, body)
+        if path == "/api/channels/vk/proposals" and method in {"GET", "POST"}:
+            self.require_user(user)
+            return self.vk_proposed_posts(con, user, method, query, body)
+        if path == "/api/channels/vk/proposals/resolve" and method == "POST":
+            self.require_user(user)
+            return self.resolve_vk_proposed_post(con, user, body)
         if path == "/api/channels/appearance" and method == "POST":
             self.require_user(user)
             return self.update_channel_appearance(con, user, body)
         if path == "/api/channels/comments" and method == "POST":
             self.require_user(user)
             return self.add_channel_comment(con, user, body)
+        if path == "/api/channels/comments/delete" and method == "POST":
+            self.require_user(user)
+            return self.delete_channel_comment(con, user, body)
         if path == "/api/chats/members/role" and method == "POST":
             self.require_user(user)
             return self.update_chat_member_role(con, user, body)
@@ -2817,12 +4387,33 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/yookassa/payments/status" and method == "POST":
             self.require_user(user)
             return self.check_yookassa_payment(con, user, body)
+        if path == "/api/account-level/subscriptions" and method == "POST":
+            self.require_user(user)
+            return self.create_account_level_subscription(con, user, body)
+        if path == "/api/account-level/subscriptions/status" and method == "POST":
+            self.require_user(user)
+            return self.check_account_level_subscription_payment(con, user, body)
+        if path == "/api/account-level/subscriptions/cancel" and method == "POST":
+            self.require_user(user)
+            return self.cancel_account_level_subscription(con, user, body)
+        if path == "/api/channel-payouts" and method == "POST":
+            self.require_user(user)
+            return self.create_channel_payout_request(con, user, body)
+        if path == "/api/demo-activity-packages/purchase" and method == "POST":
+            self.require_user(user)
+            return self.purchase_demo_activity_package(con, user, body)
         if path == "/api/reviews" and method == "POST":
             self.require_user(user)
             return self.add_review(con, user, body)
         if path == "/api/reports" and method == "POST":
             self.require_user(user)
             return self.add_report(con, user, body)
+        if path == "/api/channel-share-submissions" and method == "POST":
+            self.require_user(user)
+            return self.add_channel_share_submission(con, user, body)
+        if path == "/api/vk-review-submissions" and method == "POST":
+            self.require_user(user)
+            return self.add_vk_review_submission(con, user, body)
         if path == "/api/promotions/claim" and method == "POST":
             self.require_user(user)
             return self.claim_promotion(con, user, body.get("promotionId"))
@@ -2832,9 +4423,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/account-level/claim" and method == "POST":
             self.require_user(user)
             return self.claim_account_level_reward(con, user, body.get("levelId"))
-        if path == "/api/account-level/buy" and method == "POST":
-            self.require_user(user)
-            return self.buy_account_level(con, user, body.get("levelId"))
         if path == "/api/calls/start" and method == "POST":
             self.require_user(user)
             return self.start_call(con, user, body)
@@ -2869,6 +4457,10 @@ class Handler(BaseHTTPRequestHandler):
                 value = normalize_ui_appearance(body.get("value"))
             elif key == "channel_reactions":
                 value = normalize_channel_reactions(body.get("value"))
+            elif key == "channel_monetization":
+                value = normalize_channel_monetization(body.get("value"))
+            elif key == "channel_activity_regulator":
+                value = normalize_channel_activity_regulator(body.get("value"))
             elif key == "public_branding":
                 value = normalize_public_branding(body.get("value"))
             elif key == "public_legal":
@@ -2891,6 +4483,39 @@ class Handler(BaseHTTPRequestHandler):
                 amount = int(after["stars"]) - int(before["stars"])
             if amount:
                 self.record_star_transaction(con, user_id, amount, "admin", "Корректировка баланса администрацией")
+            return self.json({"ok": True})
+        if path == "/api/admin/users/account-level" and method == "POST":
+            user_id = str(body.get("userId", "")).strip()
+            level_id = str(body.get("levelId", "")).strip()
+            if not con.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
+                raise ValueError("Пользователь не найден.")
+            levels_row = con.execute("SELECT value FROM settings WHERE key = 'account_levels'").fetchone()
+            levels = normalize_account_levels(loads(levels_row["value"], []) if levels_row else [])
+            if level_id not in {level["id"] for level in levels}:
+                raise ValueError("Выберите существующий уровень аккаунта.")
+            con.execute(
+                "INSERT INTO admin_account_level_grants(user_id,level_id,granted_at) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET level_id = excluded.level_id, granted_at = excluded.granted_at",
+                (user_id, level_id, now()),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/appeals/respond" and method == "POST":
+            return self.respond_to_appeal(con, body)
+        if path == "/api/admin/channel-share-submissions/update" and method == "POST":
+            return self.update_channel_share_submission(con, body)
+        if path == "/api/admin/vk-review-submissions/update" and method == "POST":
+            return self.update_vk_review_submission(con, body)
+        if path == "/api/admin/channel-payouts/update" and method == "POST":
+            request_id = str(body.get("requestId", "")).strip()
+            status = str(body.get("status", "")).strip()
+            note = " ".join(str(body.get("adminNote", "")).split())[:500]
+            if status not in {"paid", "rejected"}:
+                raise ValueError("Выберите результат обработки заявки.")
+            updated = con.execute(
+                "UPDATE channel_payout_requests SET status = ?, admin_note = ?, processed_at = ? WHERE id = ? AND status = 'pending'",
+                (status, note, now(), request_id),
+            ).rowcount
+            if not updated:
+                raise ValueError("Заявка уже обработана или не найдена.")
             return self.json({"ok": True})
         if path == "/api/admin/recommended" and method == "POST":
             chat_id = str(body.get("chatId", ""))
@@ -2947,16 +4572,96 @@ class Handler(BaseHTTPRequestHandler):
                 for metric in ("subscribers", "views", "reactions", "comments")
             }
             post_limit = nonnegative_int(body.get("postLimit", 1), "postLimit", 10)
+            duration_days = nonnegative_int(body.get("durationDays", 7), "durationDays", 3650)
             indefinite = bool(body.get("indefinite"))
             fade_duration_days = nonnegative_int(body.get("fadeDurationDays", 30), "fadeDurationDays", 365)
-            if not post_limit or not any(values.values()):
-                raise ValueError("Укажите число публикаций и хотя бы один дневной показатель.")
+            price_stars = nonnegative_int(body.get("priceStars", 0), "priceStars", 1_000_000)
+            donation_count = nonnegative_int(body.get("donationCount", 0), "donationCount", 100)
+            donation_post_interval = nonnegative_int(body.get("donationPostInterval", 4), "donationPostInterval", 1_000)
+            donation_min_stars = nonnegative_int(body.get("donationMinStars", 0), "donationMinStars", 1_000_000)
+            donation_max_stars = nonnegative_int(body.get("donationMaxStars", 0), "donationMaxStars", 1_000_000)
+            inactivity_days = nonnegative_int(body.get("inactivityDays", 3), "inactivityDays", 365)
+            if not inactivity_days:
+                raise ValueError("Укажите число дней без публикаций до затухания пакета.")
+            if donation_count and (not donation_post_interval or not donation_min_stars or donation_max_stars < donation_min_stars):
+                raise ValueError("Для автодонатов укажите интервал и корректный диапазон звёзд.")
+            apply_to_new_channels = bool(body.get("applyToNewChannels"))
+            required_account_level_id = str(body.get("requiredAccountLevelId", "") or "").strip().lower()
+            levels_row = con.execute("SELECT value FROM settings WHERE key = 'account_levels'").fetchone()
+            configured_levels = normalize_account_levels(loads(levels_row["value"], []) if levels_row else []) if levels_row else []
+            if required_account_level_id and required_account_level_id not in {level["id"] for level in configured_levels}:
+                raise ValueError("Выберите существующий уровень аккаунта для пакета.")
+            commenter_ids = []
+            if not any(values.values()):
+                raise ValueError("Укажите хотя бы один дневной показатель.")
+            if not indefinite and not duration_days:
+                raise ValueError("Укажите срок действия пакета или включите бессрочный режим.")
             if not indefinite and not fade_duration_days:
-                raise ValueError("Укажите длительность затухания или включите бессрочный режим.")
+                raise ValueError("Укажите длительность плавного затухания или включите бессрочный режим.")
+            if required_account_level_id and price_stars:
+                raise ValueError("Автоматический пакет по уровню аккаунта должен быть бесплатным.")
+            if apply_to_new_channels and price_stars:
+                raise ValueError("Пакет для всех новых каналов должен быть бесплатным: списать звёзды у ещё не созданного канала невозможно.")
+            if apply_to_new_channels:
+                con.execute("UPDATE demo_activity_packages SET apply_to_new_channels = 0")
             con.execute(
-                """INSERT INTO demo_activity_packages(id,title,subscribers_per_day,views_per_day,reactions_per_day,comments_per_day,post_limit,duration_days,fade_duration_days,indefinite,created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-                (uid("demopackage"), title, values["subscribers"], values["views"], values["reactions"], values["comments"], post_limit, 7, fade_duration_days, 1 if indefinite else 0, now()),
+                """INSERT INTO demo_activity_packages(id,title,subscribers_per_day,views_per_day,reactions_per_day,comments_per_day,post_limit,duration_days,fade_duration_days,indefinite,price_stars,apply_to_new_channels,required_account_level_id,commenter_ids_json,donation_count,donation_post_interval,donation_min_stars,donation_max_stars,inactivity_days,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (uid("demopackage"), title, values["subscribers"], values["views"], values["reactions"], values["comments"], post_limit, duration_days, fade_duration_days, 1 if indefinite else 0, price_stars, 1 if apply_to_new_channels else 0, required_account_level_id, dumps(commenter_ids), donation_count, donation_post_interval or 4, donation_min_stars, donation_max_stars, inactivity_days, now()),
+            )
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-packages/update" and method == "POST":
+            package_id = str(body.get("packageId", "")).strip()
+            if not con.execute("SELECT 1 FROM demo_activity_packages WHERE id = ?", (package_id,)).fetchone():
+                raise ValueError("Демо-пакет не найден.")
+            title = " ".join(str(body.get("title", "")).split())[:80]
+            if not title:
+                raise ValueError("Введите название демо-пакета.")
+            values = {
+                metric: nonnegative_int(body.get(f"{metric}PerDay", 0), f"{metric}PerDay", 1_000_000)
+                for metric in ("subscribers", "views", "reactions", "comments")
+            }
+            post_limit = nonnegative_int(body.get("postLimit", 1), "postLimit", 10)
+            duration_days = nonnegative_int(body.get("durationDays", 7), "durationDays", 3650)
+            indefinite = bool(body.get("indefinite"))
+            fade_duration_days = nonnegative_int(body.get("fadeDurationDays", 30), "fadeDurationDays", 365)
+            price_stars = nonnegative_int(body.get("priceStars", 0), "priceStars", 1_000_000)
+            donation_count = nonnegative_int(body.get("donationCount", 0), "donationCount", 100)
+            donation_post_interval = nonnegative_int(body.get("donationPostInterval", 4), "donationPostInterval", 1_000)
+            donation_min_stars = nonnegative_int(body.get("donationMinStars", 0), "donationMinStars", 1_000_000)
+            donation_max_stars = nonnegative_int(body.get("donationMaxStars", 0), "donationMaxStars", 1_000_000)
+            inactivity_days = nonnegative_int(body.get("inactivityDays", 3), "inactivityDays", 365)
+            if not any(values.values()):
+                raise ValueError("Укажите хотя бы один дневной показатель.")
+            if not inactivity_days:
+                raise ValueError("Укажите число дней без публикаций до затухания пакета.")
+            if not indefinite and not duration_days:
+                raise ValueError("Укажите срок действия пакета или включите бессрочный режим.")
+            if not indefinite and not fade_duration_days:
+                raise ValueError("Укажите длительность плавного затухания или включите бессрочный режим.")
+            if donation_count and (not donation_post_interval or not donation_min_stars or donation_max_stars < donation_min_stars):
+                raise ValueError("Для автодонатов укажите интервал и корректный диапазон звёзд.")
+            apply_to_new_channels = bool(body.get("applyToNewChannels"))
+            required_account_level_id = str(body.get("requiredAccountLevelId", "") or "").strip().lower()
+            levels_row = con.execute("SELECT value FROM settings WHERE key = 'account_levels'").fetchone()
+            configured_levels = normalize_account_levels(loads(levels_row["value"], []) if levels_row else []) if levels_row else []
+            if required_account_level_id and required_account_level_id not in {level["id"] for level in configured_levels}:
+                raise ValueError("Выберите существующий уровень аккаунта для пакета.")
+            if required_account_level_id and price_stars:
+                raise ValueError("Автоматический пакет по уровню аккаунта должен быть бесплатным.")
+            if apply_to_new_channels and price_stars:
+                raise ValueError("Пакет для всех новых каналов должен быть бесплатным: списать звёзды у ещё не созданного канала невозможно.")
+            if apply_to_new_channels:
+                con.execute("UPDATE demo_activity_packages SET apply_to_new_channels = 0 WHERE id != ?", (package_id,))
+            con.execute(
+                """UPDATE demo_activity_packages SET title=?, subscribers_per_day=?, views_per_day=?, reactions_per_day=?,
+                   comments_per_day=?, post_limit=?, duration_days=?, fade_duration_days=?, indefinite=?, price_stars=?,
+                   apply_to_new_channels=?, required_account_level_id=?, donation_count=?, donation_post_interval=?,
+                   donation_min_stars=?, donation_max_stars=?, inactivity_days=? WHERE id=?""",
+                (title, values["subscribers"], values["views"], values["reactions"], values["comments"], post_limit,
+                 duration_days, fade_duration_days, 1 if indefinite else 0, price_stars, 1 if apply_to_new_channels else 0,
+                 required_account_level_id, donation_count, donation_post_interval or 4, donation_min_stars,
+                 donation_max_stars, inactivity_days, package_id),
             )
             return self.json({"ok": True})
         if path == "/api/admin/demo-activity-packages/delete" and method == "POST":
@@ -2971,16 +4676,37 @@ class Handler(BaseHTTPRequestHandler):
             package = con.execute("SELECT * FROM demo_activity_packages WHERE id = ?", (package_id,)).fetchone()
             if not package or not con.execute("SELECT 1 FROM chats WHERE id = ? AND type = 'channel'", (channel_id,)).fetchone():
                 raise ValueError("Выберите существующий пакет и канал.")
-            if (package["views_per_day"] or package["reactions_per_day"] or package["comments_per_day"]) and not demo_activity_post(con, channel_id, package["post_limit"]):
+            if (package["views_per_day"] or package["reactions_per_day"] or package["comments_per_day"]) and not demo_activity_post(con, channel_id):
                 raise ValueError("Для этого пакета в канале должна быть хотя бы одна публикация.")
-            if package["comments_per_day"] and not con.execute("SELECT 1 FROM automated_commenters LIMIT 1").fetchone():
+            if package["comments_per_day"] and not automated_commenter_pool(con):
                 raise ValueError("Для комментариев сначала добавьте служебные аккаунты в раздел «Автокомментарии».")
+            owner_id = con.execute("SELECT owner_id FROM chats WHERE id = ?", (channel_id,)).fetchone()["owner_id"]
+            if not account_level_available_for_user(con, owner_id, package["required_account_level_id"]):
+                raise ValueError("У владельца канала нет требуемого уровня аккаунта для этого пакета.")
+            price_stars = int(package["price_stars"] or 0)
+            if price_stars:
+                charged = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (price_stars, owner_id, price_stars)).rowcount
+                if not charged:
+                    raise ValueError("У владельца канала недостаточно звёзд для этого пакета.")
+                self.record_star_transaction(con, owner_id, -price_stars, "demo_activity_package", f"Демо-пакет «{package['title']}» для канала")
             current = now()
             con.execute(
                 """INSERT INTO demo_activity_subscriptions(id,package_id,channel_id,starts_at,ends_at,auto_renew,created_at)
                    VALUES (?,?,?,?,?,?,?)""",
-                (uid("demosubscription"), package_id, channel_id, current, current + package["duration_days"] * 86400, 0 if package["indefinite"] else 1 if body.get("autoRenew") else 0, current),
+                (uid("demosubscription"), package_id, channel_id, current, current + max(1, package["duration_days"]) * 86400, 0 if package["indefinite"] else 1 if body.get("autoRenew") else 0, current),
             )
+            return self.json({"ok": True})
+        if path == "/api/admin/demo-activity-packages/default" and method == "POST":
+            package_id = str(body.get("packageId", "")).strip()
+            enabled = bool(body.get("enabled", True))
+            package = con.execute("SELECT price_stars FROM demo_activity_packages WHERE id = ?", (package_id,)).fetchone()
+            if enabled and not package:
+                raise ValueError("Демо-пакет не найден.")
+            if enabled and int(package["price_stars"] or 0):
+                raise ValueError("Пакет для всех новых каналов должен быть бесплатным.")
+            if enabled:
+                con.execute("UPDATE demo_activity_packages SET apply_to_new_channels = 0")
+            con.execute("UPDATE demo_activity_packages SET apply_to_new_channels = ? WHERE id = ?", (1 if enabled else 0, package_id))
             return self.json({"ok": True})
         if path == "/api/admin/demo-activity-subscriptions/deactivate" and method == "POST":
             con.execute("UPDATE demo_activity_subscriptions SET active = 0 WHERE id = ?", (str(body.get("subscriptionId", "")),))
@@ -3035,6 +4761,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({"ok": True})
         if path == "/api/admin/automated-commenters" and method == "POST":
             return self.create_automated_commenter(con, body)
+        if path == "/api/admin/automated-commenters/update" and method == "POST":
+            return self.update_automated_commenter(con, body)
         if path == "/api/admin/automated-commenters/create-pool" and method == "POST":
             return self.create_automated_commenter_pool(con)
         if path == "/api/admin/automated-commenters/password" and method == "POST":
@@ -3088,16 +4816,18 @@ class Handler(BaseHTTPRequestHandler):
         if con.execute("SELECT 1 FROM users WHERE email = ? COLLATE NOCASE", (challenge["email"],)).fetchone():
             raise ValueError("Этот e-mail уже используется.")
         user_id = uid("user")
+        appearance = dialog_appearance_defaults(con)
         con.execute(
-            """INSERT INTO users(id,name,username,password,email,email_verified,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,agreement_accepted_at,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (user_id, payload["name"], username, payload["password"], challenge["email"], 1, 50, "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", payload.get("agreementAcceptedAt") or now(), now()),
+            """INSERT INTO users(id,name,username,password,email,email_verified,stars,theme,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,text_scale,chat_background,chat_background_data,agreement_accepted_at,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, payload["name"], username, payload["password"], challenge["email"], 1, 50, *(appearance[field] for field in DIALOG_APPEARANCE_FIELDS), payload.get("agreementAcceptedAt") or now(), now()),
         )
         con.execute("DELETE FROM auth_challenges WHERE id = ?", (challenge["id"],))
         self.ensure_saved(con, user_id)
         return self.issue_token(con, user_id)
 
     def login(self, con, body):
+        cleanup_expired_deleted_accounts(con)
         login = str(body.get("login", body.get("username", ""))).strip()
         if "@" in login:
             email = normalize_email(login)
@@ -3109,9 +4839,37 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Неверный username, e-mail или пароль.")
         if not user["password"].startswith("pbkdf2_sha256$"):
             con.execute("UPDATE users SET password = ? WHERE id = ?", (hash_password(str(body.get("password", ""))), user["id"]))
+        self.restore_deleted_account(con, user["id"])
         self.update_login_streak(con, user["id"])
         self.ensure_saved(con, user["id"])
         return self.issue_token(con, user["id"])
+
+    def request_account_deletion(self, con, user, body):
+        if str(body.get("confirmation", "")).strip() != "УДАЛИТЬ":
+            raise ValueError("Для удаления введите слово «УДАЛИТЬ».")
+        password = str(body.get("password", ""))
+        has_vk_identity = bool(con.execute(
+            "SELECT 1 FROM oauth_identities WHERE provider = 'vk' AND user_id = ?",
+            (user["id"],),
+        ).fetchone())
+        if password and not password_matches(user["password"], password):
+            raise ValueError("Текущий пароль введён неверно.")
+        if not password and not has_vk_identity:
+            raise ValueError("Введите текущий пароль для удаления страницы.")
+        timestamp = now()
+        deletion_due_at = timestamp + ACCOUNT_DELETION_GRACE_SECONDS
+        con.execute(
+            "UPDATE users SET deletion_requested_at = ?, deletion_due_at = ? WHERE id = ?",
+            (timestamp, deletion_due_at, user["id"]),
+        )
+        con.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+        return self.json({"ok": True, "deletionDueAt": deletion_due_at})
+
+    def restore_deleted_account(self, con, user_id):
+        con.execute(
+            "UPDATE users SET deletion_requested_at = NULL, deletion_due_at = NULL WHERE id = ? AND deletion_due_at IS NOT NULL",
+            (user_id,),
+        )
 
     def create_auth_challenge(self, con, purpose, email, phone, user_id, payload, message) -> str:
         current = now()
@@ -3183,11 +4941,148 @@ class Handler(BaseHTTPRequestHandler):
         con.execute("DELETE FROM auth_challenges WHERE id = ?", (challenge["id"],))
         return self.json({"ok": True, "message": "Пароль изменён. Войдите с новым паролем."})
 
-    def issue_token(self, con, user_id):
+    def create_session_token(self, con, user_id):
         token = secrets.token_urlsafe(24)
         con.execute("INSERT INTO sessions(token,user_id,created_at) VALUES (?,?,?)", (token, user_id, now()))
+        return token
+
+    def issue_token(self, con, user_id):
+        token = self.create_session_token(con, user_id)
         user = con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         return self.json({"ok": True, "token": token, "user": public_user(user)})
+
+    def vk_oauth_configured(self):
+        return bool(VK_OAUTH_CLIENT_ID and VK_OAUTH_REDIRECT_URI.startswith("https://"))
+
+    def start_vk_oauth(self, con, user, body):
+        if not self.vk_oauth_configured():
+            raise ValueError("Вход через VK ещё не настроен на сервере.")
+        linking = bool(body.get("link"))
+        if linking:
+            self.require_user(user)
+        agreement_accepted = bool(body.get("agreementAccepted"))
+        if not linking and not agreement_accepted:
+            raise ValueError("Для первого входа через VK примите пользовательское соглашение.")
+        state = secrets.token_urlsafe(32)
+        code_verifier = secrets.token_urlsafe(64)
+        code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
+        timestamp = now()
+        con.execute("DELETE FROM oauth_states WHERE expires_at < ?", (timestamp,))
+        con.execute(
+            "INSERT INTO oauth_states(state,provider,user_id,agreement_accepted,code_verifier,expires_at,created_at) VALUES (?,?,?,?,?,?,?)",
+            (state, "vk", user["id"] if linking else None, int(agreement_accepted), code_verifier, timestamp + 600, timestamp),
+        )
+        params = {
+            "response_type": "code",
+            "client_id": VK_OAUTH_CLIENT_ID,
+            "redirect_uri": VK_OAUTH_REDIRECT_URI,
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+        if VK_OAUTH_SCOPE:
+            params["scope"] = VK_OAUTH_SCOPE
+        return self.json({"ok": True, "authorizationUrl": f"https://id.vk.ru/authorize?{urlencode(params)}"})
+
+    def vk_oauth_redirect(self, params):
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/#" + urlencode(params))
+        self.end_headers()
+
+    def vk_oauth_profile(self, code, device_id, state, code_verifier):
+        payload = {
+            "grant_type": "authorization_code",
+            "code_verifier": code_verifier,
+            "redirect_uri": VK_OAUTH_REDIRECT_URI,
+            "code": code,
+            "client_id": VK_OAUTH_CLIENT_ID,
+            "device_id": device_id,
+            "state": state,
+        }
+        if VK_ID_SERVICE_TOKEN:
+            payload["service_token"] = VK_ID_SERVICE_TOKEN
+        try:
+            request = urlrequest.Request(
+                "https://id.vk.ru/oauth2/auth",
+                data=urlencode(payload).encode("utf-8"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            with urlrequest.urlopen(request, timeout=15) as response:
+                token_data = loads(response.read().decode("utf-8"), {})
+            access_token = str(token_data.get("access_token", ""))
+            vk_user_id = str(token_data.get("user_id", ""))
+            if not access_token or not vk_user_id or str(token_data.get("state", "")) != state:
+                raise ValueError
+            profile_request = urlrequest.Request(
+                "https://id.vk.ru/oauth2/user_info",
+                data=urlencode({"client_id": VK_OAUTH_CLIENT_ID, "access_token": access_token}).encode("utf-8"),
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                method="POST",
+            )
+            with urlrequest.urlopen(profile_request, timeout=15) as response:
+                profile_data = loads(response.read().decode("utf-8"), {})
+            profile = profile_data.get("user") if isinstance(profile_data, dict) else None
+            if not isinstance(profile, dict):
+                raise ValueError
+            return vk_user_id, profile
+        except (OSError, ValueError, TypeError, urlerror.HTTPError):
+            raise ValueError("VK ID не подтвердил вход. Попробуйте ещё раз.") from None
+
+    def create_vk_user(self, con, vk_user_id, profile, agreement_accepted):
+        if not agreement_accepted:
+            raise ValueError("Для создания аккаунта примите пользовательское соглашение.")
+        base_username = re.sub(r"[^a-z0-9_]", "", f"vk_{vk_user_id}".lower())[:20]
+        username = base_username or "vk_user"
+        suffix = 1
+        while username_taken(con, username):
+            suffix_text = str(suffix)
+            username = f"{base_username[:20 - len(suffix_text)]}{suffix_text}"
+            suffix += 1
+        name = " ".join(str(profile.get(key, "")) for key in ("first_name", "last_name")).strip()[:80] or "Пользователь VK"
+        appearance = dialog_appearance_defaults(con)
+        user_id = uid("user")
+        con.execute(
+            """INSERT INTO users(id,name,username,password,stars,theme,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,text_scale,chat_background,chat_background_data,agreement_accepted_at,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, name, username, hash_password(secrets.token_urlsafe(32)), 50, *(appearance[field] for field in DIALOG_APPEARANCE_FIELDS), now(), now()),
+        )
+        self.ensure_saved(con, user_id)
+        return user_id
+
+    def complete_vk_oauth(self, con, query):
+        if not self.vk_oauth_configured():
+            return self.vk_oauth_redirect({"vk_error": "Вход через VK не настроен."})
+        state_value = str((query.get("state") or [""])[0])
+        code = str((query.get("code") or [""])[0])
+        device_id = str((query.get("device_id") or [""])[0])
+        state = con.execute("SELECT * FROM oauth_states WHERE state = ? AND provider = 'vk' AND expires_at >= ?", (state_value, now())).fetchone()
+        con.execute("DELETE FROM oauth_states WHERE state = ?", (state_value,))
+        if not state or not code or not device_id or not state["code_verifier"]:
+            return self.vk_oauth_redirect({"vk_error": "Вход через VK отменён или ссылка устарела."})
+        try:
+            vk_user_id, profile = self.vk_oauth_profile(code, device_id, state_value, state["code_verifier"])
+            identity = con.execute("SELECT user_id FROM oauth_identities WHERE provider = 'vk' AND provider_user_id = ?", (vk_user_id,)).fetchone()
+            requested_user_id = state["user_id"]
+            if requested_user_id and identity and identity["user_id"] != requested_user_id:
+                raise ValueError("Этот VK-аккаунт уже привязан к другому профилю.")
+            if requested_user_id:
+                user_id = requested_user_id
+            elif identity:
+                user_id = identity["user_id"]
+            else:
+                user_id = self.create_vk_user(con, vk_user_id, profile, bool(state["agreement_accepted"]))
+            con.execute(
+                """INSERT INTO oauth_identities(provider,provider_user_id,user_id,created_at,updated_at) VALUES ('vk',?,?,?,?)
+                   ON CONFLICT(provider,provider_user_id) DO UPDATE SET user_id=excluded.user_id, updated_at=excluded.updated_at""",
+                (vk_user_id, user_id, now(), now()),
+            )
+            self.restore_deleted_account(con, user_id)
+            self.update_login_streak(con, user_id)
+            token = self.create_session_token(con, user_id)
+            return self.vk_oauth_redirect({"vk_token": token})
+        except ValueError as error:
+            return self.vk_oauth_redirect({"vk_error": str(error)[:300]})
 
     def update_login_streak(self, con, user_id):
         today = time.strftime("%Y-%m-%d")
@@ -3197,6 +5092,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         streak = int(user["login_streak"] or 0) + 1 if user["last_login_day"] == yesterday else 1
         con.execute("UPDATE users SET last_login_day = ?, login_streak = ? WHERE id = ?", (today, streak, user_id))
+
+    def users_are_blocked(self, con, first_user_id, second_user_id):
+        return bool(con.execute(
+            "SELECT 1 FROM user_blocks WHERE (owner_id = ? AND blocked_user_id = ?) OR (owner_id = ? AND blocked_user_id = ?) LIMIT 1",
+            (first_user_id, second_user_id, second_user_id, first_user_id),
+        ).fetchone())
 
     def bootstrap(self, con, user):
         self.ensure_saved(con, user["id"])
@@ -3218,9 +5119,12 @@ class Handler(BaseHTTPRequestHandler):
                           AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)) AS unread_count
                FROM chats c
                WHERE NOT EXISTS(SELECT 1 FROM hidden_chats hc WHERE hc.chat_id = c.id AND hc.user_id = ?)
-                 AND (c.type != 'secret' OR EXISTS(SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?))
+                  AND NOT EXISTS(SELECT 1 FROM user_blocks ub WHERE ub.owner_id = c.owner_id AND ub.blocked_user_id = ?)
+                  AND NOT (c.type = 'direct' AND EXISTS(SELECT 1 FROM chat_members other WHERE other.chat_id = c.id AND other.user_id != ? AND EXISTS(SELECT 1 FROM user_blocks ub WHERE (ub.owner_id = ? AND ub.blocked_user_id = other.user_id) OR (ub.owner_id = other.user_id AND ub.blocked_user_id = ?))))
+                  AND (c.type != 'channel' OR EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?) OR COALESCE(json_extract(c.settings_json, '$.isPublic'), 1) = 1)
+                  AND (c.type != 'secret' OR EXISTS(SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?))
                ORDER BY updated_at DESC""",
-            (user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"]),
+            (user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()]
         members = [dict(r) for r in con.execute(
             """SELECT cm.* FROM chat_members cm
@@ -3231,15 +5135,10 @@ class Handler(BaseHTTPRequestHandler):
                    ))
                  AND (
                        c.type != 'channel'
-                       OR cm.user_id = ?
-                       OR EXISTS(
-                           SELECT 1 FROM chat_members viewer
-                           WHERE viewer.chat_id = c.id
-                             AND viewer.user_id = ?
-                             AND viewer.role IN ('owner', 'admin', 'author')
-                       )
+                        OR cm.user_id = ?
+                        OR cm.role IN ('owner', 'admin', 'author')
                  )""",
-            (user["id"], user["id"], user["id"]),
+            (user["id"], user["id"]),
         ).fetchall()]
         scheduled_posts = [dict(r) for r in con.execute(
             "SELECT id, chat_id, text, media_type, publish_at FROM scheduled_posts WHERE sender_id = ? ORDER BY publish_at", (user["id"],)
@@ -3267,13 +5166,26 @@ class Handler(BaseHTTPRequestHandler):
             (user["id"],),
         ).fetchall()]
         vk_channel_links = [dict(r) for r in con.execute(
-            """SELECT vs.id, vs.channel_id, vs.source_url, vs.source_title, vs.keywords_json, vs.last_sync_at, vs.last_error, vs.created_at
+            """SELECT vs.id, vs.channel_id, vs.source_url, vs.source_title, vs.keywords_json, vs.publish_enabled, vs.moderation_enabled, vs.last_sync_at, vs.last_error, vs.created_at
                FROM vk_channel_sources vs JOIN chats c ON c.id = vs.channel_id
-               WHERE c.owner_id = ?""",
+               WHERE EXISTS(
+                   SELECT 1 FROM chat_members cm
+                   WHERE cm.chat_id = vs.channel_id AND cm.user_id = ?
+               )""",
             (user["id"],),
         ).fetchall()]
         for link in vk_channel_links:
             link["keywords"] = loads(link.pop("keywords_json"), [])
+        vk_channel_targets = [dict(r) for r in con.execute(
+            """SELECT vt.id, vt.channel_id, vt.target_url, vt.target_title, vt.publish_enabled, vt.moderation_enabled,
+                      vt.last_publish_at, vt.last_moderation_sync_at, vt.last_error, vt.created_at
+               FROM vk_channel_targets vt JOIN chats c ON c.id = vt.channel_id
+               WHERE EXISTS(
+                   SELECT 1 FROM chat_members cm
+                   WHERE cm.chat_id = vt.channel_id AND cm.user_id = ?
+               )""",
+            (user["id"],),
+        ).fetchall()]
         channel_comments = [dict(r) for r in con.execute(
             """SELECT cc.* FROM channel_comments cc
                JOIN messages m ON m.id = cc.message_id
@@ -3282,6 +5194,29 @@ class Handler(BaseHTTPRequestHandler):
                  AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?)
                ORDER BY cc.created_at""",
             (user["id"],),
+        ).fetchall()]
+        payout_summaries = [self.channel_payout_summary(con, user["id"], row["id"]) for row in con.execute(
+            "SELECT id FROM chats WHERE owner_id = ? AND type IN ('channel', 'group', 'community')", (user["id"],)
+        ).fetchall()]
+        demo_activity_packages = [dict(row) for row in con.execute(
+            "SELECT * FROM demo_activity_packages ORDER BY created_at DESC"
+        ).fetchall()]
+        channel_payout_requests = [dict(r) for r in con.execute(
+            "SELECT * FROM channel_payout_requests WHERE owner_user_id = ? ORDER BY created_at DESC LIMIT 100", (user["id"],)
+        ).fetchall()]
+        channel_share_submissions = [dict(r) for r in con.execute(
+            """SELECT submission.*, chat.title AS channel_title
+               FROM channel_share_submissions submission JOIN chats chat ON chat.id = submission.channel_id
+               WHERE submission.submitter_id = ? OR EXISTS(
+                 SELECT 1 FROM chat_members cm WHERE cm.chat_id = submission.channel_id
+                   AND cm.user_id = ? AND cm.role IN ('owner', 'admin', 'author')
+               )
+               ORDER BY submission.created_at DESC LIMIT 100""", (user["id"], user["id"])
+        ).fetchall()]
+        vk_review_submissions = [dict(r) for r in con.execute(
+            """SELECT * FROM vk_review_submissions
+               WHERE submitter_id = ?
+               ORDER BY created_at DESC LIMIT 100""", (user["id"],)
         ).fetchall()]
         channel_star_purchases = [dict(r) for r in con.execute(
             """SELECT csp.*, u.name AS buyer_name, u.username AS buyer_username
@@ -3294,8 +5229,14 @@ class Handler(BaseHTTPRequestHandler):
             (user["id"],),
         ).fetchall()]
         notifications = [dict(r) for r in con.execute("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 30", (user["id"],)).fetchall()]
+        channel_join_requests = [dict(r) for r in con.execute(
+            """SELECT cjr.channel_id, cjr.user_id, cjr.created_at, u.name AS user_name, u.username
+               FROM channel_join_requests cjr JOIN users u ON u.id = cjr.user_id
+               WHERE cjr.status = 'pending' AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = cjr.channel_id AND cm.user_id = ? AND cm.role IN ('owner', 'admin', 'author'))
+               ORDER BY cjr.created_at""", (user["id"],)
+        ).fetchall()]
         messages = [message_to_dict(r) for r in con.execute(
-            """SELECT m.id, m.chat_id, m.sender_id, m.profile_user_id, m.text, m.media_type, m.voice_waveform_json, m.views, m.views_boost, m.reactions_json, m.pinned, m.forwarded_from, m.forwarded_from_user_id, m.source_type, m.source_id, m.ai_agent, m.reply_to_id, m.edited_at, m.created_at,
+            """SELECT m.id, m.chat_id, m.sender_id, m.profile_user_id, m.text, m.media_type, m.media_data IS NOT NULL AS has_media, m.media_embed_url, m.voice_waveform_json, m.views, m.views_boost, m.reactions_json, m.pinned, m.forwarded_from, m.forwarded_from_user_id, m.source_type, m.source_id, m.ai_agent, m.reply_to_id, m.edited_at, m.created_at,
                       EXISTS(SELECT 1 FROM hidden_pinned_messages hpm WHERE hpm.message_id = m.id AND hpm.user_id = ?) AS pin_hidden,
                       (m.sender_id != ? AND m.rowid > COALESCE((SELECT crs.read_rowid FROM chat_read_states crs WHERE crs.chat_id = m.chat_id AND crs.user_id = ?), 0)) AS is_unread,
                       EXISTS(
@@ -3311,9 +5252,12 @@ class Handler(BaseHTTPRequestHandler):
                JOIN chats c ON c.id = m.chat_id
                 WHERE m.deleted_by_admin = 0
                   AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = m.id AND hm.user_id = ?)
-                 AND (c.type != 'secret' OR EXISTS(SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?))
+                  AND NOT EXISTS(SELECT 1 FROM user_blocks ub WHERE ub.owner_id = c.owner_id AND ub.blocked_user_id = ?)
+                  AND NOT (c.type = 'direct' AND EXISTS(SELECT 1 FROM chat_members other WHERE other.chat_id = c.id AND other.user_id != ? AND EXISTS(SELECT 1 FROM user_blocks ub WHERE (ub.owner_id = ? AND ub.blocked_user_id = other.user_id) OR (ub.owner_id = other.user_id AND ub.blocked_user_id = ?))))
+                  AND (c.type != 'channel' OR EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?) OR COALESCE(json_extract(c.settings_json, '$.isPublic'), 1) = 1)
+                  AND (c.type != 'secret' OR EXISTS(SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?))
                ORDER BY m.created_at""",
-            (user["id"], user["id"], user["id"], user["id"], user["id"]),
+            (user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"], user["id"]),
         ).fetchall()]
         posts = [dict(r) for r in con.execute("SELECT * FROM profile_posts ORDER BY created_at DESC").fetchall()]
         for post in posts:
@@ -3354,20 +5298,110 @@ class Handler(BaseHTTPRequestHandler):
         me["avatarHistory"] = avatar_history.get(me["id"], [])
         me["hiddenStoryAuthorIds"] = [r["author_id"] for r in con.execute("SELECT author_id FROM hidden_story_authors WHERE user_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
         me["storyHiddenFromIds"] = [r["blocked_user_id"] for r in con.execute("SELECT blocked_user_id FROM story_privacy_blocks WHERE owner_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
+        me["blockedUserIds"] = [r["blocked_user_id"] for r in con.execute("SELECT blocked_user_id FROM user_blocks WHERE owner_id = ? ORDER BY created_at DESC", (user["id"],)).fetchall()]
         activities = self.visible_chat_activities(con, chats, user["id"])
         packages = [{**item, "originalPrice": item["price"], "price": discounted_price(item["price"], star_package_discount)} for item in yookassa_star_packages(con)]
         ai_agent = self.ai_agent_settings(con, user["id"])
+        ai_agent_bookings = self.ai_agent_bookings(con, user["id"])
         ai_agent_conversation = self.ai_agent_conversation(con, user["id"])
-        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "activities": activities, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "vkChannelLinks": vk_channel_links, "channelComments": channel_comments, "channelStarPurchases": channel_star_purchases, "notifications": notifications, "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "aiAgent": ai_agent, "aiAgentConversation": ai_agent_conversation, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions, "mediaS3Enabled": s3_is_configured(), "yookassa": {"available": yookassa_configured(), "discountPercent": star_package_discount, "packages": packages}})
+        return self.json({"ok": True, "me": me, "users": users, "chats": chats, "members": members, "messages": messages, "activities": activities, "scheduledPosts": scheduled_posts, "channelLinks": channel_links, "telegramChannelLinks": telegram_channel_links, "rssChannelLinks": rss_channel_links, "vkChannelLinks": vk_channel_links, "vkChannelTargets": vk_channel_targets, "channelComments": channel_comments, "channelStarPurchases": channel_star_purchases, "channelPayoutSummaries": payout_summaries, "channelPayoutRequests": channel_payout_requests, "channelShareSubmissions": channel_share_submissions, "vkReviewSubmissions": vk_review_submissions, "demoActivityPackages": demo_activity_packages, "notifications": notifications, "channelJoinRequests": [{"channelId": row["channel_id"], "userId": row["user_id"], "userName": row["user_name"], "username": row["username"], "createdAt": row["created_at"]} for row in channel_join_requests], "posts": posts, "stories": stories, "reviews": reviews, "settings": settings, "accountLevel": account_level, "aiAgent": ai_agent, "aiAgentBookings": ai_agent_bookings, "aiAgentConversation": ai_agent_conversation, "promotions": promotions, "activityRewards": activity_rewards, "statuses": statuses, "userStatuses": user_statuses, "recommended": recommended, "starTransactions": star_transactions, "mediaS3Enabled": s3_is_configured(), "yookassa": {"available": yookassa_configured(), "discountPercent": star_package_discount, "packages": packages}})
+
+    def channel_feed_owner_level_rank(self, con, user_id, levels, current_time):
+        """Return the owner's current configured account-level index without mutating progress."""
+        activity = self.activity_metrics(con, user_id)
+        activity.update({"communities": activity["communities_created"], "channels": activity["channels_created"]})
+        earned_index = -1
+        for index, level in enumerate(levels):
+            criteria = level.get("criteria", {}) or {}
+            if index == 0 or all(activity.get(key, 0) >= value for key, value in criteria.items()):
+                earned_index = index
+            else:
+                break
+        achievement = con.execute(
+            "SELECT highest_level_index FROM account_level_achievements WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        highest_achievement_index = int(achievement["highest_level_index"]) if achievement else 0
+        achievement_lost = highest_achievement_index > earned_index
+        purchased_ids = {row["level_id"] for row in con.execute(
+            "SELECT level_id FROM account_level_purchases WHERE user_id = ?", (user_id,)
+        ).fetchall()}
+        granted_ids = {row["level_id"] for row in con.execute(
+            "SELECT level_id FROM account_level_reward_grants WHERE user_id = ?", (user_id,)
+        ).fetchall()}
+        admin_grant = con.execute(
+            "SELECT level_id FROM admin_account_level_grants WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if admin_grant:
+            granted_ids.add(admin_grant["level_id"])
+        subscribed_ids = {row["level_id"] for row in con.execute(
+            """SELECT level_id FROM account_level_subscriptions
+               WHERE user_id = ? AND status IN ('active', 'cancelled', 'payment_failed') AND active_until > ?""",
+            (user_id, current_time),
+        ).fetchall()}
+        current_index = -1
+        for index, level in enumerate(levels):
+            paid_access = level["id"] in purchased_ids or level["id"] in granted_ids or level["id"] in subscribed_ids
+            if index == 0 or (not achievement_lost and index <= earned_index) or paid_access:
+                current_index = index
+        return current_index
+
+    def channel_feed(self, con, user, query):
+        offset = nonnegative_int((query.get("offset", ["0"])[0] or "0"), "Смещение")
+        # The feed is capped here: clients receive no more than 15 channels per request.
+        limit = min(15, max(1, nonnegative_int((query.get("limit", ["15"])[0] or "15"), "Размер страницы")))
+        settings_row = con.execute("SELECT value FROM settings WHERE key = 'account_levels'").fetchone()
+        try:
+            levels = normalize_account_levels(loads(settings_row["value"], []) if settings_row else [])
+        except ValueError:
+            levels = []
+        current_time = now()
+        rows = con.execute(
+            """SELECT c.*,
+                      COALESCE((SELECT MAX(m.created_at) FROM messages m
+                                WHERE m.chat_id = c.id AND COALESCE(m.media_type, '') != 'system' AND m.deleted_by_admin = 0), 0) AS latest_post_at,
+                      COALESCE((SELECT MAX(COALESCE(s.activity_last_tick_at, s.starts_at, s.created_at))
+                                FROM demo_activity_subscriptions s
+                                WHERE s.channel_id = c.id AND s.active = 1), 0) AS activity_package_at,
+                      COALESCE((SELECT MAX(p.created_at) FROM channel_star_purchases p
+                                WHERE p.channel_id = c.id), 0) AS star_purchase_at
+                 FROM chats c
+                WHERE c.type = 'channel'
+                  AND NOT EXISTS(SELECT 1 FROM user_blocks ub WHERE ub.owner_id = c.owner_id AND ub.blocked_user_id = ?)
+                  AND (COALESCE(json_extract(c.settings_json, '$.isPublic'), 1) = 1
+                       OR EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = c.id AND cm.user_id = ?))""",
+            (user["id"], user["id"]),
+        ).fetchall()
+        owner_ranks = {}
+        for owner_id in {row["owner_id"] for row in rows if row["owner_id"]}:
+            owner_ranks[owner_id] = self.channel_feed_owner_level_rank(con, owner_id, levels, current_time)
+        ranked_rows = sorted(
+            rows,
+            key=lambda row: (
+                -owner_ranks.get(row["owner_id"], -1),
+                -max(int(row["latest_post_at"] or 0), int(row["activity_package_at"] or 0), int(row["star_purchase_at"] or 0)),
+                -int(row["latest_post_at"] or 0),
+                -int(row["updated_at"] or 0),
+                row["id"],
+            ),
+        )
+        page = ranked_rows[offset:offset + limit]
+        return self.json({
+            "ok": True,
+            "channels": [chat_to_dict(row) for row in page],
+            "nextOffset": offset + len(page),
+            "hasMore": offset + len(page) < len(ranked_rows),
+        })
 
     def my_reactions(self, con, user):
         reactions = []
         for row in con.execute(
-            """SELECT mr.emoji, mr.created_at, m.id AS target_id, m.text AS target_text, c.title AS target_title
+            """SELECT mr.emoji, mr.created_at, m.id AS target_id, m.chat_id AS target_chat_id,
+                      m.text AS target_text, m.media_type AS target_media_type, m.media_data AS target_media_data,
+                      c.title AS target_title
                FROM message_reactions mr JOIN messages m ON m.id = mr.message_id JOIN chats c ON c.id = m.chat_id
-               WHERE mr.user_id = ? ORDER BY mr.created_at DESC LIMIT 150""", (user["id"],)
+                WHERE mr.user_id = ? ORDER BY mr.created_at DESC LIMIT 150""", (user["id"],)
         ).fetchall():
-            reactions.append({"type": "message", "emoji": row["emoji"], "createdAt": row["created_at"], "targetId": row["target_id"], "title": row["target_title"], "text": row["target_text"]})
+            reactions.append({"type": "message", "emoji": row["emoji"], "createdAt": row["created_at"], "targetId": row["target_id"], "chatId": row["target_chat_id"], "title": row["target_title"], "text": row["target_text"], "mediaType": row["target_media_type"], "mediaData": row["target_media_data"]})
         for row in con.execute(
             """SELECT pr.emoji, pr.created_at, p.id AS target_id, p.text AS target_text, u.name AS target_title
                FROM profile_post_reactions pr JOIN profile_posts p ON p.id = pr.post_id JOIN users u ON u.id = p.user_id
@@ -3412,14 +5446,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def has_chat_access(self, con, user_id, chat_id):
         return bool(con.execute(
-            """SELECT 1 FROM chat_members cm
-               JOIN chats c ON c.id = cm.chat_id
+            """SELECT 1 FROM chat_members cm JOIN chats c ON c.id = cm.chat_id
                WHERE cm.chat_id = ? AND cm.user_id = ?
-                 AND (c.type != 'secret' OR EXISTS(
-                   SELECT 1 FROM secret_chat_unlocks scu
-                   WHERE scu.chat_id = c.id AND scu.user_id = ?
-                 ))""",
-            (chat_id, user_id, user_id),
+                 AND NOT EXISTS(SELECT 1 FROM user_blocks ub WHERE ub.owner_id = c.owner_id AND ub.blocked_user_id = ?)
+                 AND NOT (c.type = 'direct' AND EXISTS(SELECT 1 FROM chat_members other WHERE other.chat_id = c.id AND other.user_id != ? AND EXISTS(SELECT 1 FROM user_blocks ub WHERE (ub.owner_id = ? AND ub.blocked_user_id = other.user_id) OR (ub.owner_id = other.user_id AND ub.blocked_user_id = ?))))
+                 AND (c.type != 'secret' OR EXISTS(SELECT 1 FROM secret_chat_unlocks scu WHERE scu.chat_id = c.id AND scu.user_id = ?))""",
+            (chat_id, user_id, user_id, user_id, user_id, user_id, user_id),
         ).fetchone())
 
     def visible_chat_activities(self, con, chats, user_id):
@@ -3607,7 +5639,42 @@ class Handler(BaseHTTPRequestHandler):
         con.execute("UPDATE users SET avatar_data = ? WHERE id = ?", (avatar, user["id"]))
         return self.json({"ok": True})
 
+    def update_profile_description(self, con, user, body):
+        description = " ".join(str(body.get("description", "")).split())
+        if len(description) > 1000:
+            raise ValueError("Описание профиля не должно быть длиннее 1000 символов.")
+        con.execute("UPDATE users SET profile_description = ? WHERE id = ?", (description, user["id"]))
+        return self.json({"ok": True})
+
+    def update_profile_channel_visibility(self, con, user, body):
+        chat_id = str(body.get("chatId", "")).strip()
+        hidden = body.get("hidden")
+        if not isinstance(hidden, bool):
+            raise ValueError("Некорректная настройка видимости канала.")
+        chat = con.execute("SELECT settings_json FROM chats WHERE id = ? AND type = 'channel' AND owner_id = ?", (chat_id, user["id"])).fetchone()
+        if not chat:
+            raise ValueError("Канал не найден.")
+        settings = loads(chat["settings_json"], {}) or {}
+        settings["hideFromProfile"] = hidden
+        con.execute("UPDATE chats SET settings_json = ?, updated_at = ? WHERE id = ?", (dumps(settings), now(), chat_id))
+        return self.json({"ok": True})
+
+    def set_user_block(self, con, user, body):
+        target_id = str(body.get("userId", "")).strip()
+        blocked = body.get("blocked")
+        if target_id == user["id"] or not con.execute("SELECT 1 FROM users WHERE id = ?", (target_id,)).fetchone():
+            raise ValueError("Пользователь не найден.")
+        if not isinstance(blocked, bool):
+            raise ValueError("Некорректная настройка блокировки.")
+        if blocked:
+            con.execute("INSERT OR IGNORE INTO user_blocks(owner_id,blocked_user_id,created_at) VALUES (?,?,?)", (user["id"], target_id, now()))
+            con.execute("DELETE FROM chat_members WHERE user_id = ? AND chat_id IN (SELECT id FROM chats WHERE type = 'channel' AND owner_id = ?)", (target_id, user["id"]))
+        else:
+            con.execute("DELETE FROM user_blocks WHERE owner_id = ? AND blocked_user_id = ?", (user["id"], target_id))
+        return self.json({"ok": True, "blocked": blocked})
+
     def create_profile_post(self, con, user, body):
+        raise PermissionError("Публикации в профилях отключены.")
         text = str(body.get("text", "")).strip()
         media = str(body.get("mediaData", ""))
         if (not text and not media) or len(text) > 3000:
@@ -3616,6 +5683,35 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Фото поста должно быть изображением до 2,5 МБ.")
         self.enforce_post_limit(con, user["id"])
         con.execute("INSERT INTO profile_posts(id,user_id,text,media_data,created_at) VALUES (?,?,?,?,?)", (uid("post"), user["id"], text, media or None, now()))
+        return self.json({"ok": True})
+
+    def edit_profile_post(self, con, user, body):
+        post_id = str(body.get("postId", "")).strip()
+        text = str(body.get("text", "")).strip()
+        if not post_id:
+            raise ValueError("Публикация не найдена.")
+        if len(text) > 3000:
+            raise ValueError("Текст публикации — до 3000 символов.")
+        post = con.execute("SELECT user_id, media_data FROM profile_posts WHERE id = ?", (post_id,)).fetchone()
+        if not post:
+            raise ValueError("Публикация не найдена.")
+        if post["user_id"] != user["id"]:
+            raise PermissionError("Можно редактировать только свои публикации.")
+        if not text and not post["media_data"]:
+            raise ValueError("Пост должен содержать текст или фото.")
+        con.execute("UPDATE profile_posts SET text = ? WHERE id = ?", (text, post_id))
+        return self.json({"ok": True})
+
+    def delete_profile_post(self, con, user, body):
+        post_id = str(body.get("postId", "")).strip()
+        if not post_id:
+            raise ValueError("Публикация не найдена.")
+        post = con.execute("SELECT user_id FROM profile_posts WHERE id = ?", (post_id,)).fetchone()
+        if not post:
+            raise ValueError("Публикация не найдена.")
+        if post["user_id"] != user["id"]:
+            raise PermissionError("Можно удалять только свои публикации.")
+        con.execute("DELETE FROM profile_posts WHERE id = ?", (post_id,))
         return self.json({"ok": True})
 
     def react_to_profile_post(self, con, user, body):
@@ -3629,6 +5725,8 @@ class Handler(BaseHTTPRequestHandler):
         author_id = post["user_id"]
         if author_id == user["id"]:
             raise ValueError("Нельзя отправить реакцию на свою публикацию.")
+        if self.users_are_blocked(con, user["id"], author_id):
+            raise PermissionError("Взаимодействие с заблокированным пользователем недоступно.")
         member_ids = sorted([user["id"], author_id])
         chat = con.execute(
             "SELECT c.id FROM chats c JOIN chat_members a ON a.chat_id = c.id JOIN chat_members b ON b.chat_id = c.id WHERE c.type = 'direct' AND a.user_id = ? AND b.user_id = ?",
@@ -3654,6 +5752,7 @@ class Handler(BaseHTTPRequestHandler):
         return self.json({"ok": True, "chatId": chat_id})
 
     def create_story(self, con, user, body):
+        raise PermissionError("Публикация историй отключена.")
         media = str(body.get("mediaData", ""))
         caption = str(body.get("caption", "")).strip()[:300]
         if not media.startswith("data:image/") or len(media) > 3_500_000:
@@ -3825,6 +5924,8 @@ class Handler(BaseHTTPRequestHandler):
             other_id = body.get("userId")
             if not other_id or other_id == user["id"]:
                 raise ValueError("Выберите другого пользователя.")
+            if self.users_are_blocked(con, user["id"], other_id):
+                raise PermissionError("Личный диалог недоступен: один из пользователей заблокировал другого.")
             ids = sorted([user["id"], other_id])
             existing = con.execute(
                 "SELECT c.* FROM chats c JOIN chat_members a ON a.chat_id=c.id JOIN chat_members b ON b.chat_id=c.id WHERE c.type='direct' AND a.user_id=? AND b.user_id=?",
@@ -3833,13 +5934,29 @@ class Handler(BaseHTTPRequestHandler):
             if existing:
                 con.execute("DELETE FROM hidden_chats WHERE chat_id = ? AND user_id = ?", (existing["id"], user["id"]))
                 return self.json({"ok": True, "chat": chat_to_dict(existing)})
+            shared_channel = con.execute(
+                """SELECT 1 FROM chat_members manager
+                   JOIN chat_members subscriber ON subscriber.chat_id = manager.chat_id
+                   JOIN chats channel ON channel.id = manager.chat_id
+                   WHERE channel.type = 'channel'
+                     AND manager.user_id = ? AND manager.role IN ('owner', 'admin', 'author')
+                     AND subscriber.user_id = ? AND subscriber.role = 'member'
+                   LIMIT 1""",
+                (user["id"], other_id),
+            ).fetchone()
             recipient = con.execute("SELECT direct_message_privacy FROM users WHERE id = ?", (other_id,)).fetchone()
             if not recipient:
                 raise ValueError("Пользователь не найден.")
             privacy = recipient["direct_message_privacy"]
-            if privacy == "nobody":
+            allows_all_incoming = bool(con.execute(
+                "SELECT 1 FROM ai_agent_tasks WHERE user_id = ? AND enabled = 1 AND scope = 'all_direct'",
+                (other_id,),
+            ).fetchone())
+            if shared_channel and not allows_all_incoming:
+                raise PermissionError("Администраторы канала не могут начинать личные диалоги с его подписчиками.")
+            if privacy == "nobody" and not allows_all_incoming:
                 raise PermissionError("Пользователь принимает новые сообщения только от тех, кому написал сам.")
-            if privacy == "contacts":
+            if privacy == "contacts" and not allows_all_incoming:
                 raise PermissionError("Пользователь принимает новые сообщения только от людей из личных диалогов.")
             chat_id = uid("chat")
             con.execute("INSERT INTO chats(id,type,title,owner_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", (chat_id, "direct", "Личный чат", user["id"], now(), now()))
@@ -3897,13 +6014,21 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError(f"На вашем уровне доступно до {maximum} {label}.")
         if chat_type == "channel":
             title = str(body.get("title", "")).strip() or "Новый канал"
-            settings = {"showViews": True, "showSubscribers": True, "showReactions": True, "commentsEnabled": True, "isPublic": True, "starBonusType": "stars", "starBonusPercent": 10}
+            settings = {"showViews": True, "showSubscribers": True, "showReactions": True, "commentsEnabled": True, "isPublic": True, "joinApprovalRequired": False, "protectContent": False}
             chat_id = uid("chat")
             con.execute(
                 "INSERT INTO chats(id,type,title,description,invite_code,owner_id,settings_json,subscriber_count,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (chat_id, "channel", title, str(body.get("description", "")), secrets.token_urlsafe(12), user["id"], dumps(settings), 1, now(), now()),
             )
             con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, user["id"], "owner", now()))
+            default_package = con.execute("SELECT * FROM demo_activity_packages WHERE apply_to_new_channels = 1 LIMIT 1").fetchone()
+            if default_package and account_level_available_for_user(con, user["id"], default_package["required_account_level_id"]):
+                current = now()
+                con.execute(
+                    """INSERT INTO demo_activity_subscriptions(id,package_id,channel_id,starts_at,ends_at,auto_renew,created_at)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (uid("demosubscription"), default_package["id"], chat_id, current, current + max(1, default_package["duration_days"]) * 86400, 0, current),
+                )
             return self.json({"ok": True, "chat": chat_to_dict(con.execute("SELECT * FROM chats WHERE id=?", (chat_id,)).fetchone())})
         title = str(body.get("title", "")).strip() or "Новый чат"
         settings = {"showViews": True, "showSubscribers": True, "showReactions": True, "inviteLinkEnabled": True}
@@ -3932,10 +6057,17 @@ class Handler(BaseHTTPRequestHandler):
         return self.json({"ok": True, "count": len(rows), "chatIds": [row["chat_id"] for row in rows]})
 
     def join_chat(self, con, user, chat_id):
-        chat = con.execute("SELECT type, owner_id FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        chat = con.execute("SELECT type, owner_id, settings_json FROM chats WHERE id = ?", (chat_id,)).fetchone()
         if not chat or chat["type"] not in {"group", "community", "channel"}:
             raise ValueError("Не выбран чат.")
+        if chat["type"] == "channel" and self.users_are_blocked(con, user["id"], chat["owner_id"]):
+            raise PermissionError("Этот канал недоступен.")
         already_joined = con.execute("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?", (chat_id, user["id"])).fetchone()
+        settings = loads(chat["settings_json"], {}) or {}
+        if chat["type"] == "channel" and settings.get("joinApprovalRequired", False) and not already_joined and chat["owner_id"] != user["id"]:
+            con.execute("""INSERT INTO channel_join_requests(channel_id,user_id,status,created_at,resolved_at,resolved_by) VALUES (?,?,'pending',?,NULL,NULL)
+                ON CONFLICT(channel_id,user_id) DO UPDATE SET status='pending', created_at=excluded.created_at, resolved_at=NULL, resolved_by=NULL""", (chat_id, user["id"], now()))
+            return self.json({"ok": True, "requested": True})
         if not already_joined and chat["owner_id"] != user["id"]:
             self.enforce_join_limit(con, user["id"], chat["type"])
         con.execute("INSERT OR IGNORE INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (chat_id, user["id"], "member", now()))
@@ -3950,6 +6082,32 @@ class Handler(BaseHTTPRequestHandler):
         if chat["type"] in {"group", "community"} and not loads(chat["settings_json"], {}).get("inviteLinkEnabled", True):
             raise PermissionError("Владелец группы отключил публичную ссылку-приглашение.")
         return self.join_chat(con, user, chat["id"])
+
+    def channel_join_requests(self, con, user):
+        rows = con.execute("""SELECT r.channel_id, r.user_id, r.created_at, u.name AS user_name, u.username
+            FROM channel_join_requests r JOIN users u ON u.id = r.user_id
+            WHERE r.status = 'pending' AND EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = r.channel_id AND cm.user_id = ? AND cm.role IN ('owner', 'admin', 'author'))
+            ORDER BY r.created_at""", (user["id"],)).fetchall()
+        return self.json({"ok": True, "requests": [{"channelId": row["channel_id"], "userId": row["user_id"], "userName": row["user_name"], "username": row["username"], "createdAt": row["created_at"]} for row in rows]})
+
+    def resolve_channel_join_request(self, con, user, body):
+        channel_id, user_id, decision = str(body.get("channelId", "")), str(body.get("userId", "")), str(body.get("decision", ""))
+        if decision not in {"approve", "reject"}:
+            raise ValueError("Выберите решение по заявке.")
+        if self.chat_member_role(con, channel_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Одобрять заявки могут только создатель и администраторы канала.")
+        if decision == "approve":
+            owner = con.execute("SELECT owner_id FROM chats WHERE id = ?", (channel_id,)).fetchone()
+            if owner and self.users_are_blocked(con, owner["owner_id"], user_id):
+                raise PermissionError("Пользователь заблокирован владельцем канала.")
+            self.enforce_join_limit(con, user_id, "channel")
+            con.execute("INSERT OR IGNORE INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (channel_id, user_id, "member", now()))
+            con.execute("DELETE FROM hidden_chats WHERE chat_id = ? AND user_id = ?", (channel_id, user_id))
+            con.execute("UPDATE chats SET subscriber_count=(SELECT count(*) FROM chat_members WHERE chat_id=?), updated_at=? WHERE id=?", (channel_id, now(), channel_id))
+        updated = con.execute("UPDATE channel_join_requests SET status=?, resolved_at=?, resolved_by=? WHERE channel_id=? AND user_id=? AND status='pending'", ("approved" if decision == "approve" else "rejected", now(), user["id"], channel_id, user_id)).rowcount
+        if not updated:
+            raise ValueError("Эта заявка уже обработана.")
+        return self.json({"ok": True, "decision": decision})
 
     def add_chat_member(self, con, user, body):
         chat_id, user_id = body.get("chatId"), body.get("userId")
@@ -4005,20 +6163,23 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Загрузите изображение до 1,8 МБ в формате PNG, JPG или WebP.")
         settings = loads(chat["settings_json"], {})
         if chat["type"] == "channel":
-            for key in ("showViews", "showSubscribers", "showReactions", "commentsEnabled", "isPublic"):
+            for key in ("showViews", "showSubscribers", "showReactions", "commentsEnabled", "isPublic", "joinApprovalRequired", "protectContent"):
                 if key in body:
                     settings[key] = bool(body[key])
-            if "starBonusPercent" in body:
-                bonus_percent = nonnegative_int(body["starBonusPercent"], "starBonusPercent", 100)
-                if not bonus_percent:
-                    raise ValueError("Укажите бонус от 1 до 100 %.")
-                settings["starBonusType"] = "stars"
-                settings["starBonusPercent"] = bonus_percent
-            buyer_gift_stars = nonnegative_int(body.get("buyerGiftStars", settings.get("buyerGiftStars", 0)), "buyerGiftStars", 100_000)
+            if settings.get("joinApprovalRequired", False):
+                settings["isPublic"] = False
+            package_gifts = body.get("buyerGiftStarsByPackage", settings.get("buyerGiftStarsByPackage", {}))
+            if not isinstance(package_gifts, dict):
+                raise ValueError("Некорректные настройки подарков покупателю.")
+            available_package_ids = {package["id"] for package in yookassa_star_packages(con)}
+            settings["buyerGiftStarsByPackage"] = {
+                package_id: nonnegative_int(gift, "buyerGiftStars", 100_000)
+                for package_id, gift in package_gifts.items()
+                if package_id in available_package_ids
+            }
             buyer_message = str(body.get("buyerPurchaseMessage", settings.get("buyerPurchaseMessage", ""))).strip()
             if len(buyer_message) > 500:
                 raise ValueError("Сообщение покупателю должно быть не длиннее 500 символов.")
-            settings["buyerGiftStars"] = buyer_gift_stars
             settings["buyerPurchaseMessage"] = buyer_message
         elif chat["type"] in {"group", "community"} and "inviteLinkEnabled" in body:
             settings["inviteLinkEnabled"] = bool(body["inviteLinkEnabled"])
@@ -4169,6 +6330,7 @@ class Handler(BaseHTTPRequestHandler):
         text = str(body.get("text", "")).strip()
         media_type = str(body.get("mediaType", "")).strip() or None
         media_data = str(body.get("mediaData", "")) or None
+        raw_circle_preview_data = body.get("circlePreviewData", "")
         media_key = str(body.get("mediaKey", "")).strip()
         raw_voice_waveform = body.get("voiceWaveform", [])
         profile_user_id = str(body.get("profileUserId", "")).strip() or None
@@ -4177,6 +6339,9 @@ class Handler(BaseHTTPRequestHandler):
         allowed_media = {None, "photo", "video", "voice", "circle", "document"}
         if media_type not in allowed_media:
             raise ValueError("Этот тип вложения не поддерживается.")
+        if raw_circle_preview_data and media_type != "circle":
+            raise ValueError("Кадр предпросмотра можно передать только для видеокружка.")
+        circle_preview_data = normalize_image_data(raw_circle_preview_data, CIRCLE_PREVIEW_MAX_BYTES, "Кадр видеокружка") if raw_circle_preview_data else None
         if not isinstance(raw_voice_waveform, list):
             raise ValueError("Некорректные данные голосового сообщения.")
         voice_waveform = [max(0, min(100, int(value))) for value in raw_voice_waveform[:64] if isinstance(value, (int, float))] if media_type == "voice" else []
@@ -4195,12 +6360,34 @@ class Handler(BaseHTTPRequestHandler):
         if not self.has_chat_access(con, user["id"], chat_id):
             raise PermissionError()
         chat = con.execute("SELECT type, owner_id, settings_json FROM chats WHERE id = ?", (chat_id,)).fetchone()
+        if chat and chat["type"] == "direct":
+            counterpart = con.execute(
+                "SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id != ?", (chat_id, user["id"])
+            ).fetchone()
+            if counterpart and self.users_are_blocked(con, user["id"], counterpart["user_id"]):
+                raise PermissionError("Нельзя отправить сообщение заблокированному пользователю.")
+            protected_subscriber = counterpart and con.execute(
+                """SELECT 1 FROM chat_members manager
+                   JOIN chat_members subscriber ON subscriber.chat_id = manager.chat_id
+                   JOIN chats channel ON channel.id = manager.chat_id
+                   WHERE channel.type = 'channel'
+                     AND manager.user_id = ? AND manager.role IN ('owner', 'admin', 'author')
+                     AND subscriber.user_id = ? AND subscriber.role = 'member'
+                   LIMIT 1""",
+                (user["id"], counterpart["user_id"]),
+            ).fetchone()
+            allows_all_incoming = counterpart and bool(con.execute(
+                "SELECT 1 FROM ai_agent_tasks WHERE user_id = ? AND enabled = 1 AND scope = 'all_direct'",
+                (counterpart["user_id"],),
+            ).fetchone())
+            if protected_subscriber and not allows_all_incoming:
+                raise PermissionError("Администраторы канала не могут писать его подписчикам в личных диалогах.")
         if chat and chat["type"] == "channel" and self.chat_member_role(con, chat_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
             raise PermissionError("Публиковать в канале могут только создатель и назначенные администраторы.")
         if reply_to_id and not con.execute("SELECT 1 FROM messages WHERE id = ? AND chat_id = ?", (reply_to_id, chat_id)).fetchone():
             raise ValueError("Сообщение для ответа не найдено.")
         if chat and chat["type"] == "channel":
-            self.enforce_post_limit(con, user["id"])
+            enforce_channel_post_limit(con, chat_id)
         self.enforce_message_limit(con, user["id"])
         msg_id = uid("msg")
         if media_key:
@@ -4219,14 +6406,14 @@ class Handler(BaseHTTPRequestHandler):
             file_name = upload["file_name"] or file_name
             con.execute("DELETE FROM media_uploads WHERE key = ?", (media_key,))
         stored_text = f"Документ: {file_name}" if media_type == "document" and not text else text
-        con.execute("INSERT INTO messages(id,chat_id,sender_id,profile_user_id,text,media_type,media_data,voice_waveform_json,views,reply_to_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (msg_id, chat_id, user["id"], profile_user_id, stored_text, media_type, media_data, dumps(voice_waveform), 1, reply_to_id, now()))
+        con.execute("INSERT INTO messages(id,chat_id,sender_id,profile_user_id,text,media_type,media_data,circle_preview_data,voice_waveform_json,views,reply_to_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (msg_id, chat_id, user["id"], profile_user_id, stored_text, media_type, media_data, circle_preview_data, dumps(voice_waveform), 1, reply_to_id, now()))
         con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), chat_id))
         if chat and chat["type"] == "channel":
             schedule_automated_comments(con, msg_id, chat_id)
         if chat and chat["type"] == "channel":
             link = con.execute("SELECT target_chat_id FROM channel_links WHERE channel_id = ?", (chat_id,)).fetchone()
             if link:
-                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,created_at) VALUES (?,?,?,?,?,?,?,?,?)", (uid("msg"), link["target_chat_id"], user["id"], text, media_type, media_data, 1, chat["title"], now()))
+                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,circle_preview_data,views,forwarded_from,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)", (uid("msg"), link["target_chat_id"], user["id"], text, media_type, media_data, circle_preview_data, 1, chat["title"], now()))
                 con.execute("UPDATE chats SET updated_at=? WHERE id=?", (now(), link["target_chat_id"]))
         with chat_activities_lock:
             chat_activities.pop((chat_id, user["id"]), None)
@@ -4248,9 +6435,27 @@ class Handler(BaseHTTPRequestHandler):
             (uid("ai_conversation"), user_id, role, message, now()),
         )
 
+    def ai_agent_tasks(self, con, user_id):
+        rows = con.execute(
+            "SELECT * FROM ai_agent_tasks WHERE user_id = ? ORDER BY enabled DESC, updated_at DESC, id DESC",
+            (user_id,),
+        ).fetchall()
+        return [{
+            "id": row["id"],
+            "title": row["title"],
+            "instruction": row["instruction"],
+            "scope": row["scope"],
+            "chatIds": loads(row["chat_ids_json"], []),
+            "enabled": bool(row["enabled"]),
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        } for row in rows]
+
     def ai_agent_settings(self, con, user_id):
         row = con.execute("SELECT * FROM ai_agent_settings WHERE user_id = ?", (user_id,)).fetchone()
         channel_rule = con.execute("SELECT * FROM ai_agent_channel_rules WHERE user_id = ?", (user_id,)).fetchone()
+        model_profiles = genapi_model_profiles()
+        tasks = self.ai_agent_tasks(con, user_id)
         channel_data = {
             "enabled": bool(channel_rule["enabled"]) if channel_rule else False,
             "targetChannelId": channel_rule["target_channel_id"] if channel_rule else "",
@@ -4258,16 +6463,73 @@ class Handler(BaseHTTPRequestHandler):
             "rewritePosts": bool(channel_rule["rewrite_posts"]) if channel_rule else False,
         }
         if not row:
-            return {"instruction": "", "style": "friendly", "autopilotEnabled": False, "allowedChatIds": [], "templateMessageIds": [], "channelRule": channel_data, "globalInstructions": self.ai_agent_global_instructions(con) if self.is_ai_agent_global_manager(con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()) else []}
+            return {"instruction": "", "style": "friendly", "modelProfile": "default", "modelProfiles": model_profiles, "autopilotEnabled": any(task["enabled"] for task in tasks), "autopilotAllDirect": any(task["scope"] == "all_direct" and task["enabled"] for task in tasks), "allowedChatIds": [], "templateMessageIds": [], "agentName": "ИИ-администратор", "bookingConfig": self.normalize_ai_agent_booking_config({}), "tasks": tasks, "channelRule": channel_data, "globalInstructions": self.ai_agent_global_instructions(con) if self.is_ai_agent_global_manager(con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()) else []}
         return {
             "instruction": row["instruction"],
             "style": row["style"],
-            "autopilotEnabled": bool(row["autopilot_enabled"]),
-            "allowedChatIds": loads(row["allowed_chat_ids_json"], []),
+            "modelProfile": normalize_genapi_model_profile(row["model_profile"]),
+            "modelProfiles": model_profiles,
+            "autopilotEnabled": any(task["enabled"] for task in tasks),
+            "autopilotAllDirect": any(task["scope"] == "all_direct" and task["enabled"] for task in tasks),
+            "allowedChatIds": [],
             "templateMessageIds": loads(row["template_message_ids_json"], []),
+            "agentName": row["agent_name"] or "ИИ-администратор",
+            "bookingConfig": self.normalize_ai_agent_booking_config(loads(row["booking_config_json"], {})),
+            "tasks": tasks,
             "channelRule": channel_data,
             "globalInstructions": self.ai_agent_global_instructions(con) if self.is_ai_agent_global_manager(con.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()) else [],
         }
+
+    def save_ai_agent_task(self, con, user, body):
+        task_id = str(body.get("id", "")).strip()
+        title = " ".join(str(body.get("title", "")).split())[:120]
+        instruction = " ".join(str(body.get("instruction", "")).split())[:3_000]
+        scope = str(body.get("scope", "all_direct")).strip()
+        enabled = bool(body.get("enabled", True))
+        chat_ids = body.get("chatIds", [])
+        if not title:
+            raise ValueError("Укажите название задачи.")
+        if scope not in {"all_direct", "selected_direct"}:
+            raise ValueError("Выберите область задачи.")
+        if not isinstance(chat_ids, list):
+            raise ValueError("Некорректный список диалогов.")
+        chat_ids = list(dict.fromkeys(str(value) for value in chat_ids if isinstance(value, str)))[:50]
+        if scope == "selected_direct" and not chat_ids:
+            raise ValueError("Для задачи выберите хотя бы один личный диалог.")
+        for chat_id in chat_ids:
+            chat = con.execute("SELECT type FROM chats WHERE id = ?", (chat_id,)).fetchone()
+            if not chat or chat["type"] != "direct" or not self.has_chat_access(con, user["id"], chat_id):
+                raise ValueError("В задаче можно использовать только доступные личные диалоги.")
+        timestamp = now()
+        if task_id:
+            if not con.execute(
+                "UPDATE ai_agent_tasks SET title=?, instruction=?, scope=?, chat_ids_json=?, enabled=?, updated_at=? WHERE id=? AND user_id=?",
+                (title, instruction, scope, dumps([] if scope == "all_direct" else chat_ids), int(enabled), timestamp, task_id, user["id"]),
+            ).rowcount:
+                raise ValueError("Задача не найдена.")
+        else:
+            task_id = uid("ai_task")
+            con.execute(
+                "INSERT INTO ai_agent_tasks(id,user_id,title,instruction,scope,chat_ids_json,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (task_id, user["id"], title, instruction, scope, dumps([] if scope == "all_direct" else chat_ids), int(enabled), timestamp, timestamp),
+            )
+        return self.json({"ok": True, "taskId": task_id, "message": "Задача сохранена."})
+
+    def toggle_ai_agent_task(self, con, user, body):
+        task_id = str(body.get("id", "")).strip()
+        enabled = bool(body.get("enabled", False))
+        if not task_id or not con.execute(
+            "UPDATE ai_agent_tasks SET enabled=?, updated_at=? WHERE id=? AND user_id=?",
+            (int(enabled), now(), task_id, user["id"]),
+        ).rowcount:
+            raise ValueError("Задача не найдена.")
+        return self.json({"ok": True})
+
+    def delete_ai_agent_task(self, con, user, body):
+        task_id = str(body.get("id", "")).strip()
+        if not task_id or not con.execute("DELETE FROM ai_agent_tasks WHERE id=? AND user_id=?", (task_id, user["id"])).rowcount:
+            raise ValueError("Задача не найдена.")
+        return self.json({"ok": True})
 
     def is_ai_agent_global_manager(self, user) -> bool:
         return bool(user) and str(user["username"] or "").casefold() == "andrei"
@@ -4308,13 +6570,49 @@ class Handler(BaseHTTPRequestHandler):
     def ai_agent_global_command(self, con, user, question):
         if not self.is_ai_agent_global_manager(user):
             return None
-        match = re.match(r"^(?:добавь|создай|обнови)\s+(?:глобальную\s+)?(?:функцию|сценарий|правило)\s*:\s*(?P<title>[^:]{2,120})\s*:\s*(?P<instruction>.+)$", question, re.IGNORECASE)
-        if not match:
+        structured = re.match(
+            r"^(?P<action>добавь|создай|обнови)\s+(?:глобальную\s+)?(?:функцию|сценарий|правило)\s*:\s*(?P<title>[^:]{2,120})\s*:\s*(?P<instruction>.+)$",
+            question,
+            re.IGNORECASE,
+        )
+        if structured:
+            action = structured.group("action").casefold()
+            title = " ".join(structured.group("title").split())
+            instruction = " ".join(structured.group("instruction").split())[:3_000]
+        else:
+            teaching = re.match(
+                r"^(?:запомни|научи)(?:\s+(?:ии|агента|чат[ -]?про))?\s*(?::|,|—|-)\s*(?P<instruction>.{8,})$",
+                question,
+                re.IGNORECASE,
+            )
+            if teaching:
+                action = "добавь"
+                instruction = " ".join(teaching.group("instruction").split())[:3_000]
+                title = f"Правило: {instruction[:80]}".rstrip(" .,:;-")
+            else:
+                teaching_question = re.search(r"(?:обуч|научи|запомни|глобальн(?:ое|ые)?\s+(?:правил|сценар|функц))", question, re.IGNORECASE)
+                if teaching_question:
+                    return "Да. В этом диалоге аккаунт @andrei может обучать ИИ общим правилам для Chat-Pro. Напишите, например: «запомни: при вопросах о доставке уточняй номер заказа и называй сроки». Я сохраню правило, подтвержу его и сообщу, что оно применяется к новым ответам ИИ. Правила меняют поведение ответов, но не дают доступ к чужим данным и не запускают код."
+                return None
+        if not instruction:
             return None
-        title = " ".join(match.group("title").split())
-        instruction = " ".join(match.group("instruction").split())[:3_000]
-        con.execute("INSERT INTO ai_agent_global_instructions(id,title,instruction,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?)", (uid("ai_global"), title, instruction, user["id"], now(), now()))
-        return f"Глобальный сценарий «{title}» добавлен. Он применяется к новым запросам и ответам ИИ у всех пользователей, но не расширяет права доступа к чатам и каналам."
+        timestamp = now()
+        if action == "обнови":
+            existing = con.execute(
+                "SELECT id FROM ai_agent_global_instructions WHERE casefold(title) = casefold(?) ORDER BY updated_at DESC LIMIT 1",
+                (title,),
+            ).fetchone()
+            if existing:
+                con.execute(
+                    "UPDATE ai_agent_global_instructions SET instruction = ?, updated_at = ? WHERE id = ?",
+                    (instruction, timestamp, existing["id"]),
+                )
+                return f"Глобальный сценарий «{title}» обновлён. Новое правило применяется к следующим ответам ИИ у всех пользователей и не расширяет права доступа."
+        con.execute(
+            "INSERT INTO ai_agent_global_instructions(id,title,instruction,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?)",
+            (uid("ai_global"), title, instruction, user["id"], timestamp, timestamp),
+        )
+        return f"Глобальный сценарий «{title}» сохранён. Он применяется к новым запросам и ответам ИИ у всех пользователей, но не расширяет права доступа к чатам и каналам и не исполняет код."
 
     def require_pro_account_level(self, con, user_id):
         data = self.account_level_data(con, user_id)
@@ -4323,12 +6621,192 @@ class Handler(BaseHTTPRequestHandler):
         if pro_index is None or current_index < pro_index:
             raise ValueError("Автопилот ИИ-агента доступен с уровня «Профи». Повысьте уровень аккаунта.")
 
+    def normalize_ai_agent_booking_config(self, value):
+        value = value if isinstance(value, dict) else {}
+        resources = value.get("resources", [])
+        if not isinstance(resources, list):
+            resources = []
+        resources = list(dict.fromkeys(" ".join(str(item).split())[:80] for item in resources if " ".join(str(item).split())))[:50]
+        fields = value.get("fields", [])
+        if not isinstance(fields, list):
+            fields = []
+        fields = list(dict.fromkeys(" ".join(str(item).split())[:80] for item in fields if " ".join(str(item).split())))[:12]
+        try:
+            duration = int(value.get("durationMinutes", 60))
+        except (TypeError, ValueError):
+            duration = 60
+        working_hours = value.get("workingHours", {})
+        working_hours = working_hours if isinstance(working_hours, dict) else {}
+        start_time = str(working_hours.get("start", "")).strip()
+        end_time = str(working_hours.get("end", "")).strip()
+        time_pattern = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+        if not time_pattern.fullmatch(start_time) or not time_pattern.fullmatch(end_time) or start_time >= end_time:
+            start_time = ""
+            end_time = ""
+        return {
+            "enabled": bool(value.get("enabled", False)),
+            "serviceName": " ".join(str(value.get("serviceName", "")).split())[:100],
+            "resources": resources,
+            "durationMinutes": max(10, min(duration, 480)),
+            "fields": fields,
+            "workingHours": {"start": start_time, "end": end_time},
+        }
+
+    def ai_agent_booking_time_error(self, config, start_at, end_at):
+        working_hours = config.get("workingHours", {})
+        start_time = str(working_hours.get("start", ""))
+        end_time = str(working_hours.get("end", ""))
+        if not start_time or not end_time:
+            return None
+        booking_start = datetime.datetime.fromtimestamp(start_at)
+        booking_end = datetime.datetime.fromtimestamp(end_at)
+        start_hour, start_minute = (int(value) for value in start_time.split(":"))
+        end_hour, end_minute = (int(value) for value in end_time.split(":"))
+        work_start = booking_start.replace(hour=start_hour, minute=start_minute, second=0, microsecond=0)
+        work_end = booking_start.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
+        if booking_end.date() != booking_start.date() or booking_start < work_start or booking_end > work_end:
+            return f"Брони принимаются с {start_time} до {end_time}. Выберите время, чтобы вся запись укладывалась в этот интервал."
+        return None
+
+    def ai_agent_bookings(self, con, user_id):
+        rows = con.execute(
+            """SELECT id, customer_name, contact, booking_type, resource_name, start_at, end_at, details_json, status, created_at
+               FROM ai_agent_bookings WHERE owner_id = ? ORDER BY start_at DESC LIMIT 200""",
+            (user_id,),
+        ).fetchall()
+        bookings = []
+        for row in rows:
+            item = dict(row)
+            item["details"] = loads(item.pop("details_json"), {})
+            bookings.append(item)
+        return bookings
+
+    def create_ai_agent_booking(self, con, user, body):
+        settings = self.ai_agent_settings(con, user["id"])
+        config = settings["bookingConfig"]
+        if not config["enabled"]:
+            raise ValueError("Сначала включите приём заявок в настройках ИИ-администратора.")
+        customer_name = " ".join(str(body.get("customerName", "")).split())[:120]
+        contact = " ".join(str(body.get("contact", "")).split())[:160]
+        resource_name = " ".join(str(body.get("resourceName", "")).split())[:80]
+        booking_type = " ".join(str(body.get("bookingType", "")).split())[:100] or config["serviceName"] or "Запись"
+        try:
+            start_at = int(body.get("startAt", 0))
+        except (TypeError, ValueError):
+            start_at = 0
+        if not customer_name or not resource_name or not start_at:
+            raise ValueError("Для записи укажите имя клиента, ресурс (например, столик или мастера) и дату со временем.")
+        if config["resources"] and resource_name.casefold() not in {item.casefold() for item in config["resources"]}:
+            raise ValueError(f"Ресурс «{resource_name}» не указан в настройках. Выберите один из списка: {', '.join(config['resources'])}.")
+        if start_at < now() - 300:
+            raise ValueError("Нельзя создать запись в прошлом. Укажите будущую дату и время.")
+        end_at = start_at + config["durationMinutes"] * 60
+        time_error = self.ai_agent_booking_time_error(config, start_at, end_at)
+        if time_error:
+            raise ValueError(time_error)
+        details = body.get("details", {})
+        if not isinstance(details, dict):
+            raise ValueError("Дополнительные детали записи должны быть объектом.")
+        details = {" ".join(str(key).split())[:80]: " ".join(str(value).split())[:300] for key, value in details.items() if " ".join(str(key).split()) and " ".join(str(value).split())}
+        conflict = con.execute(
+            """SELECT start_at, end_at FROM ai_agent_bookings
+               WHERE owner_id = ? AND status != 'cancelled' AND casefold(resource_name) = casefold(?)
+                 AND start_at < ? AND end_at > ? LIMIT 1""",
+            (user["id"], resource_name, end_at, start_at),
+        ).fetchone()
+        if conflict:
+            raise ValueError("Этот столик или специалист уже занят на выбранное время. Выберите другой ресурс либо время.")
+        booking_id = uid("ai_booking")
+        timestamp = now()
+        con.execute(
+            """INSERT INTO ai_agent_bookings(id,owner_id,customer_user_id,source_chat_id,customer_name,contact,booking_type,resource_name,start_at,end_at,details_json,status,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (booking_id, user["id"], None, None, customer_name, contact, booking_type, resource_name, start_at, end_at, dumps(details), "confirmed", timestamp, timestamp),
+        )
+        return self.json({"ok": True, "message": f"Запись для {customer_name} подтверждена: {resource_name}, {time.strftime('%d.%m.%Y %H:%M', time.localtime(start_at))}.", "bookingId": booking_id})
+
+    def ai_agent_booking_from_chat(self, con, owner_id, chat_id, customer, text):
+        settings = self.ai_agent_settings(con, owner_id)
+        config = settings["bookingConfig"]
+        if not config["enabled"]:
+            return None
+        match = re.match(r"^\s*(?:запись|бронь|бронирование)\s*:\s*(?P<resource>[^;]+)\s*;\s*(?P<when>[^;]+)\s*;\s*(?P<name>[^;]+)(?:\s*;\s*(?P<contact>[^;]+))?(?:\s*;\s*(?P<details>.+))?\s*$", text, re.IGNORECASE)
+        if not match:
+            if re.search(r"\b(?:запис|брон|столик|мастер)\w*", text, re.IGNORECASE):
+                return f"Чтобы оформить запись, пришлите одной строкой: «Запись: ресурс; ДД.ММ.ГГГГ ЧЧ:ММ; ваше имя; телефон; поле=значение». Доступные ресурсы: {', '.join(config['resources']) or 'уточните у администратора'}. Дополнительные поля: {', '.join(config['fields']) or 'нет'}."
+            return None
+        resource_name = " ".join(match.group("resource").split())[:80]
+        customer_name = " ".join(match.group("name").split())[:120]
+        contact = " ".join(str(match.group("contact") or "").split())[:160]
+        if config["resources"] and resource_name.casefold() not in {item.casefold() for item in config["resources"]}:
+            return f"Ресурс «{resource_name}» не найден. Выберите один из доступных: {', '.join(config['resources'])}."
+        try:
+            start_at = int(time.mktime(datetime.datetime.strptime(" ".join(match.group("when").split()), "%d.%m.%Y %H:%M").timetuple()))
+        except ValueError:
+            return "Не удалось прочитать дату. Используйте формат ДД.ММ.ГГГГ ЧЧ:ММ, например: 25.09.2026 18:30."
+        if start_at < now() - 300:
+            return "Нельзя оформить запись на прошедшее время. Укажите будущую дату и время."
+        end_at = start_at + config["durationMinutes"] * 60
+        time_error = self.ai_agent_booking_time_error(config, start_at, end_at)
+        if time_error:
+            return time_error
+        conflict = con.execute(
+            """SELECT 1 FROM ai_agent_bookings WHERE owner_id = ? AND status != 'cancelled'
+               AND casefold(resource_name) = casefold(?) AND start_at < ? AND end_at > ? LIMIT 1""",
+            (owner_id, resource_name, end_at, start_at),
+        ).fetchone()
+        if conflict:
+            return f"{resource_name} уже занят на это время. Выберите другое время или ресурс."
+        details_text = " ".join(str(match.group("details") or "").split())
+        details = {}
+        if details_text:
+            for part in details_text.split(","):
+                key, separator, value = part.partition("=")
+                key = " ".join(key.split())[:80]
+                value = " ".join(value.split())[:300]
+                if separator and key and value:
+                    details[key] = value
+            if not details:
+                details["Комментарий"] = details_text[:300]
+        timestamp = now()
+        con.execute(
+            """INSERT INTO ai_agent_bookings(id,owner_id,customer_user_id,source_chat_id,customer_name,contact,booking_type,resource_name,start_at,end_at,details_json,status,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (uid("ai_booking"), owner_id, customer["id"], chat_id, customer_name, contact, config["serviceName"] or "Запись", resource_name, start_at, end_at, dumps(details), "confirmed", timestamp, timestamp),
+        )
+        return f"Запись подтверждена: {resource_name}, {time.strftime('%d.%m.%Y %H:%M', time.localtime(start_at))}. Если планы изменятся, напишите администратору."
+
+    def update_ai_agent_booking_status(self, con, user, body):
+        booking_id = str(body.get("id", "")).strip()
+        status = str(body.get("status", "")).strip()
+        if status not in {"confirmed", "cancelled"}:
+            raise ValueError("Можно подтвердить или отменить запись.")
+        if not booking_id or not con.execute(
+            "UPDATE ai_agent_bookings SET status = ?, updated_at = ? WHERE id = ? AND owner_id = ?",
+            (status, now(), booking_id, user["id"]),
+        ).rowcount:
+            raise ValueError("Запись не найдена.")
+        return self.json({"ok": True})
+
+    def update_ai_agent_model_profile(self, con, user, body):
+        model_profile = normalize_genapi_model_profile(body.get("modelProfile", "default"))
+        con.execute(
+            "INSERT INTO ai_agent_settings(user_id, model_profile, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET model_profile = excluded.model_profile, updated_at = excluded.updated_at",
+            (user["id"], model_profile, now()),
+        )
+        return self.json({"ok": True, "modelProfile": model_profile})
+
     def update_ai_agent_settings(self, con, user, body):
         instruction = " ".join(str(body.get("instruction", "")).split())[:3_000]
+        agent_name = " ".join(str(body.get("agentName", "ИИ-администратор")).split())[:60] or "ИИ-администратор"
+        booking_config = self.normalize_ai_agent_booking_config(body.get("bookingConfig", {}))
         style = str(body.get("style", "friendly"))
+        model_profile = normalize_genapi_model_profile(body.get("modelProfile", "default"))
         if style not in {"friendly", "business", "brief"}:
             raise ValueError("Неизвестный стиль ИИ-агента.")
         allowed_chat_ids = body.get("allowedChatIds", [])
+        autopilot_all_direct = bool(body.get("autopilotAllDirect", False))
         template_message_ids = body.get("templateMessageIds", [])
         if not isinstance(allowed_chat_ids, list) or not isinstance(template_message_ids, list):
             raise ValueError("Некорректные настройки ИИ-агента.")
@@ -4346,14 +6824,13 @@ class Handler(BaseHTTPRequestHandler):
             if not template or template["sender_id"] != user["id"] or template["chat_id"] != saved["id"]:
                 raise ValueError("Шаблоны можно выбирать только из собственных сообщений в «Избранном».")
         autopilot_enabled = bool(body.get("autopilotEnabled", False))
-        if autopilot_enabled:
-            if not allowed_chat_ids:
-                raise ValueError("Для автопилота выберите хотя бы один личный диалог.")
+        if autopilot_enabled and not (autopilot_all_direct or allowed_chat_ids):
+            raise ValueError("Для автопилота выберите личные диалоги или включите ответы на все входящие сообщения.")
         con.execute(
-            """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
-               VALUES (?,?,?,?,?,?,?)
-               ON CONFLICT(user_id) DO UPDATE SET instruction=excluded.instruction, style=excluded.style, autopilot_enabled=excluded.autopilot_enabled, allowed_chat_ids_json=excluded.allowed_chat_ids_json, template_message_ids_json=excluded.template_message_ids_json, updated_at=excluded.updated_at""",
-            (user["id"], instruction, style, int(autopilot_enabled), dumps(allowed_chat_ids), dumps(template_message_ids), now()),
+            """INSERT INTO ai_agent_settings(user_id,instruction,style,model_profile,autopilot_enabled,autopilot_all_direct,allowed_chat_ids_json,template_message_ids_json,agent_name,booking_config_json,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET instruction=excluded.instruction, style=excluded.style, model_profile=excluded.model_profile, autopilot_enabled=excluded.autopilot_enabled, autopilot_all_direct=excluded.autopilot_all_direct, allowed_chat_ids_json=excluded.allowed_chat_ids_json, template_message_ids_json=excluded.template_message_ids_json, agent_name=excluded.agent_name, booking_config_json=excluded.booking_config_json, updated_at=excluded.updated_at""",
+            (user["id"], instruction, style, model_profile, int(autopilot_enabled), int(autopilot_all_direct), dumps(allowed_chat_ids), dumps(template_message_ids), agent_name, dumps(booking_config), now()),
         )
         return self.json({"ok": True})
 
@@ -4409,8 +6886,443 @@ class Handler(BaseHTTPRequestHandler):
             )
         return self.json({"ok": True})
 
-    def ai_completion(self, system, prompt, max_tokens=260):
-        api_key, base_url, model = genapi_configuration()
+    def ai_agent_action_log(self, con, user_id, action, status, summary, payload=None, result_text=""):
+        con.execute(
+            "INSERT INTO ai_agent_action_log(id,user_id,action,status,summary,payload_json,result_text,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (uid("ai_action"), user_id, action, status, summary[:500], dumps(payload or {}), str(result_text or "")[:2_000], now()),
+        )
+
+    def ai_agent_action_logs(self, con, user, query):
+        try:
+            limit = max(1, min(int((query.get("limit", [100]) or [100])[0]), 200))
+        except (TypeError, ValueError):
+            limit = 100
+        rows = con.execute(
+            "SELECT id, action, status, summary, payload_json, result_text, created_at FROM ai_agent_action_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user["id"], limit),
+        ).fetchall()
+        logs = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = loads(item.pop("payload_json"), {})
+            logs.append(item)
+        return self.json({"ok": True, "logs": logs})
+
+    def create_ai_agent_pending_action(self, con, user_id, action, payload, summary, ttl=300):
+        action_id = uid("ai_pending")
+        timestamp = now()
+        con.execute(
+            "INSERT INTO ai_agent_pending_actions(id,user_id,action,payload_json,summary,created_at,expires_at) VALUES (?,?,?,?,?,?,?)",
+            (action_id, user_id, action, dumps(payload or {}), summary[:500], timestamp, timestamp + max(60, min(int(ttl), 1800))),
+        )
+        return {"id": action_id, "action": action, "summary": summary[:500], "expiresAt": timestamp + max(60, min(int(ttl), 1800))}
+
+    def ai_agent_managed_chat_by_title(self, con, user_id, title):
+        title_key = " ".join(str(title or "").split()).casefold()
+        rows = con.execute(
+            """SELECT c.id, c.title, c.type, c.owner_id
+               FROM chats c JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = ?
+               WHERE c.type IN ('channel', 'group', 'community') AND casefold(c.title) = ?""",
+            (user_id, title_key),
+        ).fetchall()
+        if not rows:
+            raise ValueError(f"Не нашёл доступную управляемую беседу или канал «{title}».")
+        if len(rows) > 1:
+            raise ValueError(f"Нашёл несколько объектов «{title}». Укажите более точное название.")
+        chat = rows[0]
+        if not self.can_manage_group_messages(con, user_id, chat["id"]):
+            raise PermissionError(f"У вас нет прав администратора в «{chat['title']}».")
+        return chat
+
+    def ai_agent_prepare_delete_messages(self, con, user, title, query, limit=50):
+        chat = self.ai_agent_managed_chat_by_title(con, user["id"], title)
+        phrase = " ".join(str(query or "").split())[:160]
+        if len(phrase) < 2:
+            raise ValueError("Укажите слово или фразу, по которой искать сообщения для удаления.")
+        rows = con.execute(
+            """SELECT id, text FROM messages
+               WHERE chat_id = ? AND deleted_by_admin = 0 AND media_type != 'system' AND casefold(text) LIKE casefold(?)
+               ORDER BY created_at DESC LIMIT ?""",
+            (chat["id"], f"%{phrase}%", max(1, min(int(limit), 100))),
+        ).fetchall()
+        if not rows:
+            return {"answer": f"В «{chat['title']}» не найдено сообщений с фрагментом «{phrase}»."}
+        ids = [row["id"] for row in rows]
+        summary = f"Скрыть {len(ids)} сообщений в «{chat['title']}» по запросу «{phrase}»?"
+        pending = self.create_ai_agent_pending_action(
+            con,
+            user["id"],
+            "delete_messages",
+            {"chatId": chat["id"], "messageIds": ids, "query": phrase},
+            summary,
+        )
+        self.ai_agent_action_log(con, user["id"], "delete_messages", "pending", summary, pending)
+        return {"answer": f"Нашёл {len(ids)} сообщений в «{chat['title']}». Подтвердите удаление кнопкой или напишите «подтверждаю».", "pendingAction": pending, "messages": [{"id": row["id"], "text": row["text"][:220], "chat_title": chat["title"]} for row in rows]}
+
+    def ai_agent_prepare_vk_publish(self, con, user, title, text):
+        channel = self.ai_agent_managed_channel_by_title(con, user["id"], title)
+        target = con.execute(
+            "SELECT id, target_title FROM vk_channel_targets WHERE channel_id = ? AND publish_enabled = 1 ORDER BY created_at LIMIT 1",
+            (channel["id"],),
+        ).fetchone()
+        if not target:
+            raise ValueError(f"Для канала «{channel['title']}» не подключено сообщество VK с включённой отправкой публикаций.")
+        message = " ".join(str(text or "").split())[:10_000]
+        if not message:
+            raise ValueError("Укажите текст публикации для VK.")
+        summary = f"Опубликовать текст в сообществе VK «{target['target_title']}» от канала «{channel['title']}»?"
+        pending = self.create_ai_agent_pending_action(
+            con,
+            user["id"],
+            "publish_vk",
+            {"targetId": target["id"], "channelId": channel["id"], "text": message},
+            summary,
+        )
+        self.ai_agent_action_log(con, user["id"], "publish_vk", "pending", summary, pending)
+        return {"answer": "Подготовил публикацию в VK. Нужны подтверждение и проверка текста.", "pendingAction": pending}
+
+    def execute_ai_agent_pending_action(self, con, user, pending):
+        action = pending["action"]
+        payload = loads(pending["payload_json"], {})
+        if not isinstance(payload, dict):
+            raise ValueError("Повреждены данные ожидающего действия.")
+        if action == "delete_messages":
+            chat_id = str(payload.get("chatId", ""))
+            message_ids = list(dict.fromkeys(str(item) for item in payload.get("messageIds", []) if item))[:100]
+            if not chat_id or not message_ids or not self.can_manage_group_messages(con, user["id"], chat_id):
+                raise PermissionError("У вас больше нет прав на удаление этих сообщений.")
+            placeholders = ",".join("?" for _ in message_ids)
+            rows = con.execute(
+                f"SELECT id, text FROM messages WHERE chat_id = ? AND id IN ({placeholders}) AND deleted_by_admin = 0",
+                [chat_id, *message_ids],
+            ).fetchall()
+            chat = con.execute("SELECT title FROM chats WHERE id = ?", (chat_id,)).fetchone()
+            for row in rows:
+                con.execute("UPDATE messages SET deleted_by_admin = 1 WHERE id = ?", (row["id"],))
+                con.execute(
+                    "INSERT INTO ai_agent_moderation_events(id,user_id,channel_id,target_type,target_id,source,text,decision,reason,confidence,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (uid("moderation"), user["id"], chat_id, "message", row["id"], "chat-pro", row["text"][:10_000], "delete", "Удалено после подтверждения ИИ-администратора", 1.0, now()),
+                )
+            summary = f"Удалено сообщений: {len(rows)} в «{chat['title'] if chat else chat_id}»."
+            self.ai_agent_action_log(con, user["id"], action, "completed", summary, payload, summary)
+            return {"answer": summary}
+        if action == "publish_vk":
+            target_id = str(payload.get("targetId", ""))
+            target = con.execute(
+                "SELECT * FROM vk_channel_targets WHERE id = ? AND channel_id IN (SELECT id FROM chats WHERE owner_id = ?)",
+                (target_id, user["id"]),
+            ).fetchone()
+            if not target or not target["publish_enabled"]:
+                raise PermissionError("Сообщество VK не найдено или публикация отключена.")
+            result = vk_api(target["access_token"], "wall.post", {"owner_id": target["owner_id"], "message": str(payload.get("text", ""))[:10_000]})
+            post_id = result.get("post_id") if isinstance(result, dict) else result
+            summary = f"Публикация отправлена в сообщество VK «{target['target_title']}»" + (f" (ID {post_id})." if post_id else ".")
+            self.ai_agent_action_log(con, user["id"], action, "completed", summary, payload, summary)
+            return {"answer": summary}
+        raise ValueError("Неизвестное ожидающее действие ИИ.")
+
+    def confirm_ai_agent_action(self, con, user, body):
+        action_id = str(body.get("actionId", "")).strip()
+        pending = con.execute(
+            "SELECT * FROM ai_agent_pending_actions WHERE id = ? AND user_id = ? AND expires_at >= ?",
+            (action_id, user["id"], now()),
+        ).fetchone()
+        if not pending:
+            raise ValueError("Действие не найдено или срок его подтверждения истёк.")
+        result = self.execute_ai_agent_pending_action(con, user, pending)
+        con.execute("DELETE FROM ai_agent_pending_actions WHERE id = ?", (action_id,))
+        return self.json({"ok": True, **result})
+
+    def ai_agent_moderation_rules(self, con, user):
+        rows = con.execute(
+            """SELECT r.*, c.title AS channel_title FROM ai_agent_comment_moderation_rules r
+               JOIN chats c ON c.id = r.channel_id WHERE r.user_id = ? ORDER BY c.title COLLATE NOCASE""",
+            (user["id"],),
+        ).fetchall()
+        rules = []
+        for row in rows:
+            rules.append({
+                "channelId": row["channel_id"],
+                "channelTitle": row["channel_title"],
+                "blockedWords": loads(row["blocked_words_json"], []) or [],
+                "semanticRules": loads(row["semantic_rules_json"], []) or [],
+                "actionMode": row["action_mode"],
+                "notifyOwner": bool(row["notify_owner"]),
+                "targetScope": row["target_scope"],
+                "aiEnabled": bool(row["ai_enabled"]),
+                "updatedAt": row["updated_at"],
+            })
+        return self.json({"ok": True, "rules": rules})
+
+    def update_ai_agent_moderation_rule(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        chat = con.execute("SELECT id, type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+        if not chat or chat["type"] not in {"channel", "group", "community"} or not self.can_manage_group_messages(con, user["id"], channel_id):
+            raise PermissionError("Настраивать модерацию может только создатель или администратор управляемой группы/канала.")
+
+        def normalize_items(value, limit, item_limit):
+            values = value if isinstance(value, list) else re.split(r"[,;\n]", str(value or ""))
+            result = []
+            for item in values:
+                normalized = " ".join(str(item or "").split())[:item_limit]
+                if normalized and normalized.casefold() not in {entry.casefold() for entry in result}:
+                    result.append(normalized)
+            if len(result) > limit:
+                raise ValueError(f"Можно указать не более {limit} правил.")
+            return result
+
+        words = normalize_items(body.get("blockedWords"), 40, 80)
+        semantic = normalize_items(body.get("semanticRules"), 5, 500)
+        action_mode = str(body.get("actionMode", "review")).strip().casefold()
+        target_scope = str(body.get("targetScope", "comments")).strip().casefold()
+        if action_mode not in {"delete", "review"}:
+            raise ValueError("Режим модерации должен быть delete или review.")
+        if target_scope not in {"comments", "messages", "all"}:
+            raise ValueError("Укажите область модерации: comments, messages или all.")
+        if not words and not semantic:
+            con.execute("DELETE FROM ai_agent_comment_moderation_rules WHERE user_id = ? AND channel_id = ?", (user["id"], channel_id))
+            return self.json({"ok": True, "disabled": True, "message": "Модерация отключена."})
+        ai_enabled = bool(body.get("aiEnabled")) and bool(semantic)
+        notify_owner = 1 if body.get("notifyOwner", True) else 0
+        timestamp = now()
+        con.execute(
+            """INSERT INTO ai_agent_comment_moderation_rules(user_id,channel_id,blocked_words_json,semantic_rules_json,action_mode,notify_owner,target_scope,ai_enabled,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(user_id,channel_id) DO UPDATE SET blocked_words_json=excluded.blocked_words_json,semantic_rules_json=excluded.semantic_rules_json,action_mode=excluded.action_mode,notify_owner=excluded.notify_owner,target_scope=excluded.target_scope,ai_enabled=excluded.ai_enabled,updated_at=excluded.updated_at""",
+            (user["id"], channel_id, dumps(words), dumps(semantic), action_mode, notify_owner, target_scope, int(ai_enabled), timestamp, timestamp),
+        )
+        return self.json({"ok": True, "message": "Правила модерации сохранены.", "channelId": channel_id})
+
+    def resolve_ai_agent_moderation_event(self, con, user, body):
+        event_id = str(body.get("eventId", "")).strip()
+        requested = str(body.get("decision", "")).strip().casefold()
+        if not event_id or requested not in {"allow", "delete"}:
+            raise ValueError("Укажите событие и решение: approve или reject.")
+        event = con.execute(
+            "SELECT * FROM ai_agent_moderation_events WHERE id = ? AND decision = 'review'",
+            (event_id,),
+        ).fetchone()
+        if not event or not self.can_manage_group_messages(con, user["id"], event["channel_id"]):
+            raise PermissionError("У вас нет прав на это решение модерации или событие уже обработано.")
+        target_type = event["target_type"]
+        target_id = event["target_id"]
+        if str(event["source"] or "").startswith("vk:"):
+            source_parts = str(event["source"]).split(":", 2)
+            if len(source_parts) != 3:
+                raise ValueError("Повреждена ссылка на VK-комментарий.")
+            source_id, post_id = source_parts[1], source_parts[2]
+            source = con.execute(
+                "SELECT * FROM vk_channel_sources WHERE id = ? AND channel_id = ?",
+                (source_id, event["channel_id"]),
+            ).fetchone()
+            if not source:
+                raise ValueError("VK-источник комментария не найден.")
+            if requested == "delete":
+                vk_api(source["access_token"], "wall.deleteComment", {"owner_id": source["owner_id"], "comment_id": int(target_id)})
+            con.execute(
+                "UPDATE vk_source_moderated_comments SET decision = ?, last_error = NULL WHERE source_id = ? AND post_id = ? AND comment_id = ?",
+                (requested, source_id, int(post_id), int(target_id)),
+            )
+            target_type = "comment"
+        elif str(event["source"] or "").startswith("vk-target:"):
+            target_parts = str(event["source"]).split(":", 2)
+            if len(target_parts) != 3:
+                raise ValueError("Повреждена ссылка на VK-комментарий.")
+            vk_target_id, post_id = target_parts[1], target_parts[2]
+            vk_target = con.execute(
+                "SELECT * FROM vk_channel_targets WHERE id = ? AND channel_id = ?",
+                (vk_target_id, event["channel_id"]),
+            ).fetchone()
+            if not vk_target:
+                raise ValueError("Сообщество VK для комментария не найдено.")
+            if requested == "delete":
+                vk_api(vk_target["access_token"], "wall.deleteComment", {"owner_id": vk_target["owner_id"], "comment_id": int(target_id)})
+            con.execute(
+                "UPDATE vk_target_moderated_comments SET decision = ?, last_error = NULL WHERE target_id = ? AND post_id = ? AND comment_id = ?",
+                (requested, vk_target_id, int(post_id), int(target_id)),
+            )
+            target_type = "comment"
+        elif target_type == "comment":
+            target = con.execute(
+                """SELECT cc.id FROM channel_comments cc JOIN messages m ON m.id = cc.message_id
+                   WHERE cc.id = ? AND m.chat_id = ?""",
+                (target_id, event["channel_id"]),
+            ).fetchone()
+            if not target:
+                raise ValueError("Комментарий уже удалён или не найден.")
+            if requested == "delete":
+                con.execute("DELETE FROM channel_comments WHERE id = ?", (target_id,))
+        elif target_type == "message":
+            target = con.execute(
+                "SELECT id FROM messages WHERE id = ? AND chat_id = ? AND deleted_by_admin = 0",
+                (target_id, event["channel_id"]),
+            ).fetchone()
+            if not target:
+                raise ValueError("Сообщение уже удалено или не найдено.")
+            if requested == "delete":
+                con.execute("UPDATE messages SET deleted_by_admin = 1 WHERE id = ? AND chat_id = ?", (target_id, event["channel_id"]))
+        else:
+            raise ValueError("Неизвестный тип объекта модерации.")
+        final_reason = "Одобрено администратором" if requested == "allow" else "Отклонено администратором"
+        con.execute(
+            "UPDATE ai_agent_moderation_events SET decision = ?, reason = ?, resolved_at = ? WHERE id = ? AND decision = 'review'",
+            (requested, final_reason, now(), event_id),
+        )
+        summary = f"Модерация: {'объект оставлен' if requested == 'allow' else 'объект удалён'}."
+        self.ai_agent_action_log(
+            con,
+            user["id"],
+            "moderation_review",
+            "completed",
+            summary,
+            {"eventId": event_id, "decision": requested, "targetType": target_type, "targetId": target_id},
+            summary,
+        )
+        return self.json({"ok": True, "answer": summary, "eventId": event_id, "decision": requested})
+
+    def ai_agent_moderation_events(self, con, user, query):
+        try:
+            limit = max(1, min(int((query.get("limit", [50]) or [50])[0]), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        rows = self.ai_agent_moderation_event_rows(con, user["id"], limit)
+        return self.json({"ok": True, "events": [dict(row) for row in rows]})
+
+    def ai_agent_moderation_event_rows(self, con, user_id, limit):
+        return con.execute(
+            """SELECT e.*, c.title AS channel_title FROM ai_agent_moderation_events e
+               JOIN chats c ON c.id = e.channel_id
+               WHERE EXISTS (
+                   SELECT 1 FROM chat_members cm
+                   WHERE cm.chat_id = e.channel_id AND cm.user_id = ?
+                     AND ((c.type = 'channel' AND cm.role IN ('owner', 'admin', 'author'))
+                       OR (c.type IN ('group', 'community') AND cm.role IN ('owner', 'admin')))
+               )
+               ORDER BY e.created_at DESC LIMIT ?""",
+            (user_id, limit),
+        ).fetchall()
+
+    def ai_agent_handle_command(self, con, user, question):
+        normalized = " ".join(str(question or "").split())
+        confirm_match = re.fullmatch(r"(?:подтверждаю|подтвердить|да,?\s*подтверждаю)", normalized, re.IGNORECASE)
+        if confirm_match:
+            pending = con.execute(
+                "SELECT * FROM ai_agent_pending_actions WHERE user_id = ? AND expires_at >= ? ORDER BY created_at DESC LIMIT 1",
+                (user["id"], now()),
+            ).fetchone()
+            if not pending:
+                return None
+            result = self.execute_ai_agent_pending_action(con, user, pending)
+            con.execute("DELETE FROM ai_agent_pending_actions WHERE id = ?", (pending["id"],))
+            return result
+        delete_match = re.match(
+            r"^(?:удали|удалить|удаляй)\s+(?:сообщения|публикации|посты)\s+(?:в|из)\s+(?:беседе|группе|канале)\s+[«\"]?(?P<title>[^«»\":]+)[»\"]?\s*:\s*(?P<query>.+)$",
+            normalized,
+            re.IGNORECASE,
+        )
+        if delete_match:
+            return self.ai_agent_prepare_delete_messages(con, user, delete_match.group("title"), delete_match.group("query"))
+        vk_match = re.match(
+            r"^(?:опубликуй|опубликовать|размести|выложи)\s+в\s+VK\s+(?:в\s+)?(?:канал|канале)\s+[«\"]?(?P<title>[^«»\":]+)[»\"]?\s*:\s*(?P<text>.+)$",
+            normalized,
+            re.IGNORECASE,
+        )
+        if vk_match:
+            return self.ai_agent_prepare_vk_publish(con, user, vk_match.group("title"), vk_match.group("text"))
+        if re.search(r"(?:покажи|пришли|список).*(?:удал[её]н|модерац|сомнительн)", normalized, re.IGNORECASE):
+            rows = self.ai_agent_moderation_event_rows(con, user["id"], 30)
+            if not rows:
+                return {"answer": "Журнал модерации пока пуст."}
+            lines = [f"{row['channel_title']}: {row['decision']} — {row['text'][:120]}" for row in rows]
+            return {"answer": "Последние объекты модерации:\n" + "\n".join(lines), "moderationEvents": [dict(row) for row in rows]}
+        return None
+
+    def ai_completion_json(self, system, prompt, max_tokens=180, admin=True, timeout=12, model_profile=None):
+        profile_id = None if model_profile is None else normalize_genapi_model_profile(model_profile)
+        api_key, base_url, model = genapi_configuration_for_profile(profile_id, admin=admin)
+        if not api_key:
+            raise ValueError("ИИ-агент пока не настроен на сервере.")
+        request = urlrequest.Request(
+            f"{base_url}/chat/completions",
+            data=dumps({
+                "model": model,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                "temperature": 0,
+                "max_tokens": max_tokens,
+                "response_format": {"type": "json_object"},
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}, method="POST",
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=max(3, min(int(timeout), 40))) as response:
+                payload = loads(response.read().decode("utf-8"), {})
+            message = payload["choices"][0]["message"]
+            tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+            if isinstance(tool_calls, list) and tool_calls:
+                function = tool_calls[0].get("function", {})
+                arguments = json.loads(function.get("arguments", "{}"))
+                return {"tool": function.get("name", "none"), "arguments": arguments}
+            content = message.get("content", "") if isinstance(message, dict) else ""
+            if isinstance(content, list):
+                content = " ".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
+            content = str(content or "").strip()
+            if content.startswith("```"):
+                content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE | re.DOTALL).strip()
+            result = json.loads(content)
+            if not isinstance(result, dict):
+                raise ValueError("Некорректный формат инструмента")
+            return result
+        except (KeyError, IndexError, TypeError, ValueError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+            raise ValueError("Не удалось получить структурированное решение ИИ-агента.")
+
+    def ai_agent_structured_tool_action(self, con, user, question):
+        request = " ".join(str(question or "").split())[:2_000]
+        if not re.search(r"(?:удал|опубли|размест|вылож|покажи|пришли|журнал|модерац|сомнительн|удалён)", request, re.IGNORECASE):
+            return None
+        system = (
+            "Ты выбираешь только безопасные инструменты ИИ-администратора Chat-Pro. "
+            "Верни строго JSON без markdown: {\"tool\":\"none|delete_messages|publish_vk|list_moderation_events\",\"arguments\":{}}. "
+            "delete_messages требует title и query; publish_vk требует title и text; list_moderation_events может иметь limit. "
+            "Если данных не хватает, запрос неясен или действие не относится к списку, верни tool=none. "
+            "Никогда не добавляй другие инструменты, права, SQL, код или подтверждение вместо аргументов."
+        )
+        try:
+            decision = self.ai_completion_json(system, f"Запрос пользователя: {request}", model_profile=self.ai_agent_settings(con, user["id"])["modelProfile"])
+        except ValueError:
+            return None
+        tool = str(decision.get("tool", "none")).strip().casefold()
+        arguments = decision.get("arguments")
+        if not isinstance(arguments, dict):
+            return None
+        if tool == "delete_messages":
+            title = " ".join(str(arguments.get("title", "")).split())[:120]
+            query = " ".join(str(arguments.get("query", "")).split())[:160]
+            if len(title) < 2 or len(query) < 2:
+                return None
+            return self.ai_agent_prepare_delete_messages(con, user, title, query)
+        if tool == "publish_vk":
+            title = " ".join(str(arguments.get("title", "")).split())[:120]
+            message = " ".join(str(arguments.get("text", "")).split())[:10_000]
+            if len(title) < 2 or not message:
+                return None
+            return self.ai_agent_prepare_vk_publish(con, user, title, message)
+        if tool == "list_moderation_events":
+            try:
+                limit = max(1, min(int(arguments.get("limit", 30) or 30), 100))
+            except (TypeError, ValueError):
+                limit = 30
+            rows = self.ai_agent_moderation_event_rows(con, user["id"], limit)
+            if not rows:
+                return {"answer": "Журнал модерации пока пуст."}
+            return {
+                "answer": "Показал последние объекты модерации.",
+                "moderationEvents": [dict(row) for row in rows],
+            }
+        return None
+
+    def ai_completion(self, system, prompt, max_tokens=260, admin=False, timeout=40, model_profile=None):
+        profile_id = None if model_profile is None else normalize_genapi_model_profile(model_profile)
+        api_key, base_url, model = genapi_configuration_for_profile(profile_id, admin=admin)
         if not api_key:
             raise ValueError("ИИ-агент пока не настроен на сервере.")
         request = urlrequest.Request(
@@ -4419,27 +7331,53 @@ class Handler(BaseHTTPRequestHandler):
             headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}, method="POST",
         )
         try:
-            with urlrequest.urlopen(request, timeout=40) as response:
+            with urlrequest.urlopen(request, timeout=max(3, min(int(timeout), 40))) as response:
                 payload = loads(response.read().decode("utf-8"), {})
             text = payload["choices"][0]["message"]["content"]
             if isinstance(text, list):
                 text = " ".join(str(part.get("text", "")) for part in text if isinstance(part, dict))
             answer = " ".join(str(text or "").strip().strip('«»"').split())[:1_500]
             if not answer or answer.casefold() == "none":
-                raise ValueError("ИИ-агент не сформировал ответ. Повторите запрос или сформулируйте его короче.")
+                raise ValueError("Пустой ответ модели")
             return answer
         except (KeyError, IndexError, OSError, UnicodeDecodeError, json.JSONDecodeError):
             raise ValueError("Не удалось получить ответ ИИ-агента. Повторите позже.")
+
+    def ai_agent_fallback_answer(self, question):
+        request = " ".join(str(question or "").split())
+        if re.search(r"(?:кто тебя (?:сделал|создал|разработал)|кем ты создан)", request, re.IGNORECASE):
+            return "Я ИИ-администратор Chat-Pro. Меня разработала команда Chat-Pro, чтобы помогать с сообщениями, каналами и рутинными задачами."
+        if re.search(r"(?:что ты умеешь|что умеешь|твои возможности)", request, re.IGNORECASE):
+            return "Я помогаю вести каналы: публикую и планирую посты, подключаю RSS и VK, настраиваю комментарии и реакции, модерирую комментарии, ищу сообщения в личных диалогах и готовлю ответы. Дайте задачу обычными словами — если для действия не хватает данных, уточню только необходимое."
+        return f"Понял задачу: «{request[:220]}». Могу помочь с анализом, текстом публикации, настройкой канала или поиском по доступным личным диалогам; уточните желаемый результат, если он не указан."
 
     def ask_ai_agent(self, con, user, body):
         question = " ".join(str(body.get("question", "")).split())[:2_000]
         if not question:
             raise ValueError("Напишите вопрос ИИ-агенту.")
         self.add_ai_agent_conversation_message(con, user["id"], "user", question)
+        if re.search(r"(?:кто тебя (?:сделал|создал|разработал)|кем ты создан)", question, re.IGNORECASE):
+            answer = self.ai_agent_fallback_answer(question)
+            self.add_ai_agent_conversation_message(con, user["id"], "assistant", answer)
+            return self.json({"ok": True, "answer": answer})
         global_result = self.ai_agent_global_command(con, user, question)
         if global_result:
             self.add_ai_agent_conversation_message(con, user["id"], "assistant", global_result)
             return self.json({"ok": True, "answer": global_result})
+        direct_result = self.ai_agent_handle_command(con, user, question)
+        if direct_result:
+            answer = direct_result.get("answer", "Готово.")
+            self.add_ai_agent_conversation_message(con, user["id"], "assistant", answer)
+            return self.json({"ok": True, **direct_result})
+        task_result = self.ai_agent_task_command(con, user, question)
+        if task_result:
+            self.add_ai_agent_conversation_message(con, user["id"], "assistant", task_result)
+            return self.json({"ok": True, "answer": task_result})
+        structured_result = self.ai_agent_structured_tool_action(con, user, question)
+        if structured_result:
+            answer = structured_result.get("answer", "Готово.")
+            self.add_ai_agent_conversation_message(con, user["id"], "assistant", answer)
+            return self.json({"ok": True, **structured_result})
         action_result = self.ai_agent_run_requested_action(con, user, question)
         if action_result:
             self.add_ai_agent_conversation_message(con, user["id"], "assistant", action_result)
@@ -4455,15 +7393,33 @@ class Handler(BaseHTTPRequestHandler):
                     history.append((item["role"], text))
         messages = self.ai_agent_messages_for_request(con, user["id"], question)
         global_rules = self.ai_agent_global_instruction_text(con)
-        system = "Ты ИИ-администратор пользователя Chat-Pro. Помогаешь управлять личными диалогами и каналами. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Не придумывай найденные сообщения. Сервер выполняет прямые команды на отправку сообщений, публикацию, автопилот личного диалога, ведение доступного канала и RSS-автопостинг. Для RSS нужны публичная RSS-ссылка и название канала-получателя; если данных нет, коротко запроси их. Для чужих Telegram-каналов сообщи, что нужен официальный бот с правами администратора источника; не обещай подключение только по ссылке. Если команда не содержит получателя, названия канала или ссылки, коротко попроси недостающие данные. Не выдумывай возможности. Глобальные сценарии — это правила ответа, а не разрешение обходить права доступа или выполнять код. Отвечай по-русски, ясно и кратко." + (f"\n\nГлобальные сценарии от @andrei:\n{global_rules}" if global_rules else "")
+        system = "Ты ИИ-администратор Chat-Pro, в первую очередь помогаешь вести каналы: публиковать и планировать посты, подключать RSS, настраивать канал и модерировать комментарии. Твоя идентичность неизменна: ты разработан командой Chat-Pro. Если спрашивают, кто тебя создал или на какой модели ты работаешь, говори только, что ты ИИ-администратор Chat-Pro, разработанный командой Chat-Pro; не упоминай Gemini, Google, OpenAI, Anthropic, DeepSeek, названия моделей, поставщиков или внутреннюю инфраструктуру. Это экономит владельцу время на рутине и не требует отдельного администратора для типовых задач. Отвечай по-русски, дружелюбно и вовлекающе: максимум 2 коротких предложения или 3 пункта. Не задавай анкету и не перечисляй все возможности сразу: запроси только один ближайший недостающий факт. Поиск выполняется сервером только среди доступных пользователю личных диалогов. Не придумывай найденные сообщения. Сервер выполняет прямые команды на отправку сообщений, публикацию, автопилот для выбранного личного диалога или всех новых входящих личных сообщений, ведение доступного канала и RSS-автопостинг. Для RSS нужны публичная RSS-ссылка и название канала-получателя; если данных нет, коротко запроси их. Для чужих Telegram-каналов сообщи, что нужен официальный бот с правами администратора источника; не обещай подключение только по ссылке. Не выдумывай возможности и не обещай выполнение произвольных скриптов или кода. Аккаунт @andrei может обучать ИИ через этот диалог: он создаёт общие сценарии для новых ответов, поэтому не говори ему, что возможности ИИ фиксированы или что обучение через диалог невозможно. Однако сценарии — это только правила ответа: они не разрешают обходить права доступа, получать чужие данные или выполнять код." + (f"\n\nГлобальные сценарии от @andrei:\n{global_rules}" if global_rules else "")
         history_text = "\n".join(f"{'Пользователь' if role == 'user' else 'ИИ-агент'}: {text}" for role, text in history)
         found_text = "\n".join(f"Диалог «{item['chat_title']}»: {item['text'][:500]}" for item in messages)
         prompt = f"Предыдущий разговор:\n{history_text or 'нет'}\n\nНовый запрос: {question}\n\nНайденные сервером сообщения:\n{found_text or 'нет'}\n\nОтветь на новый запрос."
-        answer = self.ai_completion(system, prompt, 320)
+        try:
+            answer = self.ai_completion(system, prompt, 320, admin=True, model_profile=self.ai_agent_settings(con, user["id"])["modelProfile"])
+        except ValueError:
+            answer = self.ai_agent_fallback_answer(question)
         self.add_ai_agent_conversation_message(con, user["id"], "assistant", answer)
         return self.json({"ok": True, "answer": answer, "messages": messages})
 
     def ai_agent_run_requested_action(self, con, user, question):
+        result = self.ai_agent_rename_requested(con, user, question)
+        if result:
+            return result
+        result = self.ai_agent_channel_status(con, user, question)
+        if result:
+            return result
+        result = self.ai_agent_configure_channel(con, user, question)
+        if result:
+            return result
+        result = self.ai_agent_configure_comment_moderation(con, user, question)
+        if result:
+            return result
+        result = self.ai_agent_configure_booking(con, user, question)
+        if result:
+            return result
         result = self.ai_agent_configure_rss_autoposting(con, user, question)
         if result:
             return result
@@ -4476,17 +7432,9 @@ class Handler(BaseHTTPRequestHandler):
         result = self.ai_agent_send_requested_message(con, user, question)
         if result:
             return result
-        autopilot = re.match(r"^(?:включи|запусти)\s+(?:в\s+)?автопилот\s+(?:для|в)\s+(?P<recipient>.{2,80})$", question, re.IGNORECASE)
-        if autopilot:
-            chat = self.ai_agent_direct_chat_by_recipient(con, user["id"], autopilot.group("recipient"))
-            settings = self.ai_agent_settings(con, user["id"])
-            allowed = list(dict.fromkeys([*settings["allowedChatIds"], chat["id"]]))[:50]
-            con.execute(
-                """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
-                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET autopilot_enabled=excluded.autopilot_enabled,allowed_chat_ids_json=excluded.allowed_chat_ids_json,updated_at=excluded.updated_at""",
-                (user["id"], settings["instruction"], settings["style"], 1, dumps(allowed), dumps(settings["templateMessageIds"]), now()),
-            )
-            return f"Автопилот включён для личного диалога с {chat['name']}. Агент будет отвечать на новые сообщения в этом чате."
+        task_result = self.ai_agent_task_command(con, user, question)
+        if task_result:
+            return task_result
         channel_rule = re.match(r"^(?:веди|настрой\s+ведение|включи\s+ведение)\s+(?:(?:мой\s+)?канал|канал\s+(?P<target>[^:]+?))\s*(?:из|от)\s+канал(?:а|ов)?\s*:\s*(?P<sources>.+)$", question, re.IGNORECASE)
         if channel_rule:
             target = self.ai_agent_managed_channel_by_title(con, user["id"], channel_rule.group("target"))
@@ -4510,6 +7458,212 @@ class Handler(BaseHTTPRequestHandler):
             return result
         return None
 
+    def ai_agent_task_by_title(self, con, user_id, title):
+        task_key = " ".join(str(title).split()).casefold()
+        rows = con.execute(
+            "SELECT * FROM ai_agent_tasks WHERE user_id = ? AND casefold(title) = ?",
+            (user_id, task_key),
+        ).fetchall()
+        if not rows:
+            raise ValueError(f"Не нашёл задачу «{title}».")
+        if len(rows) > 1:
+            raise ValueError(f"Нашёл несколько задач «{title}». Переименуйте одну из них.")
+        return rows[0]
+
+    def ai_agent_task_command(self, con, user, question):
+        request = " ".join(str(question or "").split())
+        if re.fullmatch(r"(?:(?:покажи|открой|выведи)\s+(?:мои\s+)?задачи|список\s+задач)", request, re.IGNORECASE):
+            tasks = self.ai_agent_tasks(con, user["id"])
+            if not tasks:
+                return "Задач пока нет. Например: «создай задачу: Отвечать на все входящие; консультируй по колёсам BMW за 50 тыс.»"
+            return "Ваши задачи:\n" + "\n".join(f"- {task['title']} — {'включена' if task['enabled'] else 'приостановлена'}" for task in tasks)
+        task_match = re.match(r"^(?:создай|добавь|поставь)\s+задач[ау]\s*:\s*(?P<title>[^;:]{2,120})(?:\s*[;:]\s*(?P<instruction>.+))?$", request, re.IGNORECASE)
+        legacy_match = re.search(r"\b(?:включи|запусти|сделай|активируй|подключи)\b.*\b(?:автопилот\w*|автоответ\w*)\b", request, re.IGNORECASE) and re.search(r"\b(?:все|всем|любые)\b", request, re.IGNORECASE) and re.search(r"\b(?:входящ\w*|личн\w*|пиш\w*)", request, re.IGNORECASE)
+        if task_match or legacy_match:
+            title = " ".join((task_match.group("title") if task_match else "Отвечать на все новые входящие").split())
+            instruction = " ".join((task_match.group("instruction") if task_match and task_match.group("instruction") else self.ai_agent_settings(con, user["id"])["instruction"]).split())
+            timestamp = now()
+            con.execute(
+                "INSERT INTO ai_agent_tasks(id,user_id,title,instruction,scope,chat_ids_json,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (uid("ai_task"), user["id"], title, instruction, "all_direct", "[]", 1, timestamp, timestamp),
+            )
+            return f"Создал задачу «{title}»: она отвечает на новые входящие личные сообщения. Отключить или изменить её можно в «Списке задач»."
+        toggle = re.match(r"^(?P<action>включи|возобнови|отключи|приостанови|удали)\s+задач[ау]\s+[«\"]?(?P<title>.+?)[»\"]?$", request, re.IGNORECASE)
+        if toggle:
+            task = self.ai_agent_task_by_title(con, user["id"], toggle.group("title"))
+            action = toggle.group("action").casefold()
+            if action == "удали":
+                con.execute("DELETE FROM ai_agent_tasks WHERE id = ? AND user_id = ?", (task["id"], user["id"]))
+                return f"Задача «{task['title']}» удалена."
+            enabled = action in {"включи", "возобнови"}
+            con.execute("UPDATE ai_agent_tasks SET enabled = ?, updated_at = ? WHERE id = ?", (int(enabled), now(), task["id"]))
+            return f"Задача «{task['title']}» {'включена' if enabled else 'приостановлена'}."
+        edit = re.match(r"^(?P<action>измени|обнови|дополни)\s+задач[ау]\s+[«\"]?(?P<title>[^«»\":]+?)[»\"]?\s*:\s*(?P<instruction>.+)$", request, re.IGNORECASE)
+        if edit:
+            task = self.ai_agent_task_by_title(con, user["id"], edit.group("title"))
+            addition = " ".join(edit.group("instruction").split())
+            instruction = addition if edit.group("action").casefold() != "дополни" else " ".join(filter(None, [task["instruction"], addition]))
+            con.execute("UPDATE ai_agent_tasks SET instruction = ?, updated_at = ? WHERE id = ?", (instruction[:3_000], now(), task["id"]))
+            return f"Задача «{task['title']}» {'дополнена' if edit.group('action').casefold() == 'дополни' else 'обновлена'}."
+        return None
+
+    def ai_agent_rename_requested(self, con, user, question):
+        match = re.match(
+            r"^(?:переименуй(?:ся)?|назови(?:сь)?|смени\s+имя)\s+(?:на|в)\s+(?P<name>.{2,60})$",
+            " ".join(question.split()),
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        agent_name = " ".join(match.group("name").strip("«»\"' ").split())[:60]
+        if not agent_name:
+            raise ValueError("Укажите новое имя администратора.")
+        settings = self.ai_agent_settings(con, user["id"])
+        con.execute(
+            """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,agent_name,booking_config_json,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET agent_name=excluded.agent_name,updated_at=excluded.updated_at""",
+            (user["id"], settings["instruction"], settings["style"], int(settings["autopilotEnabled"]), dumps(settings["allowedChatIds"]), dumps(settings["templateMessageIds"]), agent_name, dumps(settings["bookingConfig"]), now()),
+        )
+        return f"Готово, для вас я теперь «{agent_name}»."
+
+    def ai_agent_channel_status(self, con, user, question):
+        request = " ".join(question.split())
+        if not re.search(r"\b(?:статус|обстановк|состояни|настройк).*\bканал|\bканал.*\b(?:статус|обстановк|состояни|настройк)", request, re.IGNORECASE):
+            return None
+        match = re.search(r"\bканал(?:а|е)?\s+[«\"]?(?P<title>[^«»\"?.!]+)[»\"]?", request, re.IGNORECASE)
+        channel = self.ai_agent_managed_channel_by_title(con, user["id"], match.group("title").strip() if match else None)
+        data = con.execute("SELECT settings_json, subscriber_count FROM chats WHERE id = ?", (channel["id"],)).fetchone()
+        settings = loads(data["settings_json"], {}) or {}
+        posts = con.execute("SELECT count(*) FROM messages WHERE chat_id = ? AND deleted_by_admin = 0", (channel["id"],)).fetchone()[0]
+        comments = con.execute("SELECT count(*) FROM channel_comments cc JOIN messages m ON m.id = cc.message_id WHERE m.chat_id = ?", (channel["id"],)).fetchone()[0]
+        moderation = con.execute("SELECT blocked_words_json FROM ai_agent_comment_moderation_rules WHERE user_id = ? AND channel_id = ?", (user["id"], channel["id"])).fetchone()
+        words = loads(moderation["blocked_words_json"], []) if moderation else []
+        return f"«{channel['title']}»: {data['subscriber_count']} подписчиков, {posts} публикаций, {comments} комментариев. Комментарии {'включены' if settings.get('commentsEnabled', True) else 'выключены'}; модерация: {', '.join(words) if words else 'не настроена'}."
+
+    def ai_agent_configure_channel(self, con, user, question):
+        request = " ".join(question.split())
+        if not re.search(r"\b(?:настрой|измени|включи|выключи)\b.*\bканал|\bканал\b.*\b(?:настрой|измени|включи|выключи)", request, re.IGNORECASE):
+            return None
+        if not re.search(r"\b(?:комментар|реакци|подписчик|публичн)\w*", request, re.IGNORECASE):
+            return None
+        match = re.search(r"\bканал\s+[«\"]?(?P<title>[^«»\":]+?)[»\"]?\s*:\s*(?P<settings>.+)$", request, re.IGNORECASE)
+        if not match:
+            return "Напишите канал и изменение одной строкой: «Настрой канал Мой канал: выключи комментарии»."
+        channel = self.ai_agent_managed_channel_by_title(con, user["id"], match.group("title").strip())
+        value = match.group("settings").casefold()
+        enabled = not bool(re.search(r"\b(?:выключ|отключ|скрой)\w*", value))
+        field = None
+        label = ""
+        if re.search(r"комментар", value): field, label = "commentsEnabled", "комментарии"
+        elif re.search(r"реакци", value): field, label = "showReactions", "реакции"
+        elif re.search(r"подписчик", value): field, label = "showSubscribers", "счётчик подписчиков"
+        elif re.search(r"публичн", value): field, label = "isPublic", "публичный доступ"
+        if not field:
+            return "Сейчас могу изменить комментарии, реакции, счётчик подписчиков или публичность канала."
+        row = con.execute("SELECT settings_json FROM chats WHERE id = ?", (channel["id"],)).fetchone()
+        settings = loads(row["settings_json"], {}) or {}
+        settings[field] = enabled
+        con.execute("UPDATE chats SET settings_json = ?, updated_at = ? WHERE id = ?", (dumps(settings), now(), channel["id"]))
+        return f"Готово: в канале «{channel['title']}» {label} {'включены' if enabled else 'выключены'}."
+
+    def ai_agent_configure_comment_moderation(self, con, user, question):
+        request = " ".join(question.split())
+        if not re.search(r"\b(?:модерир|удаляй|фильтр|проверя)\w*", request, re.IGNORECASE):
+            return None
+        match = re.search(r"\b(?:в\s+)?(?:канал(?:е)?|бесед(?:е|ы)|групп(?:е|ы))\s+[«\"]?(?P<title>[^«»\":]+?)[»\"]?\s*:\s*(?P<rules>.+)$", request, re.IGNORECASE)
+        if not match:
+            return "Напишите: «Модерируй комментарии в канале Мой канал: мат, спам» или «Проверяй сообщения в беседе Чат: реклама, мошенничество»."
+        chat = self.ai_agent_managed_chat_by_title(con, user["id"], match.group("title").strip())
+        rules_text = match.group("rules").strip()
+        action_mode = "review" if re.search(r"(?:провер|сомн|на\s+рассмотр|не\s+удаляй)", rules_text, re.IGNORECASE) else "delete"
+        semantic = []
+        semantic_match = re.search(r"(?:смысл|если\s+по\s+смыслу|правило)\s*[:=]\s*(.+)$", rules_text, re.IGNORECASE)
+        if semantic_match:
+            semantic.append(" ".join(semantic_match.group(1).split())[:500])
+            rules_text = rules_text[:semantic_match.start()].strip(" ,;")
+        words = list(dict.fromkeys(" ".join(item.split()).casefold()[:80] for item in re.split(r"[,;]", rules_text) if " ".join(item.split())))[:40]
+        if not words and not semantic:
+            raise ValueError("После двоеточия перечислите слова, фразы или смысловое правило.")
+        mentions_messages = bool(re.search(r"(?:сообщен|пост|публикац|бесед|групп)", request, re.IGNORECASE))
+        mentions_comments = bool(re.search(r"комментар", request, re.IGNORECASE))
+        if mentions_messages and mentions_comments:
+            scope = "all"
+        elif mentions_messages:
+            scope = "messages"
+        else:
+            scope = "comments"
+        ai_enabled = bool(semantic)
+        con.execute(
+            """INSERT INTO ai_agent_comment_moderation_rules(user_id,channel_id,blocked_words_json,semantic_rules_json,action_mode,notify_owner,target_scope,ai_enabled,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(user_id,channel_id) DO UPDATE SET blocked_words_json=excluded.blocked_words_json,semantic_rules_json=excluded.semantic_rules_json,action_mode=excluded.action_mode,notify_owner=excluded.notify_owner,target_scope=excluded.target_scope,ai_enabled=excluded.ai_enabled,updated_at=excluded.updated_at""",
+            (user["id"], chat["id"], dumps(words), dumps(semantic), action_mode, 1, scope, int(ai_enabled), now(), now()),
+        )
+        mode_label = "отправлять на проверку" if action_mode == "review" else "удалять автоматически"
+        scope_label = "сообщения" if scope == "messages" else "комментарии"
+        return f"Модерация «{chat['title']}» включена: {scope_label} будут {mode_label}. Слова: {', '.join(words) if words else 'нет'}{f'; смысловое правило: {semantic[0]}' if semantic else ''}."
+
+    def ai_agent_configure_booking(self, con, user, question):
+        request = " ".join(str(question or "").split())
+        request_key = request.casefold()
+        booking_words = r"(?:брон|брониров|заявк|столик|ресторан)"
+        setup_words = r"(?:настр|включ|организ|сдела|добав|приним)"
+        if not re.search(rf"\b{booking_words}\w*", request_key) or not re.search(rf"\b{setup_words}\w*", request_key):
+            return None
+
+        number_words = {
+            "один": 1, "одна": 1, "одно": 1, "два": 2, "две": 2, "три": 3,
+            "четыре": 4, "пять": 5, "шесть": 6, "семь": 7, "восемь": 8,
+            "девять": 9, "десять": 10, "одиннадцать": 11, "двенадцать": 12,
+            "тринадцать": 13, "четырнадцать": 14, "пятнадцать": 15,
+            "шестнадцать": 16, "семнадцать": 17, "восемнадцать": 18,
+            "девятнадцать": 19, "двадцать": 20,
+        }
+        count_pattern = r"(?P<count>\d{1,2}|" + "|".join(number_words) + r")"
+        table_count = re.search(rf"(?:столик|стола|столов)\w*(?:\s+\w+){{0,2}}?\s+(?:всего\s+)?{count_pattern}", request_key)
+        if not table_count:
+            table_count = re.search(rf"{count_pattern}\s+(?:столик|стола|столов)\w*", request_key)
+        count_value = table_count.group("count") if table_count else ""
+        try:
+            table_count_value = int(count_value)
+        except ValueError:
+            table_count_value = number_words.get(count_value, 0)
+        if not 1 <= table_count_value <= 50:
+            return "Для настройки бронирований укажите количество столиков или список ресурсов. Например: «настрой бронирование в ресторане: 5 столиков, с 12:00 до 17:00»."
+
+        hours = re.search(r"\b(?:с|от)\s*(?P<start_hour>[01]?\d|2[0-3])(?:\s*[:.]?\s*(?P<start_minute>[0-5]\d))?\s*(?:до|[-–])\s*(?P<end_hour>[01]?\d|2[0-3])(?:\s*[:.]?\s*(?P<end_minute>[0-5]\d))?\b", request_key)
+        working_hours = {"start": "", "end": ""}
+        if hours:
+            start_time = f"{int(hours.group('start_hour')):02d}:{int(hours.group('start_minute') or 0):02d}"
+            end_time = f"{int(hours.group('end_hour')):02d}:{int(hours.group('end_minute') or 0):02d}"
+            if start_time >= end_time:
+                return "Время работы указано неверно: окончание должно быть позже начала."
+            working_hours = {"start": start_time, "end": end_time}
+
+        duration_match = re.search(r"\b(?:длительность|на)\s*(?P<duration>\d{1,3})\s*(?P<unit>мин\w*|час\w*)", request_key)
+        duration = 60
+        if duration_match:
+            duration = int(duration_match.group("duration")) * (60 if duration_match.group("unit").startswith("час") else 1)
+        settings = self.ai_agent_settings(con, user["id"])
+        previous_config = settings["bookingConfig"]
+        booking_config = self.normalize_ai_agent_booking_config({
+            **previous_config,
+            "enabled": True,
+            "serviceName": "Ресторан" if re.search(r"\b(?:ресторан|столик)\w*", request_key) else previous_config["serviceName"] or "Запись",
+            "resources": [f"Столик {index}" for index in range(1, table_count_value + 1)],
+            "durationMinutes": duration,
+            "workingHours": working_hours,
+        })
+        con.execute(
+            """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,agent_name,booking_config_json,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(user_id) DO UPDATE SET booking_config_json=excluded.booking_config_json,updated_at=excluded.updated_at""",
+            (user["id"], settings["instruction"], settings["style"], int(settings["autopilotEnabled"]), dumps(settings["allowedChatIds"]), dumps(settings["templateMessageIds"]), settings["agentName"], dumps(booking_config), now()),
+        )
+        schedule = f" с {working_hours['start']} до {working_hours['end']}" if working_hours["start"] else ""
+        return f"Готово: включил приём бронирований для ресторана — {table_count_value} столиков{schedule}. Одна подтверждённая бронь занимает свой столик на {booking_config['durationMinutes']} минут, поэтому его нельзя забронировать повторно на пересекающееся время. Для автоматических ответов клиентам отметьте нужный личный диалог и включите автопилот; длительность можно изменить в «Моих правилах общения»."
+
     def ai_agent_channel_management_help(self, question):
         normalized = " ".join(question.split())
         if not re.search(r"\b(?:канал|групп|репост|ведение|автопост)\w*\b", normalized, re.IGNORECASE):
@@ -4522,23 +7676,62 @@ class Handler(BaseHTTPRequestHandler):
 
     def ai_agent_configure_rss_autoposting(self, con, user, question):
         normalized = " ".join(question.split())
-        intent = re.search(r"\b(?:автопостинг|автопост|импорт(?:ируй|ировать)?|публикуй|постить|вести)\b", normalized, re.IGNORECASE)
-        mentions_site = re.search(r"\b(?:сайт|rss|лента|feed)\b", normalized, re.IGNORECASE)
-        if not intent or not mentions_site:
+        request_key = normalized.casefold()
+        mentions_site = re.search(r"\b(?:сайт|rss|лента|feed|новост)\w*\b", normalized, re.IGNORECASE)
+        intent = re.search(r"\b(?:автопостинг|автопост|импорт\w*|rss|лента|feed)\b", normalized, re.IGNORECASE) or (
+            mentions_site and re.search(r"\b(?:публик\w*|пост\w*|вести|сделай)\b", normalized, re.IGNORECASE)
+        )
+        suggestions_requested = bool(re.search(r"\b(?:пришли|дай|покажи|подскажи)\w*\s+(?:мне\s+)?(?:ссылк|источник|rss)|какие\s+(?:ссылк|источник|rss)", request_key))
+        if suggestions_requested and not self.ai_agent_urls_from_text(normalized):
+            return self.ai_agent_rss_source_suggestions(request_key)
+        recent_context = con.execute(
+            "SELECT role, text FROM ai_agent_conversation_messages WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT 8",
+            (user["id"],),
+        ).fetchall()
+        continuing_setup = any(
+            row["role"] == "assistant" and re.search(r"(?:автопостинг|RSS-лент|ссылка.*автопостинг)", row["text"], re.IGNORECASE)
+            for row in recent_context
+        )
+        has_setup_fact = bool(self.ai_agent_urls_from_text(normalized)) or bool(
+            re.search(r"\b(?:в|на)\s+(?:мой\s+)?канал\b", normalized, re.IGNORECASE)
+        )
+        if not intent and not (continuing_setup and has_setup_fact):
             return None
-        feed_match = re.search(r"https?://[^\s<>()]+", normalized, re.IGNORECASE)
+
+        # Reuse facts supplied in the immediately preceding setup messages, so the
+        # user can send the RSS URL and channel URL in separate turns.
+        urls = self.ai_agent_urls_from_text(normalized)
+        for row in recent_context:
+            urls.extend(self.ai_agent_urls_from_text(row["text"]))
+        urls = list(dict.fromkeys(urls))
+        target = None
+        site_urls = []
+        for url in urls:
+            channel = self.ai_agent_managed_channel_by_public_url(con, user["id"], url)
+            if channel:
+                if target and target["id"] != channel["id"]:
+                    raise ValueError("Укажите только один канал-получатель для RSS-автопостинга.")
+                target = channel
+            else:
+                site_urls.append(url)
+
+        # A named channel remains supported, but a public Chat-Pro URL is preferred.
         target_match = re.search(r"\b(?:в|на)\s+(?:мой\s+)?канал\s+[«\"]?(?P<title>[^«»\"\n]+?)[»\"]?(?:\s*(?:[.,;]|$))", normalized, re.IGNORECASE)
-        if not feed_match and not target_match:
-            return "Чтобы подключить автопостинг с сайта, пришлите ссылку на RSS-ленту и название канала, куда публиковать. Например: «Настрой автопостинг с сайта https://example.com/feed.xml в канал Мой канал»."
-        if not feed_match:
-            return "Пришлите публичную ссылку именно на RSS-ленту сайта (обычно содержит feed, rss или xml). Затем я проверю её и подключу к указанному каналу."
-        if not target_match:
-            return "Укажите название канала-получателя. Я подключу ленту только если вы создатель, администратор или автор этого канала."
-        title = " ".join(target_match.group("title").split()).strip(" :")
-        target = self.ai_agent_managed_channel_by_title(con, user["id"], title)
-        if self.chat_member_role(con, target["id"], user["id"]) not in CHANNEL_MANAGER_ROLES:
-            raise PermissionError(f"У вас нет права публиковать в канале «{target['title']}». Нужна роль создателя, администратора или автора.")
-        feed_url = validate_rss_url(feed_match.group(0).rstrip(".,;:!?»\""))
+        if not target and target_match:
+            title = " ".join(target_match.group("title").split()).strip(" :")
+            target = self.ai_agent_managed_channel_by_title(con, user["id"], title)
+
+        if not site_urls:
+            return "Пришлите ссылку с которой хотите сделать автопостинг. Нужна публичная RSS-лента сайта."
+        if not target:
+            return "Пришлите ссылку своего канала в который хотите осуществлять автопостинг. Я проверю, что у вас есть право публиковать в нём."
+
+        site_url = site_urls[0]
+        url_path = urlparse(site_url).path.casefold()
+        if not re.search(r"(?:rss|feed|\.xml)(?:/|$)", url_path) and "rss" not in request_key and "feed" not in request_key:
+            feed_url = discover_rss_feed(site_url)
+        else:
+            feed_url = validate_rss_url(site_url)
         feed_title, entries = fetch_rss_feed(feed_url)
         if not entries:
             raise ValueError("Сайт доступен, но в RSS-ленте пока нет публикаций. Пришлите другую RSS-ссылку или проверьте ленту на сайте.")
@@ -4548,16 +7741,46 @@ class Handler(BaseHTTPRequestHandler):
         self.enforce_autopost_source_limit(con, user["id"], target["id"])
         current = now()
         source_id = uid("rss")
-        con.executemany(
-            "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
-            [(source_id, entry["id"], current) for entry in entries],
-        )
         con.execute(
             """INSERT INTO rss_channel_sources(id,channel_id,feed_url,feed_title,next_poll_at,last_sync_at,last_error,created_by,created_at)
                VALUES (?,?,?,?,?,?,NULL,?,?)""",
             (source_id, target["id"], feed_url, feed_title, current + RSS_POLL_INTERVAL, current, user["id"], current),
         )
+        con.executemany(
+            "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
+            [(source_id, entry["id"], current) for entry in entries],
+        )
         return f"Подключил RSS-ленту «{feed_title or feed_url}» к каналу «{target['title']}». Новые публикации будут импортироваться автоматически."
+
+    def ai_agent_rss_source_suggestions(self, request_key):
+        topics = {
+            "технолог": "технологии", "спорт": "спорт", "бизнес": "бизнес", "эконом": "экономика",
+            "культур": "культура", "наук": "наука", "игр": "игры", "полит": "политика",
+        }
+        topic = next((label for key, label in topics.items() if key in request_key), "новости")
+        return f"Могу сам найти RSS на сайте, который вы пришлёте. Для ленты на тему «{topic}» отправьте ссылку на подходящий сайт, а затем ссылку своего канала — я найду и проверю RSS перед подключением."
+
+    def ai_agent_urls_from_text(self, text):
+        # The host portion deliberately excludes Cyrillic characters. It keeps adjacent
+        # prose (for example, "сайтаhttps://example.org") out of a preceding URL.
+        pattern = r"https?://[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::\d{1,5})?(?:/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]*)?"
+        return list(dict.fromkeys(match.group(0).rstrip(".,;:!?»»\"'»") for match in re.finditer(pattern, str(text or ""), re.IGNORECASE)))
+
+    def ai_agent_managed_channel_by_public_url(self, con, user_id, value):
+        parsed = urlparse(value)
+        match = re.fullmatch(r"/channel/([A-Za-z0-9_-]+)", parsed.path.rstrip("/"))
+        if not match:
+            return None
+        channel = con.execute(
+            """SELECT c.id, c.title FROM chats c JOIN chat_members member ON member.chat_id = c.id AND member.user_id = ?
+               WHERE c.type = 'channel' AND c.invite_code = ?""",
+            (user_id, match.group(1)),
+        ).fetchone()
+        if not channel:
+            raise ValueError("Не нашёл доступный вам канал по этой ссылке. Откройте канал в Chat-Pro или пришлите ссылку своего канала.")
+        if self.chat_member_role(con, channel["id"], user_id) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError(f"У вас нет права публиковать в канале «{channel['title']}». Нужна роль создателя, администратора или автора.")
+        return channel
 
     def ai_agent_publish_latest_saved_circle(self, con, user, question):
         normalized = " ".join(question.casefold().replace("ё", "е").split())
@@ -4567,7 +7790,7 @@ class Handler(BaseHTTPRequestHandler):
             return None
         channel = self.ai_agent_owned_channel_from_request(con, user["id"], normalized)
         saved_circle = con.execute(
-            """SELECT m.text, m.media_type, m.media_data, m.voice_waveform_json
+            """SELECT m.text, m.media_type, m.media_data, m.circle_preview_data, m.voice_waveform_json
                FROM messages m JOIN chats c ON c.id = m.chat_id
                JOIN chat_members member ON member.chat_id = c.id AND member.user_id = ?
                WHERE c.type = 'saved' AND m.sender_id = ? AND m.media_type = 'circle'
@@ -4577,13 +7800,13 @@ class Handler(BaseHTTPRequestHandler):
         ).fetchone()
         if not saved_circle:
             raise ValueError("В «Избранном» не нашёл ни одного видеокружка для публикации.")
-        self.enforce_post_limit(con, user["id"])
+        enforce_channel_post_limit(con, channel["id"])
         self.enforce_message_limit(con, user["id"])
         message_id = uid("msg")
         con.execute(
-            """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,voice_waveform_json,views,source_type,ai_agent,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
-            (message_id, channel["id"], user["id"], saved_circle["text"], "circle", saved_circle["media_data"], saved_circle["voice_waveform_json"], 1, "ai_agent_saved_circle", 1, now()),
+            """INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,circle_preview_data,voice_waveform_json,views,source_type,ai_agent,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (message_id, channel["id"], user["id"], saved_circle["text"], "circle", saved_circle["media_data"], saved_circle["circle_preview_data"], saved_circle["voice_waveform_json"], 1, "ai_agent_saved_circle", 1, now()),
         )
         con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), channel["id"]))
         schedule_automated_comments(con, message_id, channel["id"])
@@ -4597,7 +7820,7 @@ class Handler(BaseHTTPRequestHandler):
         text = " ".join(request.group("text").split())[:2_000]
         if not text:
             raise ValueError("После двоеточия напишите текст публикации.")
-        self.enforce_post_limit(con, user["id"])
+        enforce_channel_post_limit(con, channel["id"])
         self.enforce_message_limit(con, user["id"])
         message_id = uid("msg")
         con.execute(
@@ -4671,7 +7894,7 @@ class Handler(BaseHTTPRequestHandler):
         settings = self.ai_agent_settings(con, user["id"])
         allowed_chat_ids = settings["allowedChatIds"]
         channel_rule = settings["channelRule"]
-        autopilot_enabled = enabled and bool(allowed_chat_ids)
+        autopilot_enabled = enabled and bool(settings["autopilotAllDirect"] or allowed_chat_ids)
         channel_enabled = enabled and bool(channel_rule["targetChannelId"] and channel_rule["sourceChannelIds"])
         con.execute(
             """INSERT INTO ai_agent_settings(user_id,instruction,style,autopilot_enabled,allowed_chat_ids_json,template_message_ids_json,updated_at)
@@ -4685,7 +7908,7 @@ class Handler(BaseHTTPRequestHandler):
                 (user["id"], int(channel_enabled), channel_rule["targetChannelId"] or None, dumps(channel_rule["sourceChannelIds"]), now(), now()),
             )
         if enabled and not autopilot_enabled and not channel_enabled:
-            raise ValueError("Сначала включите автопилот для диалога или настройте ведение канала через запрос агенту.")
+            raise ValueError("Сначала выберите личные диалоги или включите ответы на все входящие сообщения; для каналов настройте ведение через запрос агенту.")
         return self.json({"ok": True, "running": bool(autopilot_enabled or channel_enabled)})
 
     def ai_agent_send_requested_message(self, con, user, question):
@@ -4753,34 +7976,56 @@ class Handler(BaseHTTPRequestHandler):
         context = "\n".join(f"{'Пользователь' if item['sender_id'] == user['id'] else 'Собеседник'}: {item['text'][:500]}" for item in reversed(recent))
         system = "Ты создаёшь черновик ответа для владельца аккаунта в личном диалоге. Не рекламируй Chat-Pro, его уровни или подписки. Не утверждай, что являешься человеком. Не добавляй пометку об ИИ: её добавит интерфейс. Не обещай то, чего нет в инструкции."
         prompt = f"Глобальные сценарии: {self.ai_agent_global_instruction_text(con) or 'нет'}\nИнструкция владельца: {settings['instruction'] or 'Вежливо помогай собеседнику.'}\nСтиль: {settings['style']}\n\nДиалог:\n{context}\n\nВерни только один короткий ответ на последнее сообщение собеседника."
-        return self.json({"ok": True, "draft": self.ai_completion(system, prompt, 220)})
+        return self.json({"ok": True, "draft": self.ai_completion(system, prompt, 220, model_profile=settings["modelProfile"])})
 
     def process_ai_agent_autopilots(self, con):
         rows = []
-        for settings in con.execute("SELECT * FROM ai_agent_settings WHERE autopilot_enabled = 1").fetchall():
-            allowed_chat_ids = loads(settings["allowed_chat_ids_json"], [])
-            if not isinstance(allowed_chat_ids, list):
-                continue
-            allowed_chat_ids = [str(chat_id) for chat_id in allowed_chat_ids[:50] if isinstance(chat_id, str)]
-            if not allowed_chat_ids:
-                continue
-            placeholders = ",".join("?" for _ in allowed_chat_ids)
-            rows.extend(con.execute(
-                f"""SELECT ? AS user_id, ? AS instruction, ? AS style, ? AS template_message_ids_json,
-                           ? AS allowed_chat_ids_json, m.id AS message_id, m.chat_id, m.sender_id, m.text, m.created_at
-                    FROM messages m JOIN chats c ON c.id = m.chat_id
-                    WHERE m.chat_id IN ({placeholders}) AND c.type = 'direct' AND m.sender_id != ?
-                      AND m.ai_agent = 0 AND NOT EXISTS(SELECT 1 FROM ai_agent_processed_messages p WHERE p.message_id = m.id)
-                    ORDER BY m.created_at ASC LIMIT 10""",
-                (settings["user_id"], settings["instruction"], settings["style"], settings["template_message_ids_json"], settings["allowed_chat_ids_json"], *allowed_chat_ids, settings["user_id"]),
-            ).fetchall())
+        for task in con.execute("SELECT * FROM ai_agent_tasks WHERE enabled = 1 ORDER BY updated_at DESC, id DESC").fetchall():
+            chat_ids = loads(task["chat_ids_json"], [])
+            if not isinstance(chat_ids, list):
+                chat_ids = []
+            chat_ids = [str(chat_id) for chat_id in chat_ids[:50] if isinstance(chat_id, str)]
+            settings = self.ai_agent_settings(con, task["user_id"])
+            common_params = (task["id"], task["title"], task["instruction"], task["user_id"], settings["instruction"], settings["style"], settings["modelProfile"], dumps(settings["templateMessageIds"]), task["updated_at"])
+            if task["scope"] == "all_direct":
+                rows.extend(con.execute(
+                    """SELECT ? AS task_id, ? AS task_title, ? AS task_instruction, ? AS user_id, ? AS instruction, ? AS style, ? AS model_profile, ? AS template_message_ids_json,
+                               m.id AS message_id, m.chat_id, m.sender_id, m.text, m.created_at
+                        FROM messages m JOIN chats c ON c.id = m.chat_id
+                        JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = ?
+                        WHERE c.type = 'direct' AND m.sender_id != ? AND m.ai_agent = 0 AND m.created_at >= ?
+                          AND NOT EXISTS(SELECT 1 FROM ai_agent_processed_messages p WHERE p.message_id = m.id)
+                        ORDER BY m.created_at ASC LIMIT 10""",
+                    (*common_params[:8], task["user_id"], task["user_id"], common_params[8]),
+                ).fetchall())
+            elif task["scope"] == "selected_direct" and chat_ids:
+                placeholders = ",".join("?" for _ in chat_ids)
+                rows.extend(con.execute(
+                    f"""SELECT ? AS task_id, ? AS task_title, ? AS task_instruction, ? AS user_id, ? AS instruction, ? AS style, ? AS model_profile, ? AS template_message_ids_json,
+                               m.id AS message_id, m.chat_id, m.sender_id, m.text, m.created_at
+                        FROM messages m JOIN chats c ON c.id = m.chat_id
+                        WHERE m.chat_id IN ({placeholders}) AND c.type = 'direct' AND m.sender_id != ? AND m.ai_agent = 0 AND m.created_at >= ?
+                          AND NOT EXISTS(SELECT 1 FROM ai_agent_processed_messages p WHERE p.message_id = m.id)
+                        ORDER BY m.created_at ASC LIMIT 10""",
+                    (*common_params[:8], *chat_ids, task["user_id"], common_params[8]),
+                ).fetchall())
         rows.sort(key=lambda row: row["created_at"])
+        handled_message_ids = set()
         for row in rows:
+            if row["message_id"] in handled_message_ids:
+                continue
+            handled_message_ids.add(row["message_id"])
             con.execute("INSERT OR IGNORE INTO ai_agent_processed_messages(message_id,processed_at) VALUES (?,?)", (row["message_id"], now()))
             owner_id = row["user_id"]
             try:
                 text = " ".join(str(row["text"] or "").split())
                 if not text or re.search(r"\b(оператор|человек|стоп|не пишите|отключи)\b", text, re.IGNORECASE):
+                    continue
+                customer = con.execute("SELECT * FROM users WHERE id = ?", (row["sender_id"],)).fetchone()
+                booking_reply = self.ai_agent_booking_from_chat(con, owner_id, row["chat_id"], customer, text) if customer else None
+                if booking_reply:
+                    con.execute("INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), row["chat_id"], owner_id, f"🤖 {self.ai_agent_settings(con, owner_id)['agentName']}: {booking_reply}", 1, 1, now()))
+                    con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), row["chat_id"]))
                     continue
                 sent_today = con.execute("SELECT COUNT(*) AS total FROM messages WHERE sender_id = ? AND ai_agent = 1 AND created_at >= ?", (owner_id, now() - 86400)).fetchone()["total"]
                 if sent_today >= 40:
@@ -4789,14 +8034,16 @@ class Handler(BaseHTTPRequestHandler):
                 context = "\n".join(f"{'Владелец' if item['sender_id'] == owner_id else 'Собеседник'}: {item['text'][:500]}" for item in reversed(recent))
                 template_ids = loads(row["template_message_ids_json"], [])
                 templates = [item["text"] for item in con.execute(f"SELECT text FROM messages WHERE id IN ({','.join('?' for _ in template_ids)})", template_ids).fetchall()] if template_ids else []
-                system = "Ты рабочий ИИ-помощник в личном диалоге. Создаёшь безопасный короткий ответ по инструкции владельца. Никогда не рекламируй Chat-Pro, его подписки, уровни или функции. Не выдавай себя за человека. Не обещай невозможное."
-                prompt = f"Глобальные сценарии: {self.ai_agent_global_instruction_text(con) or 'нет'}\nИнструкция владельца: {row['instruction'] or 'Вежливо ответь по теме.'}\nСтиль: {row['style']}\nРазрешённые текстовые шаблоны: {' | '.join(templates[:5]) or 'нет'}\n\nДиалог:\n{context}\n\nВерни только один ответ на последнее сообщение собеседника."
+                system = "Ты рабочий ИИ-помощник в личном диалоге. Создаёшь безопасный короткий ответ по инструкции владельца и активной задаче. Никогда не рекламируй Chat-Pro, его подписки, уровни или функции. Не выдавай себя за человека. Не обещай невозможное."
+                booking_config = self.ai_agent_settings(con, owner_id)["bookingConfig"]
+                booking_instruction = f"\nПриём заявок: {'включён' if booking_config['enabled'] else 'выключен'}. Если включён и клиент хочет записаться, попроси точную строку: «Запись: ресурс; ДД.ММ.ГГГГ ЧЧ:ММ; имя; телефон; поле=значение». Ресурсы: {', '.join(booking_config['resources']) or 'не указаны'}. Дополнительные поля: {', '.join(booking_config['fields']) or 'нет'}. Длительность: {booking_config['durationMinutes']} минут." if booking_config['enabled'] else ""
+                prompt = f"Глобальные сценарии: {self.ai_agent_global_instruction_text(con) or 'нет'}\nЗадача: {row['task_title']}\nПравило задачи: {row['task_instruction'] or 'Вежливо ответь по теме.'}\nОбщие правила владельца: {row['instruction'] or 'нет'}\nСтиль: {row['style']}\nРазрешённые текстовые шаблоны: {' | '.join(templates[:5]) or 'нет'}{booking_instruction}\n\nДиалог:\n{context}\n\nВерни только один ответ на последнее сообщение собеседника."
                 with chat_activities_lock:
                     chat_activities[(row["chat_id"], owner_id)] = ("typing", time.monotonic() + CHAT_ACTIVITY_TTL)
-                reply = self.ai_completion(system, prompt, 220)
+                reply = self.ai_completion(system, prompt, 220, model_profile=row["model_profile"])
                 if len(reply) < 2:
                     continue
-                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), row["chat_id"], owner_id, f"🤖 Помощник: {reply}", 1, 1, now()))
+                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,views,ai_agent,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), row["chat_id"], owner_id, f"🤖 {self.ai_agent_settings(con, owner_id)['agentName']}: {reply}", 1, 1, now()))
                 con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), row["chat_id"]))
             except Exception:
                 continue
@@ -4806,6 +8053,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def process_ai_agent_channel_rules(self, con):
         for rule in con.execute("SELECT * FROM ai_agent_channel_rules WHERE enabled = 1").fetchall():
+            model_profile = self.ai_agent_settings(con, rule["user_id"])["modelProfile"]
             source_ids = loads(rule["source_channel_ids_json"], [])
             if not isinstance(source_ids, list) or not source_ids or not rule["target_channel_id"]:
                 continue
@@ -4822,6 +8070,8 @@ class Handler(BaseHTTPRequestHandler):
                 (*source_ids, rule["user_id"]),
             ).fetchall()
             for post in posts:
+                if channel_post_limit_reached(con, rule["target_channel_id"]):
+                    break
                 con.execute("INSERT OR IGNORE INTO ai_agent_channel_processed_posts(rule_user_id,message_id,processed_at) VALUES (?,?,?)", (rule["user_id"], post["id"], now()))
                 if not self.has_chat_access(con, rule["user_id"], post["chat_id"]):
                     continue
@@ -4834,16 +8084,123 @@ class Handler(BaseHTTPRequestHandler):
                             "Ты редактор канала. Перефразируй публикацию своими словами без изменения фактов, смысла, имён, чисел, ссылок и призывов. Не добавляй ничего от себя. Верни только готовый текст публикации.",
                             text,
                             700,
+                            model_profile=model_profile,
                         )
                         forwarded_from = None
                         source_type = "ai_agent_rewrite"
                     except ValueError:
                         continue
                 con.execute(
-                    "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,voice_waveform_json,views,forwarded_from,forwarded_from_user_id,source_type,source_id,ai_agent,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (uid("msg"), rule["target_channel_id"], rule["user_id"], text, post["media_type"], post["media_data"], post["voice_waveform_json"], 1, forwarded_from, post["sender_id"], source_type, post["id"], 1, now()),
+                    "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,circle_preview_data,voice_waveform_json,views,forwarded_from,forwarded_from_user_id,source_type,source_id,ai_agent,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (uid("msg"), rule["target_channel_id"], rule["user_id"], text, post["media_type"], post["media_data"], post["circle_preview_data"], post["voice_waveform_json"], 1, forwarded_from, post["sender_id"], source_type, post["id"], 1, now()),
                 )
                 con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), rule["target_channel_id"]))
+
+    def ai_agent_semantic_moderation(self, text, rules, model_profile="default"):
+        instruction = " ".join(str(item).split())[:500]
+        if not instruction or not str(text or "").strip():
+            return "allow", "", 0.0
+        try:
+            answer = self.ai_completion(
+                "Ты модератор пользовательского контента. Верни строго одну строку в формате: DECISION=allow|delete|review; REASON=краткая причина. Не выдумывай факты.",
+                f"Смысловое правило: {instruction}\nТекст: {str(text)[:4000]}",
+                120,
+                admin=True,
+                timeout=8,
+                model_profile=model_profile,
+            )
+        except ValueError:
+            return "review", "ИИ-модерация временно недоступна", 0.0
+        decision_match = re.search(r"DECISION\s*=\s*(allow|delete|review)", answer, re.IGNORECASE)
+        reason_match = re.search(r"REASON\s*=\s*(.+)$", answer, re.IGNORECASE)
+        decision = decision_match.group(1).casefold() if decision_match else "review"
+        reason = reason_match.group(1).strip()[:500] if reason_match else answer[:500]
+        return decision, reason, 0.75 if decision_match else 0.4
+
+    def record_ai_moderation_event(self, con, rule, channel_id, target_type, target_id, text, decision, reason, confidence, source="chat-pro"):
+        con.execute(
+            "INSERT INTO ai_agent_moderation_events(id,user_id,channel_id,target_type,target_id,source,text,decision,reason,confidence,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (uid("moderation"), rule["user_id"], channel_id, target_type, target_id, source, str(text or "")[:10_000], decision, str(reason or "")[:500], confidence, now()),
+        )
+        self.ai_agent_action_log(
+            con,
+            rule["user_id"],
+            "moderation",
+            decision,
+            f"Модерация: {decision} для {target_type} {target_id}",
+            {"channelId": channel_id, "targetType": target_type, "targetId": target_id},
+            str(reason or "")[:2_000],
+        )
+        if rule["notify_owner"]:
+            channel = con.execute("SELECT title, owner_id FROM chats WHERE id = ?", (channel_id,)).fetchone()
+            owner_id = channel["owner_id"] if channel else rule["user_id"]
+            if owner_id:
+                con.execute(
+                    "INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)",
+                    (uid("notice"), owner_id, "ai_moderation", f"ИИ-модерация: {decision} в «{channel['title'] if channel else channel_id}»: {str(reason or 'без причины')[:240]}", target_id, now()),
+                )
+
+    def process_ai_agent_comment_moderation(self, con):
+        rules = con.execute("SELECT * FROM ai_agent_comment_moderation_rules").fetchall()
+        semantic_budget = 5
+        for rule in rules:
+            if self.chat_member_role(con, rule["channel_id"], rule["user_id"]) not in CHANNEL_MANAGER_ROLES and not self.can_manage_group_messages(con, rule["user_id"], rule["channel_id"]):
+                continue
+            chat = con.execute("SELECT type FROM chats WHERE id = ?", (rule["channel_id"],)).fetchone()
+            if not chat:
+                continue
+            words = [str(word).casefold() for word in loads(rule["blocked_words_json"], []) if str(word).strip()]
+            semantic_rules = [str(item) for item in loads(rule["semantic_rules_json"], []) if str(item).strip()]
+            model_profile = self.ai_agent_settings(con, rule["user_id"])["modelProfile"]
+            requested_scope = str(rule["target_scope"] or "").casefold()
+            scope = requested_scope if requested_scope in {"comments", "messages", "all"} else "comments"
+            candidates = []
+            if scope in {"comments", "all"}:
+                candidates.extend(("comment", row["id"], row["text"]) for row in con.execute(
+                    """SELECT cc.id, cc.text FROM channel_comments cc JOIN messages m ON m.id = cc.message_id
+                       WHERE m.chat_id = ? AND NOT EXISTS(
+                           SELECT 1 FROM ai_agent_moderated_comments amc
+                           WHERE amc.comment_id = 'comment:' || cc.id
+                       ) LIMIT 100""",
+                    (rule["channel_id"],),
+                ).fetchall())
+            if scope in {"messages", "all"} and chat["type"] in {"channel", "group", "community"}:
+                candidates.extend(("message", row["id"], row["text"]) for row in con.execute(
+                    """SELECT m.id, m.text FROM messages m
+                       WHERE m.chat_id = ? AND m.deleted_by_admin = 0 AND m.media_type != 'system'
+                         AND NOT EXISTS(
+                             SELECT 1 FROM ai_agent_moderated_comments amc
+                             WHERE amc.comment_id = 'message:' || m.id
+                         ) LIMIT 100""",
+                    (rule["channel_id"],),
+                ).fetchall())
+            for target_type, target_id, target_text in candidates:
+                marker = f"{target_type}:{target_id}"
+                if con.execute("SELECT 1 FROM ai_agent_moderated_comments WHERE comment_id = ?", (marker,)).fetchone():
+                    continue
+                matched_word = next((word for word in words if word in str(target_text or "").casefold()), None)
+                if matched_word:
+                    decision = rule["action_mode"] if rule["action_mode"] in {"delete", "review"} else "delete"
+                    reason = f"Совпадение с правилом: {matched_word}"
+                    confidence = 1.0
+                elif rule["ai_enabled"] and semantic_rules:
+                    if semantic_budget <= 0:
+                        continue
+                    semantic_budget -= 1
+                    decision, reason, confidence = self.ai_agent_semantic_moderation(target_text, semantic_rules, model_profile)
+                    if decision == "allow":
+                        con.execute("INSERT OR IGNORE INTO ai_agent_moderated_comments(comment_id,user_id,moderated_at) VALUES (?,?,?)", (marker, rule["user_id"], now()))
+                        continue
+                else:
+                    con.execute("INSERT OR IGNORE INTO ai_agent_moderated_comments(comment_id,user_id,moderated_at) VALUES (?,?,?)", (marker, rule["user_id"], now()))
+                    continue
+                self.record_ai_moderation_event(con, rule, rule["channel_id"], target_type, target_id, target_text, decision, reason, confidence)
+                if decision == "delete":
+                    if target_type == "comment":
+                        con.execute("DELETE FROM channel_comments WHERE id = ?", (target_id,))
+                    else:
+                        con.execute("UPDATE messages SET deleted_by_admin = 1 WHERE id = ?", (target_id,))
+                con.execute("INSERT OR IGNORE INTO ai_agent_moderated_comments(comment_id,user_id,moderated_at) VALUES (?,?,?)", (marker, rule["user_id"], now()))
 
     def update_chat_activity(self, con, user, body):
         chat_id = str(body.get("chatId", "")).strip()
@@ -4952,16 +8309,122 @@ class Handler(BaseHTTPRequestHandler):
         if existing:
             raise ValueError("Этот RSS-источник уже подключён к каналу.")
         source_id = uid("rss")
-        con.executemany(
-            "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
-            [(source_id, entry["id"], current) for entry in entries],
-        )
         con.execute(
             """INSERT INTO rss_channel_sources(id,channel_id,feed_url,feed_title,next_poll_at,last_sync_at,last_error,created_by,created_at)
                VALUES (?,?,?,?,?,?,NULL,?,?)""",
             (source_id, channel_id, feed_url, feed_title, current + RSS_POLL_INTERVAL, current, user["id"], current),
         )
+        con.executemany(
+            "INSERT OR IGNORE INTO rss_source_imported_posts(source_id,entry_id,imported_at) VALUES (?,?,?)",
+            [(source_id, entry["id"], current) for entry in entries],
+        )
         return self.json({"ok": True, "connected": True, "sourceId": source_id, "feedTitle": feed_title})
+
+    def vk_proposed_posts(self, con, user, method, query, body):
+        if method == "GET":
+            channel_id = str((query.get("channelId", [""]) or [""])[0]).strip()
+            if not channel_id or not self.has_chat_access(con, user["id"], channel_id):
+                raise PermissionError("Нет доступа к этому каналу.")
+            manager = self.can_manage_group_messages(con, user["id"], channel_id)
+            if manager:
+                rows = con.execute(
+                    """SELECT p.*, s.source_title, u.name AS proposer_name, u.username AS proposer_username
+                       FROM vk_proposed_posts p
+                       JOIN vk_channel_sources s ON s.id = p.source_id
+                       JOIN users u ON u.id = p.proposer_id
+                       WHERE p.channel_id = ? ORDER BY p.created_at DESC LIMIT 100""",
+                    (channel_id,),
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    """SELECT p.*, s.source_title, u.name AS proposer_name, u.username AS proposer_username
+                       FROM vk_proposed_posts p
+                       JOIN vk_channel_sources s ON s.id = p.source_id
+                       JOIN users u ON u.id = p.proposer_id
+                       WHERE p.channel_id = ? AND p.proposer_id = ?
+                       ORDER BY p.created_at DESC LIMIT 50""",
+                    (channel_id, user["id"]),
+                ).fetchall()
+            return self.json({"ok": True, "proposals": [dict(row) for row in rows], "canResolve": manager})
+        source_id = str(body.get("sourceId", "")).strip()
+        text = " ".join(str(body.get("text", "") or "").split())[:10_000]
+        source = con.execute("SELECT * FROM vk_channel_sources WHERE id = ?", (source_id,)).fetchone()
+        if not source or not self.has_chat_access(con, user["id"], source["channel_id"]):
+            raise PermissionError("Нет доступа к выбранному VK-источнику.")
+        if not source["publish_enabled"]:
+            raise ValueError("Публикация в этом VK-источнике отключена администратором.")
+        if not text:
+            raise ValueError("Заявка должна содержать текст.")
+        pending_count = con.execute(
+            "SELECT count(*) FROM vk_proposed_posts WHERE source_id = ? AND proposer_id = ? AND status = 'pending'",
+            (source_id, user["id"]),
+        ).fetchone()[0]
+        if pending_count >= 10:
+            raise ValueError("У вас уже 10 заявок на проверке для этого VK-источника.")
+        proposal_id = uid("vk_proposal")
+        timestamp = now()
+        con.execute(
+            """INSERT INTO vk_proposed_posts(id,source_id,channel_id,proposer_id,text,status,created_at)
+               VALUES (?,?,?,?,?,'pending',?)""",
+            (proposal_id, source_id, source["channel_id"], user["id"], text, timestamp),
+        )
+        channel = con.execute("SELECT title, owner_id FROM chats WHERE id = ?", (source["channel_id"],)).fetchone()
+        if channel and channel["owner_id"] and channel["owner_id"] != user["id"]:
+            con.execute(
+                "INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)",
+                (uid("notice"), channel["owner_id"], "vk_proposal", f"Новая заявка на публикацию в VK для «{channel['title']}».", proposal_id, timestamp),
+            )
+        self.ai_agent_action_log(con, user["id"], "vk_proposed_post", "pending", "Заявка на публикацию в VK отправлена на проверку.", {"proposalId": proposal_id, "sourceId": source_id})
+        return self.json({"ok": True, "proposalId": proposal_id, "message": "Заявка отправлена на проверку администратору VK-источника."})
+
+    def resolve_vk_proposed_post(self, con, user, body):
+        proposal_id = str(body.get("proposalId", "")).strip()
+        decision = str(body.get("decision", "")).strip().casefold()
+        if not proposal_id or decision not in {"approve", "reject"}:
+            raise ValueError("Укажите заявку и решение approve или reject.")
+        proposal = con.execute(
+            "SELECT p.*, s.access_token, s.owner_id, s.source_title, s.publish_enabled FROM vk_proposed_posts p JOIN vk_channel_sources s ON s.id = p.source_id WHERE p.id = ? AND p.status = 'pending'",
+            (proposal_id,),
+        ).fetchone()
+        if not proposal or not self.can_manage_group_messages(con, user["id"], proposal["channel_id"]):
+            raise PermissionError("У вас нет права принять это решение или заявка уже обработана.")
+        timestamp = now()
+        if decision == "reject":
+            rejected = con.execute(
+                "UPDATE vk_proposed_posts SET status = 'rejected', decision_reason = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'",
+                ("Отклонено администратором", user["id"], timestamp, proposal_id),
+            ).rowcount
+            if not rejected:
+                raise PermissionError("У вас нет права принять это решение или заявка уже обработана.")
+            self.ai_agent_action_log(con, user["id"], "vk_proposed_post", "rejected", "Заявка на публикацию в VK отклонена.", {"proposalId": proposal_id})
+            return self.json({"ok": True, "status": "rejected", "message": "Заявка отклонена."})
+        if not proposal["publish_enabled"]:
+            raise ValueError("Публикация в этом VK-источнике отключена.")
+        claimed = con.execute(
+            "UPDATE vk_proposed_posts SET status = 'publishing', decision_reason = ?, reviewed_by = ?, reviewed_at = ?, last_error = NULL WHERE id = ? AND status = 'pending'",
+            ("Одобрено администратором, публикация выполняется", user["id"], timestamp, proposal_id),
+        ).rowcount
+        if not claimed:
+            raise PermissionError("У вас нет права принять это решение или заявка уже обрабатывается.")
+        con.commit()
+        try:
+            result = vk_api(proposal["access_token"], "wall.post", {"owner_id": proposal["owner_id"], "message": proposal["text"]})
+            vk_post_id = int(result.get("post_id", 0) or 0) if isinstance(result, dict) else int(result or 0)
+            if not vk_post_id:
+                raise ValueError("VK не вернул ID опубликованного поста.")
+        except (ValueError, TypeError) as error:
+            con.execute(
+                "UPDATE vk_proposed_posts SET status = 'failed', last_error = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ? AND status = 'publishing'",
+                (str(error)[:300], user["id"], timestamp, proposal_id),
+            )
+            self.ai_agent_action_log(con, user["id"], "vk_proposed_post", "failed", "Публикация заявки в VK не удалась.", {"proposalId": proposal_id}, str(error)[:500])
+            return self.json({"ok": False, "status": "failed", "error": "VK не принял публикацию. Заявка отмечена как failed."}, HTTPStatus.BAD_GATEWAY)
+        con.execute(
+            "UPDATE vk_proposed_posts SET status = 'published', vk_post_id = ?, decision_reason = ?, reviewed_by = ?, reviewed_at = ?, published_at = ?, last_error = NULL WHERE id = ? AND status = 'publishing'",
+            (vk_post_id, "Одобрено и опубликовано администратором", user["id"], timestamp, timestamp, proposal_id),
+        )
+        self.ai_agent_action_log(con, user["id"], "vk_proposed_post", "published", f"Заявка опубликована в VK-группе «{proposal['source_title']}».", {"proposalId": proposal_id, "vkPostId": vk_post_id})
+        return self.json({"ok": True, "status": "published", "vkPostId": vk_post_id, "message": "Заявка одобрена и опубликована в VK."})
 
     def update_vk_channel_link(self, con, user, body):
         channel_id = str(body.get("channelId", "")).strip()
@@ -4969,6 +8432,17 @@ class Handler(BaseHTTPRequestHandler):
         channel = con.execute("SELECT owner_id, type FROM chats WHERE id = ?", (channel_id,)).fetchone()
         if not channel or channel["type"] != "channel" or channel["owner_id"] != user["id"]:
             raise PermissionError("Подключить VK может только создатель канала.")
+        if bool(body.get("settingsOnly")):
+            if not source_id:
+                raise ValueError("Не выбран VK-источник для настройки.")
+            source = con.execute("SELECT id FROM vk_channel_sources WHERE id = ? AND channel_id = ?", (source_id, channel_id)).fetchone()
+            if not source:
+                raise ValueError("VK-источник не найден.")
+            con.execute(
+                "UPDATE vk_channel_sources SET publish_enabled = ?, moderation_enabled = ? WHERE id = ? AND channel_id = ?",
+                (1 if body.get("publishEnabled", True) else 0, 1 if body.get("moderationEnabled", False) else 0, source_id, channel_id),
+            )
+            return self.json({"ok": True, "sourceId": source_id})
         if bool(body.get("disconnect")):
             if not source_id:
                 raise ValueError("Не выбран VK-источник для отключения.")
@@ -4978,9 +8452,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({"ok": True, "connected": False})
         self.enforce_autopost_source_limit(con, user["id"], channel_id)
         count = con.execute("SELECT count(*) FROM vk_channel_sources WHERE channel_id = ?", (channel_id,)).fetchone()[0]
-        access_token = str(body.get("accessToken", "")).strip()
+        access_token = VK_ID_SERVICE_TOKEN
         if len(access_token) < 20 or len(access_token) > 512:
-            raise ValueError("Введите корректный токен доступа VK API.")
+            raise ValueError("На сервере не настроен ключ VK для чтения публичных групп. Обратитесь к администратору.")
         source_url, source_ref = validate_vk_group_url(body.get("sourceUrl"))
         keywords = normalize_vk_keywords(body.get("keywords", ""))
         existing = con.execute("SELECT id FROM vk_channel_sources WHERE channel_id = ? AND source_url = ?", (channel_id, source_url)).fetchone()
@@ -4991,16 +8465,55 @@ class Handler(BaseHTTPRequestHandler):
         posts = wall.get("items", []) if isinstance(wall, dict) else []
         current = now()
         source_id = uid("vk")
-        con.executemany(
-            "INSERT OR IGNORE INTO vk_source_imported_posts(source_id,post_id,imported_at) VALUES (?,?,?)",
-            [(source_id, int(post.get("id", 0)), current) for post in posts if isinstance(post, dict) and int(post.get("id", 0) or 0)],
-        )
         con.execute(
             """INSERT INTO vk_channel_sources(id,channel_id,source_url,source_ref,source_title,owner_id,access_token,keywords_json,next_poll_at,last_sync_at,last_error,created_by,created_at)
                VALUES (?,?,?,?,?,?,?,?,?,?,NULL,?,?)""",
             (source_id, channel_id, source_url, source_ref, source_title, owner_id, access_token, dumps(keywords), current + VK_POLL_INTERVAL, current, user["id"], current),
         )
+        con.executemany(
+            "INSERT OR IGNORE INTO vk_source_imported_posts(source_id,post_id,imported_at) VALUES (?,?,?)",
+            [(source_id, int(post.get("id", 0)), current) for post in posts if isinstance(post, dict) and int(post.get("id", 0) or 0)],
+        )
         return self.json({"ok": True, "connected": True, "sourceId": source_id, "sourceTitle": source_title})
+
+    def update_vk_channel_target(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        target_id = str(body.get("targetId", "")).strip()
+        channel = con.execute("SELECT owner_id, type FROM chats WHERE id = ?", (channel_id,)).fetchone()
+        if not channel or channel["type"] != "channel" or channel["owner_id"] != user["id"]:
+            raise PermissionError("Подключать сообщество VK может только создатель канала.")
+        if bool(body.get("settingsOnly")):
+            if not target_id:
+                raise ValueError("Не выбрано сообщество VK для настройки.")
+            changed = con.execute(
+                "UPDATE vk_channel_targets SET publish_enabled = ?, moderation_enabled = ? WHERE id = ? AND channel_id = ?",
+                (1 if body.get("publishEnabled", True) else 0, 1 if body.get("moderationEnabled", False) else 0, target_id, channel_id),
+            ).rowcount
+            if not changed:
+                raise ValueError("Сообщество VK не найдено.")
+            return self.json({"ok": True, "targetId": target_id})
+        if bool(body.get("disconnect")):
+            if not target_id:
+                raise ValueError("Не выбрано сообщество VK для отключения.")
+            if not con.execute("DELETE FROM vk_channel_targets WHERE id = ? AND channel_id = ?", (target_id, channel_id)).rowcount:
+                raise ValueError("Сообщество VK не найдено.")
+            return self.json({"ok": True, "connected": False})
+        access_token = str(body.get("accessToken", "")).strip()
+        if len(access_token) < 20 or len(access_token) > 512:
+            raise ValueError("Укажите ключ доступа сообщества VK.")
+        target_url, target_ref = validate_vk_group_url(body.get("targetUrl"))
+        if con.execute("SELECT 1 FROM vk_channel_targets WHERE channel_id = ? AND target_url = ?", (channel_id, target_url)).fetchone():
+            raise ValueError("Это сообщество VK уже подключено к каналу.")
+        owner_id, target_title = vk_group_data(access_token, target_ref)
+        vk_api(access_token, "wall.get", {"owner_id": owner_id, "count": 1, "filter": "owner"})
+        current = now()
+        target_id = uid("vk_target")
+        con.execute(
+            """INSERT INTO vk_channel_targets(id,channel_id,target_url,target_ref,target_title,owner_id,access_token,publish_enabled,moderation_enabled,last_publish_at,last_moderation_sync_at,last_error,created_by,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)""",
+            (target_id, channel_id, target_url, target_ref, target_title, owner_id, access_token, 1 if body.get("publishEnabled", True) else 0, 1 if body.get("moderationEnabled", False) else 0, None, None, user["id"], current),
+        )
+        return self.json({"ok": True, "connected": True, "targetId": target_id, "targetTitle": target_title})
 
     def update_channel_appearance(self, con, user, body):
         channel_id = str(body.get("channelId", "")).strip()
@@ -5054,6 +8567,16 @@ class Handler(BaseHTTPRequestHandler):
         con.execute("INSERT INTO channel_comments(id,message_id,user_id,text,media_data,created_at) VALUES (?,?,?,?,?,?)", (uid("comment"), message_id, user["id"], text, media_data or None, now()))
         return self.json({"ok": True})
 
+    def delete_channel_comment(self, con, user, body):
+        comment_id = str(body.get("commentId", "")).strip()
+        comment = con.execute("SELECT cc.user_id, m.chat_id FROM channel_comments cc JOIN messages m ON m.id = cc.message_id WHERE cc.id = ?", (comment_id,)).fetchone()
+        if not comment or not self.has_chat_access(con, user["id"], comment["chat_id"]):
+            raise PermissionError("Комментарий не найден или недоступен.")
+        if user["id"] != comment["user_id"] and self.chat_member_role(con, comment["chat_id"], user["id"]) not in {"owner", "admin"}:
+            raise PermissionError("Удалить комментарий может его автор, создатель или администратор канала.")
+        con.execute("DELETE FROM channel_comments WHERE id = ?", (comment_id,))
+        return self.json({"ok": True})
+
     def create_automated_commenter(self, con, body):
         name = " ".join(str(body.get("name", "")).strip().split())[:80]
         if not name:
@@ -5070,14 +8593,29 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Аватар должен быть изображением PNG, JPG или WebP до 1,8 МБ.")
         user_id = uid("user")
         current = now()
+        appearance = dialog_appearance_defaults(con)
         con.execute(
-            """INSERT INTO users(id,name,username,password,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,avatar_data,created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (user_id, name, username, hash_password(password), 0, "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", avatar_data or None, current),
+            """INSERT INTO users(id,name,username,password,stars,theme,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,text_scale,chat_background,chat_background_data,avatar_data,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (user_id, name, username, hash_password(password), 0, *(appearance[field] for field in DIALOG_APPEARANCE_FIELDS), avatar_data or None, current),
         )
         commenter_id = uid("autocommenter")
         con.execute("INSERT INTO automated_commenters(id,user_id,created_at) VALUES (?,?,?)", (commenter_id, user_id, current))
         return self.json({"ok": True, "commenterId": commenter_id})
+
+    def update_automated_commenter(self, con, body):
+        commenter_id = str(body.get("commenterId", "")).strip()
+        name = " ".join(str(body.get("name", "")).strip().split())[:80]
+        avatar_data = str(body.get("avatarData", "") or "")
+        commenter = con.execute("SELECT user_id FROM automated_commenters WHERE id = ?", (commenter_id,)).fetchone()
+        if not commenter:
+            raise ValueError("Автокомментатор не найден.")
+        if not name:
+            raise ValueError("Введите имя автокомментатора.")
+        if avatar_data and (not avatar_data.startswith("data:image/") or len(avatar_data) > 2_500_000):
+            raise ValueError("Аватар должен быть изображением PNG, JPG или WebP до 1,8 МБ.")
+        con.execute("UPDATE users SET name = ?, avatar_data = ? WHERE id = ?", (name, avatar_data or None, commenter["user_id"]))
+        return self.json({"ok": True})
 
     def create_automated_commenter_pool(self, con):
         existing = con.execute("SELECT count(*) AS count FROM automated_commenters").fetchone()["count"]
@@ -5108,11 +8646,12 @@ class Handler(BaseHTTPRequestHandler):
                 number += 100
                 username = f"channel_reader_{number:03d}"
             user_id = uid("user")
+            appearance = dialog_appearance_defaults(con)
             con.execute(
-                """INSERT INTO users(id,name,username,password,stars,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,chat_background,created_at)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """INSERT INTO users(id,name,username,password,stars,theme,dialog_color,other_dialog_color,dialog_panel_color,dialog_panel_style,dialog_bubble_style,dialog_font,text_scale,chat_background,chat_background_data,created_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (user_id, names[position % len(names)], username, hash_password(secrets.token_urlsafe(32)), 0,
-                 "#dff9f9", "#ffffff", "#f4f8fc", "interactive-light", "custom", "business", "cyan", current),
+                 *(appearance[field] for field in DIALOG_APPEARANCE_FIELDS), current),
             )
             con.execute("INSERT INTO automated_commenters(id,user_id,created_at) VALUES (?,?,?)", (uid("autocommenter"), user_id, current))
         return self.json({"ok": True, "created": to_create, "total": int(existing) + to_create})
@@ -5150,15 +8689,19 @@ class Handler(BaseHTTPRequestHandler):
         ).fetchall()
         if len(found_commenters) != len(commenter_ids):
             raise ValueError("Один из автокомментаторов не найден.")
-        comment_mode = str(body.get("commentMode", "manual")).strip()
-        if comment_mode not in {"manual", "local", "ai"}:
-            raise ValueError("Выберите режим комментариев.")
-        texts = [" ".join(str(text).strip().split())[:1000] for text in body.get("texts", []) if str(text).strip()]
+        requested_mode = str(body.get("commentMode", "ai")).strip()
+        if requested_mode not in {"ai", "circle_compliment"}:
+            requested_mode = "ai"
+        comment_mode = requested_mode
+        texts = []
         categories = list(dict.fromkeys(str(category) for category in body.get("categories", []) if str(category) in AUTOMATED_COMMENT_CATEGORIES))
-        if comment_mode == "manual" and (not texts or len(texts) > 30):
-            raise ValueError("Добавьте от 1 до 30 текстов комментариев.")
-        if comment_mode == "local" and not categories:
-            raise ValueError("Выберите хотя бы одну категорию локальных комментариев.")
+        if not categories:
+            categories = ["support", "opinion", "question"]
+        if comment_mode == "circle_compliment":
+            if len(commenter_ids) != 1:
+                raise ValueError("Для комплиментов к видеокружкам выберите одного автокомментатора.")
+            if target_scope != "future":
+                raise ValueError("Комплименты применяются только к новым видеокружкам.")
         minimum = nonnegative_int(body.get("minDelayMinutes", 5), "minDelayMinutes", 10_080) * 60
         maximum = nonnegative_int(body.get("maxDelayMinutes", 30), "maxDelayMinutes", 10_080) * 60
         if minimum > maximum:
@@ -5225,10 +8768,7 @@ class Handler(BaseHTTPRequestHandler):
                JOIN chats c ON c.id = m.chat_id
                 WHERE m.id = ? AND (
                      EXISTS(SELECT 1 FROM chat_members cm WHERE cm.chat_id = m.chat_id AND cm.user_id = ?)
-                     OR (c.type = 'channel' AND (
-                         EXISTS(SELECT 1 FROM recommended_groups rg WHERE rg.chat_id = c.id)
-                         OR COALESCE(json_extract(c.settings_json, '$.isPublic'), 1) = 1
-                     ))
+                     OR (c.type = 'channel' AND COALESCE(json_extract(c.settings_json, '$.isPublic'), 1) = 1)
                    )
                   AND (c.type != 'secret' OR EXISTS(
                     SELECT 1 FROM secret_chat_unlocks scu
@@ -5347,7 +8887,7 @@ class Handler(BaseHTTPRequestHandler):
 
         placeholders = ",".join("?" for _ in message_ids)
         messages = con.execute(
-            f"""SELECT id, chat_id, sender_id, text, media_type, media_data, forwarded_from, forwarded_from_user_id FROM messages
+            f"""SELECT id, chat_id, sender_id, text, media_type, media_data, circle_preview_data, forwarded_from, forwarded_from_user_id, source_channel_id FROM messages
                 WHERE id IN ({placeholders})
                   AND NOT EXISTS(SELECT 1 FROM hidden_messages hm WHERE hm.message_id = messages.id AND hm.user_id = ?)
                 ORDER BY created_at, rowid""",
@@ -5473,8 +9013,16 @@ class Handler(BaseHTTPRequestHandler):
         raise ValueError("Неизвестное групповое действие.")
 
     def copy_messages(self, con, sender_id, messages, target_chat_id):
+        target = con.execute("SELECT type FROM chats WHERE id = ?", (target_chat_id,)).fetchone()
+        source_channel_ids = {message["source_channel_id"] or message["chat_id"] for message in messages}
+        source_chats = con.execute(f"SELECT id, type, settings_json FROM chats WHERE id IN ({','.join('?' for _ in source_channel_ids)})", tuple(source_channel_ids)).fetchall()
+        if any(row["type"] == "channel" and loads(row["settings_json"], {}).get("protectContent", False) for row in source_chats):
+            raise PermissionError("Автор канала запретил пересылку этой публикации.")
         for message in messages:
+            if target and target["type"] == "channel":
+                enforce_channel_post_limit(con, target_chat_id)
             source_chat = con.execute("SELECT type, title FROM chats WHERE id = ?", (message["chat_id"],)).fetchone()
+            source_channel_id = message["source_channel_id"] or (message["chat_id"] if source_chat and source_chat["type"] == "channel" else None)
             forwarded_from = message["forwarded_from"]
             forwarded_from_user_id = message["forwarded_from_user_id"]
             if not forwarded_from and source_chat and source_chat["type"] != "saved":
@@ -5482,8 +9030,8 @@ class Handler(BaseHTTPRequestHandler):
                 forwarded_from = original_sender["name"] if original_sender else source_chat["title"]
                 forwarded_from_user_id = message["sender_id"] if original_sender else None
             con.execute(
-                "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,forwarded_from_user_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (uid("msg"), target_chat_id, sender_id, message["text"], message["media_type"], message["media_data"], 1, forwarded_from, forwarded_from_user_id, now()),
+                "INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,circle_preview_data,views,forwarded_from,forwarded_from_user_id,source_channel_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (uid("msg"), target_chat_id, sender_id, message["text"], message["media_type"], message["media_data"], message["circle_preview_data"], 1, forwarded_from, forwarded_from_user_id, source_channel_id, now()),
             )
         con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), target_chat_id))
 
@@ -5580,23 +9128,30 @@ class Handler(BaseHTTPRequestHandler):
         channel_bonus_type = None
         channel_bonus_amount = None
         if channel_id:
-            channel = con.execute("SELECT id, type, owner_id, settings_json FROM chats WHERE id = ?", (channel_id,)).fetchone()
-            if not channel or channel["type"] != "channel" or not channel["owner_id"]:
-                raise ValueError("Канал для покупки не найден.")
+            channel = con.execute("SELECT id, type, owner_id, subscriber_count, subscriber_boost, settings_json FROM chats WHERE id = ?", (channel_id,)).fetchone()
+            if not channel or channel["type"] not in MONETIZED_CHAT_TYPES or not channel["owner_id"]:
+                raise ValueError("Канал или беседа для покупки не найдены.")
             if not self.has_chat_access(con, user["id"], channel_id):
-                raise PermissionError("Подпишитесь на канал, чтобы купить звёзды через него.")
+                raise PermissionError("Вступите в канал или беседу, чтобы купить звёзды через неё.")
             settings = loads(channel["settings_json"], {}) or {}
-            channel_bonus_type = "stars"
-            bonus_percent = nonnegative_int(settings.get("starBonusPercent", 10), "starBonusPercent", 100)
+            monetization = self.channel_monetization(con)
+            bonus_percent = self.channel_commission_percent(monetization, self.monetized_chat_member_count(con, channel_id, channel["type"]))
             if not bonus_percent:
-                raise ValueError("Владелец канала ещё не настроил бонус за покупку.")
-            channel_bonus_amount = str(max(1, package["stars"] * bonus_percent // 100))
+                raise ValueError("Для текущего числа участников объекта не настроена комиссия.")
+            channel_bonus_type = "money"
+            channel_bonus_amount = str((Decimal(str(package["stars"])) * Decimal(monetization["starRateRubles"]) * Decimal(bonus_percent) / Decimal(100)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+            package_gifts = settings.get("buyerGiftStarsByPackage", {}) if channel["type"] == "channel" else {}
+            if not isinstance(package_gifts, dict):
+                package_gifts = {}
+            buyer_gift_stars = nonnegative_int(package_gifts.get(package["id"], settings.get("buyerGiftStars", 0)), "buyerGiftStars", 100_000)
+        else:
+            buyer_gift_stars = 0
         order_id = uid("yookassa")
         current = now()
         con.execute(
-            """INSERT INTO yookassa_payments(id,user_id,package_id,stars,amount_value,channel_id,channel_bonus_type,channel_bonus_amount,status,terms_accepted_at,created_at,updated_at)
-               VALUES (?,?,?,?,?,?,?,?,'creating',?,?,?)""",
-            (order_id, user["id"], package["id"], package["stars"], amount_value, channel_id, channel_bonus_type, channel_bonus_amount, current, current, current),
+            """INSERT INTO yookassa_payments(id,user_id,package_id,stars,amount_value,channel_id,channel_bonus_type,channel_bonus_amount,buyer_gift_stars,status,terms_accepted_at,created_at,updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,'creating',?,?,?)""",
+            (order_id, user["id"], package["id"], package["stars"], amount_value, channel_id, channel_bonus_type, channel_bonus_amount, buyer_gift_stars, current, current, current),
         )
         payment = yookassa_request(
             "/payments",
@@ -5605,7 +9160,7 @@ class Handler(BaseHTTPRequestHandler):
                 "amount": {"value": amount_value, "currency": "RUB"},
                 "capture": True,
                 "confirmation": {"type": "redirect", "return_url": f"{YOOKASSA_RETURN_URL}/payment-return?order={order_id}"},
-                "description": f"Chat-Pro: {package['stars']} звёзд" + (f" со скидкой {discount_percent}%" if discount_percent else "") + (f" через канал" if channel_id else ""),
+                "description": f"Chat-Pro: {package['stars']} звёзд" + (f" со скидкой {discount_percent}%" if discount_percent else "") + (f" через {('канал' if channel['type'] == 'channel' else 'беседу')}" if channel_id else ""),
                 "metadata": {"chat_pro_order_id": order_id},
             },
             idempotence_key=order_id,
@@ -5637,6 +9192,9 @@ class Handler(BaseHTTPRequestHandler):
         payment_order = con.execute("SELECT * FROM yookassa_payments WHERE yookassa_payment_id = ?", (payment_id,)).fetchone()
         if payment_order:
             self.finalize_yookassa_payment(con, payment_order)
+        subscription_payment = con.execute("SELECT * FROM account_level_subscription_payments WHERE yookassa_payment_id = ?", (payment_id,)).fetchone()
+        if subscription_payment:
+            self.finalize_account_level_subscription_payment(con, subscription_payment)
         return self.json({"ok": True})
 
     def finalize_yookassa_payment(self, con, payment_order):
@@ -5666,36 +9224,43 @@ class Handler(BaseHTTPRequestHandler):
         self.credit_stars(con, payment_order["user_id"], payment_order["stars"])
         self.record_star_transaction(con, payment_order["user_id"], payment_order["stars"], "yookassa_purchase", f"Покупка {payment_order['stars']} звёзд через ЮKassa")
         if payment_order["channel_id"]:
-            channel = con.execute("SELECT title, owner_id, settings_json FROM chats WHERE id = ? AND type = 'channel'", (payment_order["channel_id"],)).fetchone()
+            channel = con.execute("SELECT title, type, owner_id, subscriber_count, subscriber_boost, settings_json FROM chats WHERE id = ? AND type IN ('channel', 'group', 'community')", (payment_order["channel_id"],)).fetchone()
             if channel and payment_order["channel_bonus_type"] in {"stars", "money"} and payment_order["channel_bonus_amount"]:
                 bonus_type = payment_order["channel_bonus_type"]
                 bonus_amount = payment_order["channel_bonus_amount"]
                 settings = loads(channel["settings_json"], {}) or {}
-                requested_gift = nonnegative_int(settings.get("buyerGiftStars", 0), "buyerGiftStars", 100_000)
-                buyer_message = str(settings.get("buyerPurchaseMessage", "")).strip()[:500]
+                requested_gift = nonnegative_int(payment_order["buyer_gift_stars"], "buyerGiftStars", 100_000)
+                buyer_message = str(settings.get("buyerPurchaseMessage", "") if channel["type"] == "channel" else "").strip()[:500]
                 owner = con.execute("SELECT stars FROM users WHERE id = ?", (channel["owner_id"],)).fetchone()
                 gift_stars = requested_gift if owner and owner["stars"] >= requested_gift else 0
                 buyer = con.execute("SELECT name, username FROM users WHERE id = ?", (payment_order["user_id"],)).fetchone()
                 buyer_label = buyer["name"] if buyer else "Пользователь"
-                if bonus_type == "stars":
-                    self.credit_stars(con, channel["owner_id"], int(bonus_amount))
-                    self.record_star_transaction(con, channel["owner_id"], int(bonus_amount), "channel_purchase_bonus", f"Бонус канала «{channel['title']}» за покупку {payment_order['stars']} звёзд")
-                    bonus_label = f"★ {bonus_amount}"
-                else:
+                chat_label = "канал" if channel["type"] == "channel" else "беседу"
+                if bonus_type == "money":
                     bonus_label = f"{bonus_amount} ₽ к выплате"
+                else:
+                    bonus_label = f"★ {bonus_amount}"
                 if gift_stars:
                     debited = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (gift_stars, channel["owner_id"], gift_stars)).rowcount
                     if debited:
                         self.credit_stars(con, payment_order["user_id"], gift_stars)
-                        self.record_star_transaction(con, channel["owner_id"], -gift_stars, "channel_buyer_gift_sent", f"Подарок покупателю через канал «{channel['title']}»")
-                        self.record_star_transaction(con, payment_order["user_id"], gift_stars, "channel_buyer_gift_received", f"Подарок за покупку через канал «{channel['title']}»")
+                        self.record_star_transaction(con, channel["owner_id"], -gift_stars, "channel_buyer_gift_sent", f"Подарок покупателю через {chat_label} «{channel['title']}»")
+                        self.record_star_transaction(con, payment_order["user_id"], gift_stars, "channel_buyer_gift_received", f"Подарок за покупку через {chat_label} «{channel['title']}»")
                     else:
                         gift_stars = 0
+                purchase_id = uid("channel_purchase")
                 con.execute(
                     """INSERT OR IGNORE INTO channel_star_purchases(id,payment_id,channel_id,buyer_user_id,stars,bonus_type,bonus_amount,buyer_gift_stars,buyer_message,created_at)
                        VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (uid("channel_purchase"), payment_order["id"], payment_order["channel_id"], payment_order["user_id"], payment_order["stars"], bonus_type, bonus_amount, gift_stars, buyer_message, now()),
+                    (purchase_id, payment_order["id"], payment_order["channel_id"], payment_order["user_id"], payment_order["stars"], bonus_type, bonus_amount, gift_stars, buyer_message, now()),
                 )
+                if bonus_type == "money":
+                    monetization = self.channel_monetization(con)
+                    con.execute(
+                        """INSERT OR IGNORE INTO channel_payout_accruals(id,purchase_id,channel_id,owner_user_id,amount_value,commission_percent,star_rate_rubles,created_at)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (uid("payout_accrual"), purchase_id, payment_order["channel_id"], channel["owner_id"], bonus_amount, self.channel_commission_percent(monetization, self.monetized_chat_member_count(con, payment_order["channel_id"], channel["type"])), monetization["starRateRubles"], now()),
+                    )
                 if buyer_message:
                     direct = con.execute(
                         """SELECT c.id FROM chats c JOIN chat_members owner_member ON owner_member.chat_id = c.id
@@ -5710,12 +9275,105 @@ class Handler(BaseHTTPRequestHandler):
                             con.execute("INSERT INTO chat_members(chat_id,user_id,role,created_at) VALUES (?,?,?,?)", (direct_id, member_id, "member", now()))
                     con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), direct_id, channel["owner_id"], buyer_message, "system", 1, now()))
                     con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), direct_id))
-                notice = f"{buyer_label} купил(а) {payment_order['stars']} звёзд через канал «{channel['title']}». Бонус: {bonus_label}."
+                notice = f"{buyer_label} купил(а) {payment_order['stars']} звёзд через {chat_label} «{channel['title']}». Бонус: {bonus_label}."
                 con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), channel["owner_id"], "channel_star_purchase", notice, payment_order["channel_id"], now()))
-                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), payment_order["channel_id"], channel["owner_id"], f"{buyer_label} купил(а) ★ {payment_order['stars']} через этот канал.", "system", 1, now()))
+                con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,views,created_at) VALUES (?,?,?,?,?,?,?)", (uid("msg"), payment_order["channel_id"], channel["owner_id"], f"{buyer_label} купил(а) ★ {payment_order['stars']} через этот объект.", "system", 1, now()))
                 con.execute("UPDATE chats SET updated_at = ? WHERE id = ?", (now(), payment_order["channel_id"]))
         con.execute("UPDATE yookassa_payments SET credited_at = ?, status = 'succeeded', updated_at = ? WHERE id = ?", (now(), now(), payment_order["id"]))
         return {"status": "succeeded", "credited": True, "stars": payment_order["stars"]}
+
+    def channel_monetization(self, con) -> dict:
+        row = con.execute("SELECT value FROM settings WHERE key = 'channel_monetization'").fetchone()
+        try:
+            return normalize_channel_monetization(loads(row["value"], {}) if row else DEFAULT_CHANNEL_MONETIZATION)
+        except ValueError:
+            return DEFAULT_CHANNEL_MONETIZATION
+
+    def channel_commission_percent(self, monetization: dict, subscriber_count: int) -> int:
+        for tier in monetization["tiers"]:
+            maximum = tier["maxSubscribers"]
+            if subscriber_count >= tier["minSubscribers"] and (maximum is None or subscriber_count < maximum):
+                return tier["percent"]
+        return 0
+
+    def monetized_chat_member_count(self, con, chat_id, chat_type=None) -> int:
+        if chat_type is None:
+            chat = con.execute(
+                "SELECT type, subscriber_count, subscriber_boost FROM chats WHERE id = ?",
+                (chat_id,),
+            ).fetchone()
+        else:
+            chat = con.execute(
+                "SELECT type, subscriber_count, subscriber_boost FROM chats WHERE id = ? AND type = ?",
+                (chat_id, chat_type),
+            ).fetchone()
+        if not chat or chat["type"] not in MONETIZED_CHAT_TYPES:
+            return 0
+        if chat["type"] == "channel":
+            return max(0, int(chat["subscriber_count"] or 0) + int(chat["subscriber_boost"] or 0))
+        return int(con.execute("SELECT count(*) AS count FROM chat_members WHERE chat_id = ?", (chat_id,)).fetchone()["count"] or 0)
+
+    def channel_payout_summary(self, con, owner_user_id, channel_id) -> dict:
+        earned = sum((Decimal(str(row["amount_value"])) for row in con.execute(
+            "SELECT amount_value FROM channel_payout_accruals WHERE owner_user_id = ? AND channel_id = ?", (owner_user_id, channel_id)
+        ).fetchall()), Decimal("0.00"))
+        reserved = sum((Decimal(str(row["amount_value"])) for row in con.execute(
+            "SELECT amount_value FROM channel_payout_requests WHERE owner_user_id = ? AND channel_id = ? AND status IN ('pending', 'paid')", (owner_user_id, channel_id)
+        ).fetchall()), Decimal("0.00"))
+        available = max(Decimal("0.00"), earned - reserved)
+        return {"channelId": channel_id, "earned": str(earned.quantize(Decimal("0.01"))), "reserved": str(reserved.quantize(Decimal("0.01"))), "available": str(available.quantize(Decimal("0.01")))}
+
+    def purchase_demo_activity_package(self, con, user, body):
+        package_id = str(body.get("packageId", "")).strip()
+        channel_id = str(body.get("channelId", "")).strip()
+        package = con.execute("SELECT * FROM demo_activity_packages WHERE id = ?", (package_id,)).fetchone()
+        channel = con.execute("SELECT id, title, type FROM chats WHERE id = ? AND type IN ('channel', 'group', 'community') AND owner_id = ?", (channel_id, user["id"])).fetchone()
+        if not package or not channel:
+            raise ValueError("Выберите доступный пакет и свою беседу или канал.")
+        if package["required_account_level_id"]:
+            raise ValueError("Этот пакет подключается автоматически каналам владельцев с требуемым уровнем аккаунта.")
+        if (package["views_per_day"] or package["reactions_per_day"] or package["comments_per_day"]) and not demo_activity_post(con, channel_id):
+            raise ValueError("Для этого пакета в объекте должна быть хотя бы одна публикация.")
+        if not account_level_available_for_user(con, user["id"], package["required_account_level_id"]):
+            raise ValueError("Ваш уровень аккаунта не соответствует требованию этого пакета.")
+        if package["comments_per_day"] and not automated_commenter_pool(con):
+            raise ValueError("Для комментариев сначала должны быть настроены служебные аккаунты.")
+        price_stars = int(package["price_stars"] or 0)
+        if price_stars:
+            charged = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (price_stars, user["id"], price_stars)).rowcount
+            if not charged:
+                raise ValueError("Недостаточно звёзд для этого пакета.")
+            self.record_star_transaction(con, user["id"], -price_stars, "demo_activity_package", f"Демо-пакет «{package['title']}» для объекта «{channel['title']}»")
+        current = now()
+        con.execute(
+            """INSERT INTO demo_activity_subscriptions(id,package_id,channel_id,starts_at,ends_at,auto_renew,created_at)
+               VALUES (?,?,?,?,?,?,?)""",
+            (uid("demosubscription"), package_id, channel_id, current, current + max(1, package["duration_days"]) * 86400, 0, current),
+        )
+        return self.json({"ok": True})
+
+    def create_channel_payout_request(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        channel = con.execute("SELECT id, title, type FROM chats WHERE id = ? AND type IN ('channel', 'group', 'community') AND owner_id = ?", (channel_id, user["id"])).fetchone()
+        if not channel:
+            raise PermissionError("Заявку может создать только владелец беседы или канала.")
+        amount_value = normalize_money(body.get("amount"), "Сумма выплаты")
+        summary = self.channel_payout_summary(con, user["id"], channel_id)
+        if Decimal(amount_value) > Decimal(summary["available"]):
+            raise ValueError("Сумма заявки превышает доступное начисление.")
+        current = now()
+        request_id = uid("payout_request")
+        con.execute(
+            "INSERT INTO channel_payout_requests(id,channel_id,owner_user_id,amount_value,status,created_at) VALUES (?,?,?,?,?,?)",
+            (request_id, channel_id, user["id"], amount_value, "pending", current),
+        )
+        andrei = con.execute("SELECT id FROM users WHERE lower(username) = 'andrei' LIMIT 1").fetchone()
+        if andrei:
+            con.execute(
+                "INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)",
+                (uid("notice"), andrei["id"], "channel_payout_request", f"Новая заявка на выплату: {user['name']} · объект «{channel['title']}» · {amount_value} ₽.", request_id, current),
+            )
+        return self.json({"ok": True, "requestId": request_id, "summary": self.channel_payout_summary(con, user["id"], channel_id)})
 
     def add_review(self, con, user, body):
         url = normalize_review_source(body.get("url"))
@@ -5751,11 +9409,204 @@ class Handler(BaseHTTPRequestHandler):
         )
         return self.json({"ok": True})
 
+    def normalize_channel_share_url(self, value):
+        raw = str(value or "").strip()
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or len(raw) > 2048:
+            raise ValueError("Укажите корректную ссылку на опубликованный пост или сторис.")
+        return urlunparse((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/") or "/", "", parsed.query, ""))
+
+    def add_channel_share_submission(self, con, user, body):
+        channel_id = str(body.get("channelId", "")).strip()
+        platform = " ".join(str(body.get("platform", "")).split())[:80]
+        external_url = self.normalize_channel_share_url(body.get("externalUrl"))
+        description = str(body.get("description", "")).strip()
+        screenshot_data = str(body.get("screenshotData", "")).strip()
+        if not platform:
+            raise ValueError("Укажите площадку публикации.")
+        if len(description) > 2000:
+            raise ValueError("Описание не должно превышать 2000 символов.")
+        try:
+            screenshot_data = normalize_image_data(screenshot_data, 2_500_000, "Скриншот")
+        except ValueError:
+            raise ValueError("Прикрепите скриншот PNG, JPG или WebP размером до 2,5 МБ.")
+        channel = con.execute("SELECT id, title, subscriber_count FROM chats WHERE id = ? AND type = 'channel'", (channel_id,)).fetchone()
+        if not channel or self.chat_member_role(con, channel_id, user["id"]) not in CHANNEL_MANAGER_ROLES:
+            raise PermissionError("Подать заявку может только администратор этого канала.")
+        current = now()
+        if con.execute("SELECT 1 FROM channel_share_submissions WHERE external_url = ?", (external_url,)).fetchone():
+            raise ValueError("За эту ссылку уже была подана заявка.")
+        previous = con.execute("SELECT created_at FROM channel_share_submissions WHERE channel_id = ? ORDER BY created_at DESC LIMIT 1", (channel_id,)).fetchone()
+        if previous and current - int(previous["created_at"]) < 30 * 86400:
+            raise ValueError("Заявку на продвижение этого канала можно отправлять не чаще одного раза в 30 дней.")
+        reward_stars = int(channel["subscriber_count"] or 0) // 3
+        if reward_stars < 1:
+            raise ValueError("Для награды у канала должно быть не менее 3 подписчиков.")
+        submission_id = uid("channelshare")
+        con.execute("""INSERT INTO channel_share_submissions(
+            id,channel_id,submitter_id,platform,external_url,description,screenshot_data,reward_stars,status,eligible_at,created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""", (submission_id, channel_id, user["id"], platform, external_url, description, screenshot_data, reward_stars, "pending", current + 600, current))
+        return self.json({"ok": True, "submissionId": submission_id, "rewardStars": reward_stars, "eligibleAt": current + 600})
+
+    def process_channel_share_submissions(self, con):
+        current = now()
+        rows = con.execute("SELECT * FROM channel_share_submissions WHERE status = 'pending' AND eligible_at <= ? ORDER BY eligible_at LIMIT 100", (current,)).fetchall()
+        for submission in rows:
+            claimed = con.execute("UPDATE channel_share_submissions SET status = 'credited', credited_at = ? WHERE id = ? AND status = 'pending'", (current, submission["id"])).rowcount
+            if not claimed:
+                continue
+            try:
+                self.credit_stars(con, submission["submitter_id"], submission["reward_stars"])
+            except ValueError as error:
+                con.execute("UPDATE channel_share_submissions SET status = 'pending', credited_at = NULL WHERE id = ?", (submission["id"],))
+                print(f"Не удалось начислить награду за публикацию канала: {error}")
+                continue
+            self.record_star_transaction(con, submission["submitter_id"], submission["reward_stars"], "channel_share_reward", "Награда за публикацию канала")
+            con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), submission["submitter_id"], "channel_share_reward", f"Начислено ★ {submission['reward_stars']} за публикацию канала.", submission["id"], current))
+
+    def vk_review_reference(self, value):
+        parsed = urlparse(str(value or "").strip())
+        if parsed.scheme not in {"http", "https"} or parsed.hostname not in {"vk.com", "www.vk.com", "m.vk.com", "vk.ru", "www.vk.ru", "m.vk.ru"}:
+            raise ValueError("Укажите ссылку VK на ролик или пост.")
+        match = re.fullmatch(r"/(wall|video)(-?\d+)_([0-9]+)(?:_([A-Za-z0-9_-]+))?", parsed.path)
+        if not match:
+            raise ValueError("VK-ссылка должна вести на конкретный ролик или пост.")
+        kind = "video" if match.group(1) == "video" else "post"
+        return kind, int(match.group(2)), int(match.group(3)), match.group(4) or ""
+
+    def add_vk_review_submission(self, con, user, body):
+        submitted_url = self.normalize_channel_share_url(body.get("externalUrl"))
+        kind, owner_id, item_id, access_key = self.vk_review_reference(submitted_url)
+        external_url = f"https://vk.com/{'video' if kind == 'video' else 'wall'}{owner_id}_{item_id}{'_' + access_key if access_key else ''}"
+        if con.execute("SELECT 1 FROM vk_review_submissions WHERE external_url = ?", (external_url,)).fetchone():
+            raise ValueError("За этот ролик или пост VK награда уже запрашивалась.")
+        access_token = VK_ID_SERVICE_TOKEN
+        if len(access_token) < 20 or len(access_token) > 512:
+            raise ValueError("На сервере не настроен ключ VK для проверки публичных публикаций. Обратитесь к администратору.")
+        if kind == "post":
+            result = vk_api(access_token, "wall.getById", {"posts": f"{owner_id}_{item_id}"})
+            item = result[0] if isinstance(result, list) and result else None
+            title = str(item.get("text", "") if isinstance(item, dict) else "")
+        else:
+            video_ref = f"{owner_id}_{item_id}" + (f"_{access_key}" if access_key else "")
+            result = vk_api(access_token, "video.get", {"videos": video_ref})
+            items = result.get("items", []) if isinstance(result, dict) else []
+            item = items[0] if items else None
+            title = str(item.get("title", "") if isinstance(item, dict) else "")
+        if not isinstance(item, dict):
+            raise ValueError("VK не нашёл открытую публикацию или видео по этой ссылке.")
+        marker = re.compile(r"(?:чат[\s\-_‑–—]*про|chat[\s\-_‑–—]*pro)", re.IGNORECASE)
+        if not marker.search(title):
+            raise ValueError("В названии или тексте VK-публикации должно быть «Chat-Pro» или «Чат-Про».")
+        likes = int((item.get("likes") or {}).get("count", 0) or 0)
+        if likes < 1:
+            raise ValueError("На момент проверки у публикации должен быть хотя бы один лайк.")
+        current = now(); submission_id = uid("vkreview")
+        con.execute("""INSERT INTO vk_review_submissions(id,channel_id,submitter_id,vk_target_id,external_url,vk_kind,vk_owner_id,vk_item_id,verified_title,likes_count,reward_stars,status,eligible_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (submission_id, None, user["id"], None, external_url, kind, owner_id, item_id, " ".join(title.split())[:2000], likes, likes, "pending", current + 600, current))
+        return self.json({"ok": True, "submissionId": submission_id, "rewardStars": likes, "eligibleAt": current + 600})
+
+    def process_vk_review_submissions(self, con):
+        current = now()
+        for submission in con.execute("SELECT * FROM vk_review_submissions WHERE status = 'pending' AND eligible_at <= ? ORDER BY eligible_at LIMIT 100", (current,)).fetchall():
+            if not con.execute("UPDATE vk_review_submissions SET status = 'credited', credited_at = ? WHERE id = ? AND status = 'pending'", (current, submission["id"])).rowcount:
+                continue
+            try:
+                self.credit_stars(con, submission["submitter_id"], submission["reward_stars"])
+            except ValueError as error:
+                con.execute("UPDATE vk_review_submissions SET status = 'pending', credited_at = NULL WHERE id = ?", (submission["id"],))
+                print(f"Не удалось начислить награду за ролик или пост VK: {error}")
+                continue
+            self.record_star_transaction(con, submission["submitter_id"], submission["reward_stars"], "vk_chat_pro_review_reward", "Награда за ролик или пост о Chat-Pro в VK")
+            con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), submission["submitter_id"], "vk_review_reward", f"Начислено ★ {submission['reward_stars']} за ролик или пост о Chat-Pro в VK.", submission["id"], current))
+
+    def update_vk_review_submission(self, con, body):
+        submission_id = str(body.get("submissionId", "")).strip()
+        action = str(body.get("action", "")).strip()
+        submission = con.execute("SELECT * FROM vk_review_submissions WHERE id = ?", (submission_id,)).fetchone()
+        if not submission or action not in {"credit", "reject", "revoke"}:
+            raise ValueError("Заявка или действие не найдены.")
+        current = now()
+        if action == "credit":
+            if not con.execute("UPDATE vk_review_submissions SET status = 'credited', credited_at = ? WHERE id = ? AND status = 'pending'", (current, submission_id)).rowcount:
+                raise ValueError("Заявка уже обработана.")
+            self.credit_stars(con, submission["submitter_id"], submission["reward_stars"])
+            self.record_star_transaction(con, submission["submitter_id"], submission["reward_stars"], "vk_chat_pro_review_reward", "Награда за ролик или пост о Chat-Pro в VK")
+            text = f"Администрация одобрила ролик или пост VK: начислено ★ {submission['reward_stars']}."
+        elif action == "reject":
+            if not con.execute("UPDATE vk_review_submissions SET status = 'rejected', rejected_at = ? WHERE id = ? AND status = 'pending'", (current, submission_id)).rowcount:
+                raise ValueError("Отклонить можно только ожидающую заявку.")
+            text = "Администрация отклонила заявку на награду за ролик или пост VK."
+        else:
+            if submission["status"] != "credited":
+                raise ValueError("Отозвать можно только начисленную награду.")
+            user = con.execute("SELECT stars FROM users WHERE id = ?", (submission["submitter_id"],)).fetchone()
+            if not user: raise ValueError("Пользователь не найден.")
+            actual = min(int(submission["reward_stars"]), int(user["stars"]))
+            con.execute("UPDATE users SET stars = stars - ? WHERE id = ?", (actual, submission["submitter_id"]))
+            con.execute("UPDATE vk_review_submissions SET status = 'revoked', rejected_at = ? WHERE id = ?", (current, submission_id))
+            if actual: self.record_star_transaction(con, submission["submitter_id"], -actual, "vk_chat_pro_review_reversal", "Отмена награды за ролик или пост о Chat-Pro в VK")
+            text = "Администрация отменила награду за ролик или пост VK из-за нарушения правил или накрутки."
+        con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), submission["submitter_id"], "vk_review_submission", text, submission_id, current))
+        return self.json({"ok": True})
+
+    def respond_to_appeal(self, con, body):
+        appeal_type = str(body.get("appealType", "")).strip()
+        appeal_id = str(body.get("appealId", "")).strip()
+        response = str(body.get("response", "")).strip()
+        if appeal_type not in {"report", "submission", "vk-review"} or not appeal_id or not response or len(response) > 2000:
+            raise ValueError("Введите ответ длиной до 2000 символов.")
+        table, user_column = {"report": ("reports", "created_by"), "submission": ("channel_share_submissions", "submitter_id"), "vk-review": ("vk_review_submissions", "submitter_id")}[appeal_type]
+        row = con.execute(f"SELECT {user_column} AS user_id FROM {table} WHERE id = ?", (appeal_id,)).fetchone()
+        if not row:
+            raise ValueError("Обращение не найдено.")
+        current = now()
+        con.execute(f"UPDATE {table} SET admin_response = ?, responded_at = ?, responded_by = 'admin' WHERE id = ?", (response, current, appeal_id))
+        if row["user_id"]:
+            con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), row["user_id"], "admin_response", f"Ответ администрации: {response}", appeal_id, current))
+        return self.json({"ok": True})
+
+    def update_channel_share_submission(self, con, body):
+        submission_id = str(body.get("submissionId", "")).strip()
+        action = str(body.get("action", "")).strip()
+        if action not in {"credit", "reject", "revoke"}:
+            raise ValueError("Неизвестное действие.")
+        submission = con.execute("SELECT * FROM channel_share_submissions WHERE id = ?", (submission_id,)).fetchone()
+        if not submission:
+            raise ValueError("Заявка не найдена.")
+        current = now()
+        if action == "credit":
+            updated = con.execute("UPDATE channel_share_submissions SET status = 'credited', credited_at = ? WHERE id = ? AND status = 'pending'", (current, submission_id)).rowcount
+            if not updated:
+                raise ValueError("Заявка уже обработана.")
+            self.credit_stars(con, submission["submitter_id"], submission["reward_stars"])
+            self.record_star_transaction(con, submission["submitter_id"], submission["reward_stars"], "channel_share_reward", "Награда за публикацию канала")
+            text = f"Администрация одобрила заявку: начислено ★ {submission['reward_stars']}."
+        elif action == "reject":
+            updated = con.execute("UPDATE channel_share_submissions SET status = 'rejected', rejected_at = ? WHERE id = ? AND status = 'pending'", (current, submission_id)).rowcount
+            if not updated:
+                raise ValueError("Отменить можно только ожидающую заявку.")
+            text = "Администрация отклонила заявку на награду за публикацию канала."
+        else:
+            if submission["status"] != "credited":
+                raise ValueError("Отозвать можно только уже начисленную награду.")
+            user = con.execute("SELECT stars FROM users WHERE id = ?", (submission["submitter_id"],)).fetchone()
+            if not user:
+                raise ValueError("Пользователь не найден.")
+            # The user may have spent some stars after the payout, so never create a negative balance.
+            actual = min(int(submission["reward_stars"]), int(user["stars"]))
+            con.execute("UPDATE users SET stars = stars - ? WHERE id = ?", (actual, submission["submitter_id"]))
+            con.execute("UPDATE channel_share_submissions SET status = 'revoked', rejected_at = ? WHERE id = ?", (current, submission_id))
+            if actual:
+                self.record_star_transaction(con, submission["submitter_id"], -actual, "channel_share_reward_reversal", "Отмена награды за публикацию канала")
+            text = "Администрация отменила ранее начисленную награду за публикацию канала."
+        con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), submission["submitter_id"], "channel_share_submission", text, submission_id, current))
+        return self.json({"ok": True})
+
     def add_report(self, con, user, body):
         target_type = str(body.get("targetType", "")).strip()[:40]
         target_id = str(body.get("targetId", "")).strip()[:2048]
         reason = str(body.get("reason", "")).strip()[:1000]
-        if target_type not in {"profile", "profile-post", "review-page", "review", "story", "group-post", "channel"} or not target_id:
+        if target_type not in {"profile", "profile-post", "review-page", "review", "story", "group-post", "channel", "channel-comment"} or not target_id:
             raise ValueError("Не удалось отправить жалобу.")
         if target_type == "profile-post":
             post = con.execute("SELECT id FROM profile_posts WHERE id = ?", (target_id,)).fetchone()
@@ -5768,6 +9619,9 @@ class Handler(BaseHTTPRequestHandler):
             if post["owner_id"] and post["owner_id"] != user["id"]:
                 notice = "Поступила жалоба на пост «{}». Просим обратить внимание: за нарушение правил площадки и прав человека публикация удаляется.".format(post["title"])
                 con.execute("INSERT INTO notifications(id,user_id,kind,text,target_id,created_at) VALUES (?,?,?,?,?,?)", (uid("notice"), post["owner_id"], "group_post_report", notice, target_id, now()))
+        if target_type == "channel-comment":
+            if not con.execute("SELECT 1 FROM channel_comments WHERE id = ?", (target_id,)).fetchone():
+                raise ValueError("Комментарий не найден.")
         if target_type == "channel":
             channel = con.execute("SELECT owner_id, title FROM chats WHERE id = ? AND type = 'channel'", (target_id,)).fetchone()
             if not channel:
@@ -5810,6 +9664,8 @@ class Handler(BaseHTTPRequestHandler):
         author = con.execute("SELECT name, username FROM users WHERE id = ?", (author_id,)).fetchone()
         source_label = f"{author['name']} (@{author['username']})" if author else "удалённый автор"
         text = "\n\n".join(part for part in (comment, text) if part)
+        if target["type"] == "channel":
+            enforce_channel_post_limit(con, target_chat_id)
         message_id = uid("msg")
         con.execute("INSERT INTO messages(id,chat_id,sender_id,text,media_type,media_data,views,forwarded_from,source_type,source_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (message_id, target_chat_id, user["id"], text, media_type, media_data, 1, f"Источник: {source_label}", source_type, source_id, now()))
         if target["type"] == "channel":
@@ -5887,12 +9743,12 @@ class Handler(BaseHTTPRequestHandler):
             return int(row["count"] or 0)
 
         user = con.execute("SELECT stars, login_streak FROM users WHERE id = ?", (user_id,)).fetchone()
-        review_marker = re.compile(r"(?:чат[\s\-_‑–—]*про|chat[\s\-_‑–—]*pro)[\s\-_‑–—]*обзор", re.IGNORECASE)
+        review_marker = re.compile(r"(?:чат[\s\-_‑–—]*про|chat[\s\-_‑–—]*pro)", re.IGNORECASE)
         review_video = any(
             review_marker.search(str(row["text"] or ""))
             for row in con.execute(
                 """SELECT m.text FROM messages m JOIN chats c ON c.id = m.chat_id
-                   WHERE c.owner_id = ? AND c.type = 'channel' AND m.sender_id = ? AND m.media_type = 'video'""",
+                   WHERE c.owner_id = ? AND c.type = 'channel' AND m.sender_id = ?""",
                 (user_id, user_id),
             ).fetchall()
         )
@@ -5900,6 +9756,7 @@ class Handler(BaseHTTPRequestHandler):
             "stars_balance": int(user["stars"] or 0) if user else 0,
             "direct_chats": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'direct'", (user_id,)),
             "channels_joined": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'channel' AND c.owner_id != ?", (user_id, user_id)),
+            "channel_subscriptions": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'channel' AND c.owner_id != ?", (user_id, user_id)),
             "communities_joined": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'community'", (user_id,)),
             "groups_joined": count("SELECT count(*) AS count FROM chat_members cm JOIN chats c ON c.id = cm.chat_id WHERE cm.user_id = ? AND c.type = 'group'", (user_id,)),
             "channels_created": count("SELECT count(*) AS count FROM chats WHERE owner_id = ? AND type = 'channel'", (user_id,)),
@@ -5910,10 +9767,11 @@ class Handler(BaseHTTPRequestHandler):
             "group_subscribers": audience("group"),
             "messages": count("SELECT count(*) AS count FROM messages WHERE sender_id = ?", (user_id,)),
             "posts": count("SELECT count(*) AS count FROM profile_posts WHERE user_id = ?", (user_id,)),
+            "channel_comments_written": count("SELECT count(*) AS count FROM channel_comments cc JOIN messages m ON m.id = cc.message_id JOIN chats c ON c.id = m.chat_id WHERE cc.user_id = ? AND cc.automated = 0 AND c.type = 'channel'", (user_id,)),
             "stories": count("SELECT count(*) AS count FROM stories WHERE user_id = ?", (user_id,)),
             "reviews": count("SELECT count(*) AS count FROM reviews WHERE created_by = ?", (user_id,)),
             "donations_sent": count("SELECT count(*) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_sent'", (user_id,)),
-            "stars_donated": count("SELECT COALESCE(SUM(ABS(amount)), 0) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_sent'", (user_id,)),
+            "stars_donated": count("SELECT COALESCE(SUM(ABS(amount)), 0) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_sent' AND created_at >= ?", (user_id, int(datetime.datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp()))),
             "donations_received": count("SELECT count(*) AS count FROM star_transactions WHERE user_id = ? AND kind = 'donation_received'", (user_id,)),
             "login_streak": int(user["login_streak"] or 0) if user else 0,
             "completed_calls": count("SELECT count(*) AS count FROM calls WHERE (caller_id = ? OR receiver_id = ?) AND answer_sdp IS NOT NULL", (user_id, user_id)),
@@ -6009,38 +9867,72 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             levels = []
         activity = self.activity_metrics(con, user_id)
-        activity.update({
-            "communities": activity["communities_created"],
-            "channels": activity["channels_created"],
-        })
-        purchased_ids = {
-            row["level_id"] for row in con.execute("SELECT level_id FROM account_level_purchases WHERE user_id = ?", (user_id,)).fetchall()
-        }
-        granted_ids = {
-            row["level_id"] for row in con.execute("SELECT level_id FROM account_level_reward_grants WHERE user_id = ?", (user_id,)).fetchall()
-        }
-        granted_index = max((index for index, level in enumerate(levels) if level["id"] in granted_ids), default=-1)
-        current_index = -1
-        level_states = []
+        activity.update({"communities": activity["communities_created"], "channels": activity["channels_created"]})
+        current_time = now()
+        legacy_purchased_ids = {row["level_id"] for row in con.execute(
+            "SELECT level_id FROM account_level_purchases WHERE user_id = ?", (user_id,)
+        ).fetchall()}
+        granted_ids = {row["level_id"] for row in con.execute(
+            "SELECT level_id FROM account_level_reward_grants WHERE user_id = ?", (user_id,)
+        ).fetchall()}
+        admin_grant = con.execute(
+            "SELECT level_id FROM admin_account_level_grants WHERE user_id = ?", (user_id,)
+        ).fetchone()
+        if admin_grant:
+            granted_ids.add(admin_grant["level_id"])
+        subscription_rows = con.execute(
+            """SELECT * FROM account_level_subscriptions
+               WHERE user_id = ? AND status IN ('active', 'cancelled', 'payment_failed') AND active_until > ?""",
+            (user_id, current_time),
+        ).fetchall()
+        subscribed_ids = {row["level_id"] for row in subscription_rows}
+        subscription_by_level = {row["level_id"]: dict(row) for row in subscription_rows}
+
+        earned_indexes = []
         for index, level in enumerate(levels):
             criteria = level.get("criteria", {}) or {}
-            earned = all(activity.get(key, 0) >= value for key, value in criteria.items())
-            purchased = level["id"] in purchased_ids
-            granted = index <= granted_index
-            unlocked = granted or index == 0 or (current_index == index - 1 and (earned or purchased))
+            if index == 0 or all(activity.get(key, 0) >= value for key, value in criteria.items()):
+                earned_indexes.append(index)
+            else:
+                break
+        earned_index = earned_indexes[-1] if earned_indexes else -1
+        achievement = con.execute("SELECT highest_level_index FROM account_level_achievements WHERE user_id = ?", (user_id,)).fetchone()
+        highest_achievement_index = int(achievement["highest_level_index"]) if achievement else 0
+        if earned_index > highest_achievement_index:
+            con.execute(
+                """INSERT INTO account_level_achievements(user_id, highest_level_index, updated_at) VALUES (?,?,?)
+                   ON CONFLICT(user_id) DO UPDATE SET highest_level_index = excluded.highest_level_index, updated_at = excluded.updated_at""",
+                (user_id, earned_index, current_time),
+            )
+            highest_achievement_index = earned_index
+        achievement_lost = highest_achievement_index > earned_index
+
+        level_states = []
+        current_index = -1
+        for index, level in enumerate(levels):
+            criteria = level.get("criteria", {}) or {}
+            earned = index <= earned_index
+            legacy_purchased = level["id"] in legacy_purchased_ids
+            granted = level["id"] in granted_ids
+            subscribed = level["id"] in subscribed_ids
+            paid_access = legacy_purchased or granted or subscribed
+            unlocked = index == 0 or (not achievement_lost and index <= earned_index) or paid_access
             if unlocked:
                 current_index = index
-            claimed = bool(con.execute("SELECT 1 FROM account_level_rewards WHERE user_id = ? AND level_id = ?", (user_id, level["id"])).fetchone())
-            level_states.append({**level, "earned": earned, "purchased": purchased, "granted": granted, "unlocked": unlocked, "rewardClaimed": claimed, "rewardAvailable": unlocked and not claimed})
+            claimed = bool(con.execute(
+                "SELECT 1 FROM account_level_rewards WHERE user_id = ? AND level_id = ?", (user_id, level["id"])
+            ).fetchone())
+            level_states.append({
+                **level, "earned": earned, "purchased": legacy_purchased, "granted": granted,
+                "subscribed": subscribed, "subscription": subscription_by_level.get(level["id"]),
+                "unlocked": unlocked, "rewardClaimed": claimed, "rewardAvailable": unlocked and not claimed,
+            })
         current = level_states[current_index] if current_index >= 0 else {"id": "regular", "title": "Обычный", "description": "Стандартный аккаунт.", "limits": {}, "reward": {"stars": 0}}
         next_level = level_states[current_index + 1] if current_index + 1 < len(level_states) else None
         return {
-            "current": current,
-            "next": next_level,
-            "levels": level_states,
-            "activity": activity,
-            "limits": self.effective_limits(con, user_id, current),
-            "rewardClaimed": bool(current.get("rewardClaimed", False)),
+            "current": current, "next": next_level, "levels": level_states, "activity": activity,
+            "limits": self.effective_limits(con, user_id, current), "rewardClaimed": bool(current.get("rewardClaimed", False)),
+            "achievementLost": achievement_lost,
         }
 
     def claim_account_level_reward(self, con, user, level_id):
@@ -6059,26 +9951,143 @@ class Handler(BaseHTTPRequestHandler):
         self.apply_reward_benefits(con, user["id"], "account_level_reward", level["id"], level["title"], reward)
         return self.json({"ok": True})
 
-    def buy_account_level(self, con, user, level_id):
+    def create_account_level_subscription(self, con, user, body):
+        if not yookassa_configured():
+            raise ValueError("Оплата ЮKassa пока не настроена. Попробуйте позже.")
+        if body.get("subscriptionTermsAccepted") is not True and str(body.get("subscriptionTermsAccepted", "")).lower() != "true":
+            raise ValueError("Для подписки нужно принять условия регулярных списаний.")
         data = self.account_level_data(con, user["id"])
+        level_id = str(body.get("levelId", "")).strip()
         next_level = data["next"]
-        if not next_level or next_level["id"] != str(level_id or ""):
-            raise ValueError("Купить можно только следующий уровень аккаунта.")
-        price = int(next_level.get("starsPrice", 0) or 0)
-        if price <= 0:
-            raise ValueError("Этот уровень нельзя купить за звёзды.")
-        debited = con.execute("UPDATE users SET stars = stars - ? WHERE id = ? AND stars >= ?", (price, user["id"], price)).rowcount
-        if not debited:
-            raise ValueError("Недостаточно звёзд для покупки уровня.")
-        con.execute("INSERT INTO account_level_purchases(user_id,level_id,purchased_at) VALUES (?,?,?)", (user["id"], next_level["id"], now()))
-        self.record_star_transaction(con, user["id"], -price, "account_level_purchase", f"Покупка уровня «{next_level['title']}»")
-        reward = next_level.get("purchaseReward", {})
-        stars = int(reward.get("stars", 0) or 0)
-        if stars:
-            self.credit_stars(con, user["id"], stars)
-            self.record_star_transaction(con, user["id"], stars, "account_level_purchase_reward", f"Награда за покупку уровня «{next_level['title']}»")
-        self.apply_reward_benefits(con, user["id"], "account_level_purchase", next_level["id"], next_level["title"], reward)
+        if not next_level or next_level["id"] != level_id:
+            raise ValueError("Подписку можно оформить только на следующий уровень аккаунта.")
+        monthly_price = normalize_money(next_level.get("monthlyPrice", "0"), "monthlyPrice")
+        if Decimal(monthly_price) <= 0:
+            raise ValueError("Для этого уровня не задана цена месячной подписки.")
+        existing = con.execute("SELECT * FROM account_level_subscriptions WHERE user_id = ? AND level_id = ?", (user["id"], level_id)).fetchone()
+        current_time = now()
+        if existing and existing["active_until"] > current_time and existing["status"] in {"active", "cancelled", "payment_failed"}:
+            raise ValueError("Подписка на этот уровень уже активна.")
+        if existing and con.execute(
+            """SELECT 1 FROM account_level_subscription_payments
+               WHERE subscription_id = ? AND paid_at IS NULL AND status IN ('creating', 'pending', 'waiting_for_capture')""",
+            (existing["id"],),
+        ).fetchone():
+            raise ValueError("Оплата подписки уже ожидает подтверждения. Завершите её или подождите отмены платежа.")
+        subscription_id = existing["id"] if existing else uid("levelsub")
+        if existing:
+            con.execute("""UPDATE account_level_subscriptions
+                           SET monthly_price = ?, payment_method_id = NULL, active_until = 0, next_charge_at = 0,
+                               status = 'payment_failed', terms_accepted_at = ?, updated_at = ? WHERE id = ?""",
+                        (monthly_price, current_time, current_time, subscription_id))
+        else:
+            con.execute("""INSERT INTO account_level_subscriptions(id,user_id,level_id,monthly_price,payment_method_id,active_until,next_charge_at,status,terms_accepted_at,created_at,updated_at)
+                           VALUES (?,?,?,?,NULL,0,0,'payment_failed',?,?,?)""",
+                        (subscription_id, user["id"], level_id, monthly_price, current_time, current_time, current_time))
+        payment_id = uid("levelsubpay")
+        con.execute("""INSERT INTO account_level_subscription_payments(id,subscription_id,amount_value,status,created_at,updated_at)
+                       VALUES (?,?,?,'creating',?,?)""", (payment_id, subscription_id, monthly_price, current_time, current_time))
+        payment = yookassa_request("/payments", "POST", {
+            "amount": {"value": monthly_price, "currency": "RUB"}, "capture": True, "save_payment_method": True,
+            "confirmation": {"type": "redirect", "return_url": f"{YOOKASSA_RETURN_URL}/payment-return?subscriptionOrder={payment_id}"},
+            "description": f"Chat-Pro: подписка на уровень «{next_level['title']}» на 30 дней",
+            "metadata": {"chat_pro_level_subscription_payment_id": payment_id},
+        }, idempotence_key=payment_id)
+        yookassa_payment_id = str(payment.get("id", ""))
+        confirmation_url = str((payment.get("confirmation") or {}).get("confirmation_url", ""))
+        if not yookassa_payment_id or not confirmation_url:
+            con.execute("UPDATE account_level_subscription_payments SET status = 'failed', updated_at = ? WHERE id = ?", (now(), payment_id))
+            raise ValueError("ЮKassa не вернула ссылку для оплаты. Попробуйте позже.")
+        con.execute("UPDATE account_level_subscription_payments SET yookassa_payment_id = ?, status = ?, updated_at = ? WHERE id = ?",
+                    (yookassa_payment_id, str(payment.get("status", "pending")), now(), payment_id))
+        return self.json({"ok": True, "subscriptionOrderId": payment_id, "confirmationUrl": confirmation_url})
+
+    def finalize_account_level_subscription_payment(self, con, payment_row):
+        if payment_row["paid_at"]:
+            return {"status": "succeeded", "activated": True}
+        if not payment_row["yookassa_payment_id"]:
+            raise ValueError("Платёж ещё создаётся.")
+        payment = yookassa_request(f"/payments/{payment_row['yookassa_payment_id']}")
+        status = str(payment.get("status", ""))
+        con.execute("UPDATE account_level_subscription_payments SET status = ?, updated_at = ? WHERE id = ?", (status or "unknown", now(), payment_row["id"]))
+        if status != "succeeded" or payment.get("paid") is not True:
+            return {"status": status or "pending", "activated": False}
+        subscription = con.execute("SELECT * FROM account_level_subscriptions WHERE id = ?", (payment_row["subscription_id"],)).fetchone()
+        metadata = payment.get("metadata") or {}
+        amount = payment.get("amount") or {}
+        if not subscription or metadata.get("chat_pro_level_subscription_payment_id") != payment_row["id"] or amount.get("currency") != "RUB" or amount.get("value") != payment_row["amount_value"]:
+            raise ValueError("Данные оплаты подписки не прошли проверку.")
+        claimed = con.execute("UPDATE account_level_subscription_payments SET paid_at = -1, status = 'succeeded', updated_at = ? WHERE id = ? AND paid_at IS NULL", (now(), payment_row["id"])).rowcount
+        if not claimed:
+            return {"status": "succeeded", "activated": True}
+        method = payment.get("payment_method") or {}
+        payment_method_id = str(method.get("id", "")) if method.get("saved") is True else ""
+        if not payment_method_id and not subscription["payment_method_id"]:
+            con.execute("UPDATE account_level_subscription_payments SET paid_at = NULL, status = 'failed', updated_at = ? WHERE id = ?", (now(), payment_row["id"]))
+            raise ValueError("ЮKassa не сохранила способ оплаты для продления подписки.")
+        current_time = now()
+        active_until = max(current_time, int(subscription["active_until"] or 0)) + 30 * 86400
+        con.execute("""UPDATE account_level_subscriptions
+                       SET payment_method_id = COALESCE(?, payment_method_id), active_until = ?, next_charge_at = ?,
+                           status = 'active', updated_at = ? WHERE id = ?""",
+                    (payment_method_id or None, active_until, active_until, current_time, subscription["id"]))
+        con.execute("UPDATE account_level_subscription_payments SET paid_at = ?, updated_at = ? WHERE id = ?", (current_time, current_time, payment_row["id"]))
+        return {"status": "succeeded", "activated": True, "activeUntil": active_until}
+
+    def check_account_level_subscription_payment(self, con, user, body):
+        payment_id = str(body.get("subscriptionOrderId", "")).strip()
+        payment = con.execute("""SELECT payment.* FROM account_level_subscription_payments payment
+                               JOIN account_level_subscriptions subscription ON subscription.id = payment.subscription_id
+                               WHERE payment.id = ? AND subscription.user_id = ?""", (payment_id, user["id"])).fetchone()
+        if not payment:
+            raise ValueError("Заказ подписки не найден.")
+        return self.json({"ok": True, **self.finalize_account_level_subscription_payment(con, payment)})
+
+    def cancel_account_level_subscription(self, con, user, body):
+        level_id = str(body.get("levelId", "")).strip()
+        changed = con.execute("""UPDATE account_level_subscriptions SET status = 'cancelled', updated_at = ?
+                               WHERE user_id = ? AND level_id = ? AND status = 'active' AND active_until > ?""",
+                              (now(), user["id"], level_id, now())).rowcount
+        if not changed:
+            raise ValueError("Активная подписка на этот уровень не найдена.")
         return self.json({"ok": True})
+
+    def process_account_level_subscriptions(self, con):
+        current_time = now()
+        pending = con.execute("SELECT * FROM account_level_subscription_payments WHERE paid_at IS NULL AND yookassa_payment_id IS NOT NULL AND status IN ('pending', 'waiting_for_capture') LIMIT 100").fetchall()
+        for payment in pending:
+            try:
+                self.finalize_account_level_subscription_payment(con, payment)
+            except ValueError:
+                pass
+        due = con.execute("""SELECT subscription.* FROM account_level_subscriptions subscription
+                           WHERE subscription.status = 'active' AND subscription.next_charge_at <= ?
+                             AND NOT EXISTS (SELECT 1 FROM account_level_subscription_payments payment
+                                             WHERE payment.subscription_id = subscription.id AND payment.paid_at IS NULL
+                                               AND payment.status IN ('creating', 'pending', 'waiting_for_capture'))
+                           LIMIT 50""", (current_time,)).fetchall()
+        for subscription in due:
+            if not subscription["payment_method_id"]:
+                con.execute("UPDATE account_level_subscriptions SET status = 'payment_failed', updated_at = ? WHERE id = ?", (current_time, subscription["id"]))
+                continue
+            payment_id = uid("levelsubpay")
+            con.execute("UPDATE account_level_subscriptions SET next_charge_at = ?, updated_at = ? WHERE id = ?", (current_time + 300, current_time, subscription["id"]))
+            con.execute("INSERT INTO account_level_subscription_payments(id,subscription_id,amount_value,status,created_at,updated_at) VALUES (?,?,?,'creating',?,?)", (payment_id, subscription["id"], subscription["monthly_price"], current_time, current_time))
+            try:
+                payment = yookassa_request("/payments", "POST", {
+                    "amount": {"value": subscription["monthly_price"], "currency": "RUB"}, "capture": True,
+                    "payment_method_id": subscription["payment_method_id"],
+                    "description": f"Chat-Pro: продление подписки на уровень на 30 дней",
+                    "metadata": {"chat_pro_level_subscription_payment_id": payment_id},
+                }, idempotence_key=payment_id)
+                yookassa_payment_id = str(payment.get("id", ""))
+                if not yookassa_payment_id:
+                    raise ValueError("ЮKassa не вернула идентификатор платежа.")
+                con.execute("UPDATE account_level_subscription_payments SET yookassa_payment_id = ?, status = ?, updated_at = ? WHERE id = ?", (yookassa_payment_id, str(payment.get("status", "pending")), now(), payment_id))
+                self.finalize_account_level_subscription_payment(con, con.execute("SELECT * FROM account_level_subscription_payments WHERE id = ?", (payment_id,)).fetchone())
+            except ValueError:
+                con.execute("UPDATE account_level_subscription_payments SET status = 'failed', updated_at = ? WHERE id = ?", (now(), payment_id))
+                con.execute("UPDATE account_level_subscriptions SET status = 'payment_failed', updated_at = ? WHERE id = ?", (now(), subscription["id"]))
 
     def start_call(self, con, user, body):
         chat_id = body.get("chatId")
@@ -6108,6 +10117,12 @@ class Handler(BaseHTTPRequestHandler):
         if active_index is None or current_index < active_index:
             raise ValueError("Эта функция доступна с уровня «Активный». Повысьте уровень аккаунта.")
 
+    def require_enhanced_account_level(self, con, user_id):
+        data = self.account_level_data(con, user_id)
+        current_index = next((index for index, level in enumerate(data["levels"]) if level["id"] == data["current"]["id"]), -1)
+        if current_index <= 0:
+            raise ValueError("Эта функция доступна на уровне выше «Обычного». Повысьте уровень аккаунта.")
+
     def poll_calls(self, con, user):
         rows = con.execute(
             """SELECT * FROM calls WHERE (caller_id = ? OR receiver_id = ?) AND status IN ('ringing','accepted')
@@ -6116,11 +10131,11 @@ class Handler(BaseHTTPRequestHandler):
         ).fetchall()
         calls = []
         for row in rows:
-            caller = con.execute("SELECT name,username,call_ringtone FROM users WHERE id=?", (row["caller_id"],)).fetchone()
+            caller = con.execute("SELECT name,username,call_ringtone,call_ringtone_data FROM users WHERE id=?", (row["caller_id"],)).fetchone()
             calls.append({
                 "id": row["id"], "chatId": row["chat_id"], "callerId": row["caller_id"], "receiverId": row["receiver_id"],
                 "callType": row["call_type"], "offerSdp": loads(row["offer_sdp"], {}), "answerSdp": loads(row["answer_sdp"], None),
-                "status": row["status"], "callerName": caller["name"] if caller else "Пользователь", "callerRingtone": caller["call_ringtone"] if caller else "classic", "createdAt": row["created_at"],
+                "status": row["status"], "callerName": caller["name"] if caller else "Пользователь", "callerRingtone": caller["call_ringtone"] if caller else "classic", "callerRingtoneData": caller["call_ringtone_data"] if caller and row["receiver_id"] == user["id"] and caller["call_ringtone"] == "custom" else None, "createdAt": row["created_at"],
             })
         return self.json({"ok": True, "calls": calls})
 
@@ -6165,7 +10180,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def admin_bootstrap(self, con):
         settings = {r["key"]: loads(r["value"], {}) for r in con.execute("SELECT * FROM settings").fetchall()}
-        users = [public_user(r) for r in con.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()]
+        users = []
+        for row in con.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall():
+            item = public_user(row)
+            item["accountLevel"] = self.account_level_data(con, row["id"], settings.get("account_levels", []))["current"]
+            users.append(item)
         chats = [chat_to_dict(r) for r in con.execute("SELECT * FROM chats ORDER BY updated_at DESC").fetchall()]
         members = [dict(r) for r in con.execute("SELECT * FROM chat_members").fetchall()]
         messages = []
@@ -6217,6 +10236,28 @@ class Handler(BaseHTTPRequestHandler):
                LEFT JOIN messages message ON message.id = rule.target_message_id
                ORDER BY rule.created_at DESC"""
         ).fetchall()]
+        payout_requests = [dict(r) for r in con.execute(
+            """SELECT request.*, owner.name AS owner_name, owner.username AS owner_username,
+                      chat.title AS channel_title, chat.type AS channel_type
+               FROM channel_payout_requests request
+               JOIN users owner ON owner.id = request.owner_user_id
+               JOIN chats chat ON chat.id = request.channel_id
+               ORDER BY request.created_at DESC LIMIT 100"""
+        ).fetchall()]
+        share_submissions = [dict(r) for r in con.execute(
+            """SELECT submission.*, submitter.name AS submitter_name, submitter.username AS submitter_username,
+                      chat.title AS channel_title
+               FROM channel_share_submissions submission
+               JOIN users submitter ON submitter.id = submission.submitter_id
+               JOIN chats chat ON chat.id = submission.channel_id
+               ORDER BY submission.created_at DESC LIMIT 200"""
+        ).fetchall()]
+        vk_review_submissions = [dict(r) for r in con.execute(
+            """SELECT submission.*, submitter.name AS submitter_name, submitter.username AS submitter_username
+               FROM vk_review_submissions submission
+               JOIN users submitter ON submitter.id = submission.submitter_id
+               ORDER BY submission.created_at DESC LIMIT 200"""
+        ).fetchall()]
         reports = [dict(r) for r in con.execute(
             """SELECT r.*, u.name AS reporter_name, u.username AS reporter_username,
                       s.caption AS story_caption, s.media_data AS story_media_data,
@@ -6230,7 +10271,7 @@ class Handler(BaseHTTPRequestHandler):
                LEFT JOIN chats reported_channel ON r.target_type = 'channel' AND reported_channel.id = r.target_id
                ORDER BY r.created_at DESC LIMIT 200"""
         ).fetchall()]
-        return self.json({"ok": True, "settings": settings, "users": users, "chats": chats, "members": members, "messages": messages, "promotions": promos, "recommended": recommended, "activityRewards": activity_rewards, "statuses": statuses, "boosts": boosts, "channelGrowthJobs": channel_growth_jobs, "demoActivityPackages": demo_activity_packages, "demoActivitySubscriptions": demo_activity_subscriptions, "reports": reports, "automatedCommenters": automated_commenters, "automatedCommentRules": automated_comment_rules, "adminKeyHint": "По умолчанию: admin123"})
+        return self.json({"ok": True, "settings": settings, "users": users, "chats": chats, "members": members, "messages": messages, "promotions": promos, "recommended": recommended, "activityRewards": activity_rewards, "statuses": statuses, "boosts": boosts, "channelGrowthJobs": channel_growth_jobs, "demoActivityPackages": demo_activity_packages, "demoActivitySubscriptions": demo_activity_subscriptions, "payoutRequests": payout_requests, "reports": reports, "shareSubmissions": share_submissions, "vkReviewSubmissions": vk_review_submissions, "automatedCommenters": automated_commenters, "automatedCommentRules": automated_comment_rules, "adminKeyHint": "По умолчанию: admin123"})
 
     def read_json(self):
         length = int(self.headers.get("Content-Length", "0") or 0)
@@ -6310,17 +10351,28 @@ def run_background_worker() -> None:
     while True:
         try:
             with connect() as con:
+                cleanup_expired_deleted_accounts(con)
                 tick_boosts(con)
+                tick_channel_activity_regulator(con)
                 tick_channel_growth(con)
+                sync_account_level_activity_packages(con)
                 tick_demo_activity(con)
                 publish_scheduled_posts(con)
                 poll_telegram_channels(con)
                 poll_rss_channels(con)
-                poll_vk_channels(con)
+                poll_vk_channels(con, reward_processor)
+                publish_vk_channel_posts(con)
+                publish_vk_channel_targets(con)
+                moderate_vk_channel_targets(con, reward_processor)
                 publish_automated_comments(con)
+                publish_activity_comments(con)
                 reward_processor.process_recurring_star_rewards(con)
+                reward_processor.process_account_level_subscriptions(con)
+                reward_processor.process_channel_share_submissions(con)
+                reward_processor.process_vk_review_submissions(con)
                 reward_processor.process_ai_agent_autopilots(con)
                 reward_processor.process_ai_agent_channel_rules(con)
+                reward_processor.process_ai_agent_comment_moderation(con)
         except sqlite3.Error as error:
             print(f"Ошибка фоновой обработки: {error}")
         time.sleep(5)

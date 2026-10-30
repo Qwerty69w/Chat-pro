@@ -42,8 +42,6 @@ const CHANNEL_REACTION_OPTIONS = ["👍", "❤️", "🔥", "👏", "🤩", "⚡
 const DEFAULT_CHANNEL_REACTIONS = ["👍", "❤️", "🔥", "👏", "🤩", "⚡"];
 const CALL_RINGTONES = [
   { id: "classic", title: "Классический", description: "Спокойный стандартный сигнал" },
-  { id: "pulse", title: "Пульс", description: "Ритмичный двойной сигнал" },
-  { id: "bright", title: "Яркий", description: "Более высокий и заметный сигнал" },
 ];
 
 function channelReactionEmojis() {
@@ -62,6 +60,11 @@ function hasActiveAccountLevel() {
   const activeIndex = levels.findIndex((level) => level.id === "active");
   const currentIndex = levels.findIndex((level) => level.id === state?.accountLevel?.current?.id);
   return activeIndex >= 0 && currentIndex >= activeIndex;
+}
+
+function hasEnhancedAccountLevel() {
+  const levels = state?.accountLevel?.levels || [];
+  return levels.findIndex((level) => level.id === state?.accountLevel?.current?.id) > 0;
 }
 
 const app = document.querySelector("#app");
@@ -90,15 +93,43 @@ let publicLegal = null;
 let publicBranding = null;
 let chatActivityPingTimer = null;
 let lastChatActivity = { chatId: null, activity: "", sentAt: 0 };
+let shouldAnimatePanelEntrance = true;
 let globalSearchTimer = null;
 let globalSearchRequest = 0;
 let activeChatSearchOpen = false;
 let activeChatSearchQuery = "";
 let activeChatSearchTimer = null;
+let activeChatSearchResults = [];
+let activeChatSearchIndex = -1;
 let highlightedMessageSearch = { chatId: null, query: "" };
 let aiAgentConversation = [];
+let aiAgentModerationEvents = [];
+let aiAgentActionLog = [];
+let aiAgentModerationRules = [];
 const AI_AGENT_LIST_STATE_KEY = "chatpro_ai_agent_list_state_v1";
 const pendingOutgoingMessages = new Map();
+const chatScrollState = new Map();
+const MEDIA_CACHE_NAME = "chat-pro-media-v1";
+const leftListScrollTops = new Map();
+let channelFeed = { channels: [], offset: 0, hasMore: true, loading: false, loaded: false, error: "" };
+
+function rememberChatScroll(messagesBox, chatId = activeChatId) {
+  if (!messagesBox || !chatId) return;
+  chatScrollState.set(chatId, {
+    scrollTop: messagesBox.scrollTop,
+    distanceToBottom: messagesBox.scrollHeight - messagesBox.scrollTop - messagesBox.clientHeight,
+  });
+}
+
+async function clearMediaCache() {
+  if (!("caches" in window)) throw new Error("Кэш браузера не поддерживается.");
+  await caches.delete(MEDIA_CACHE_NAME);
+  navigator.serviceWorker?.controller?.postMessage({ type: "clear-media-cache" });
+}
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=20261025-media-cache").catch(() => {}));
+}
 
 function pinIcon(className = "") {
   return `<svg${className ? ` class="${className}"` : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12M8 4v5l-3 4h14l-3-4V4M12 13v7"/></svg>`;
@@ -144,14 +175,15 @@ function callControlIcon(name) {
 }
 
 const CHAT_WALLPAPERS = [
-  { id: "mint", title: "Мятный свет", description: "По вашему зелёному референсу" },
+  { id: "jade", title: "Нефритовая ночь", description: "Тёмный зелёный и бирюза" },
+  { id: "violet", title: "Фиолетовая ночь", description: "Глубокий пурпур и сирень" },
+  { id: "cobalt", title: "Кобальтовая ночь", description: "Насыщенный синий и лазурный" },
+  { id: "amber", title: "Янтарная ночь", description: "Тёмный графит и тёплое золото" },
   { id: "aurora", title: "Неоновая аура", description: "Розовый, синий и индиго" },
   { id: "noir", title: "Ночной бархат", description: "Глубокий сине-чёрный" },
   { id: "cyan", title: "Бирюзовая волна", description: "Яркий циан и синий" },
   { id: "mist", title: "Северный туман", description: "Холодный с мягким цветом" },
   { id: "sunset", title: "Тёплый закат", description: "Персиковый и лиловый" },
-  { id: "ocean", title: "Океан", description: "Светлая глубина" },
-  { id: "lavender", title: "Лаванда", description: "Нежный фиолетовый" },
   { id: "forest", title: "Лес", description: "Спокойный зелёный" },
   { id: "midnight", title: "Мотивация", description: "Сдержанный синий с фразами" },
   { id: "ember", title: "Янтарный огонь", description: "Авторский тёплый вариант" },
@@ -164,9 +196,7 @@ const DIALOG_PANEL_STYLES = [
   { id: "custom", title: "Свой цвет", description: "Выберите цвет вручную" },
   { id: "pearl", title: "Жемчужный", description: "Светлый голубой" },
   { id: "sky", title: "Небесный", description: "Светлый синий" },
-  { id: "mint", title: "Мятный", description: "Свежий зелёный" },
   { id: "sunset", title: "Закат", description: "Персиковый и лиловый" },
-  { id: "lavender", title: "Лаванда", description: "Нежный фиолетовый" },
   { id: "midnight", title: "Полночь", description: "Глубокий синий" },
   { id: "noir", title: "Ночной бархат", description: "Сине-чёрный" },
   { id: "aurora", title: "Аура", description: "Индиго и циан" },
@@ -205,6 +235,15 @@ function dialogMessageFont(font) {
   }[font] || 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif';
 }
 
+function applyDialogMessageFont(font) {
+  const fontFamily = dialogMessageFont(font);
+  document.documentElement.style.setProperty("--message-font", fontFamily);
+  document.querySelectorAll(".message__bubble, .message__text").forEach((element) => {
+    element.style.fontFamily = fontFamily;
+  });
+  return fontFamily;
+}
+
 function dialogBubbleTextColor(color = "#ffffff") {
   const hex = String(color).replace("#", "");
   if (!/^[\da-f]{6}$/i.test(hex)) return "#17212b";
@@ -233,6 +272,22 @@ function rememberRecentEmoji(emoji) {
 start();
 
 async function start() {
+  const oauthResult = new URLSearchParams(window.location.hash.slice(1));
+  const vkToken = oauthResult.get("vk_token");
+  const vkError = oauthResult.get("vk_error");
+  if (vkToken || vkError) {
+    window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}`);
+    if (vkToken) {
+      token = vkToken;
+      localStorage.setItem(TOKEN_KEY, token);
+    } else {
+      await loadPublicLegal();
+      renderAuth();
+      toast(vkError, true);
+      hidePageLoader();
+      return;
+    }
+  }
   if (!token) {
     await loadPublicLegal();
     renderAuth();
@@ -246,16 +301,20 @@ async function start() {
     menuOpen = false;
     await loadState();
     trimSavedAccountsToLimit();
-    const paymentOrder = new URLSearchParams(window.location.search).get("order");
-    if (paymentOrder && window.location.pathname === "/payment-return") {
+    const paymentQuery = new URLSearchParams(window.location.search);
+    const paymentOrder = paymentQuery.get("order");
+    const subscriptionOrder = paymentQuery.get("subscriptionOrder");
+    if ((paymentOrder || subscriptionOrder) && window.location.pathname === "/payment-return") {
       window.history.replaceState({}, "", "/");
       try {
-        const payment = await api("/api/yookassa/payments/status", { method: "POST", body: { orderId: paymentOrder } });
-        if (payment.credited) {
+        const payment = paymentOrder
+          ? await api("/api/yookassa/payments/status", { method: "POST", body: { orderId: paymentOrder } })
+          : await api("/api/account-level/subscriptions/status", { method: "POST", body: { subscriptionOrderId: subscriptionOrder } });
+        if (payment.credited || payment.activated) {
           await loadState();
-          toast(`Начислено ★ ${payment.stars}.`);
+          toast(payment.activated ? "Подписка на уровень активирована." : `Начислено ★ ${payment.stars}.`);
         } else {
-          toast("Оплата ещё обрабатывается. Проверьте баланс немного позже.");
+          toast("Оплата ещё обрабатывается. Проверьте статус немного позже.");
         }
       } catch (error) { toast(error.message, true); }
     }
@@ -268,7 +327,7 @@ async function start() {
         const result = await api("/api/invites/join", { method: "POST", body: { code: inviteCode } });
         activeChatId = result.chatId || null;
         await loadState();
-        toast(channelMatch ? "Вы открыли канал по ссылке." : "Вы вступили в группу по ссылке.");
+        toast(result.requested ? "Заявка отправлена на одобрение администрации канала." : channelMatch ? "Вы открыли канал по ссылке." : "Вы вступили в группу по ссылке.");
       } catch (error) { toast(error.message, true); }
     }
     renderApp();
@@ -337,7 +396,12 @@ async function uploadMessageAttachment(chatId, file) {
 }
 
 async function loadState() {
+  const previousUserId = state?.me?.id;
   state = await api("/api/bootstrap");
+  if (previousUserId !== state.me?.id) {
+    channelFeed = { channels: [], offset: 0, hasMore: true, loading: false, loaded: false, error: "" };
+    leftListScrollTops.clear();
+  }
   state.posts ||= [];
   state.stories ||= [];
   state.scheduledPosts ||= [];
@@ -345,10 +409,17 @@ async function loadState() {
   state.telegramChannelLinks ||= [];
   state.rssChannelLinks ||= [];
   state.vkChannelLinks ||= [];
+  state.vkChannelTargets ||= [];
   state.channelComments ||= [];
   state.channelStarPurchases ||= [];
+  state.channelPayoutSummaries ||= [];
+  state.channelPayoutRequests ||= [];
+  state.channelShareSubmissions ||= [];
+  state.vkReviewSubmissions ||= [];
+  state.demoActivityPackages ||= [];
   state.notifications ||= [];
   state.activities ||= {};
+  state.aiAgentBookings ||= [];
   aiAgentConversation = Array.isArray(state.aiAgentConversation) ? state.aiAgentConversation : [];
   document.body.classList.toggle("theme-dark", state.me.theme === "dark");
   document.documentElement.style.setProperty("--primary", state.me.siteColor || "#2aabee");
@@ -368,7 +439,7 @@ async function loadState() {
   document.body.style.setProperty("--own-bubble-text", ownBubbleText);
   document.body.style.setProperty("--other-bubble", otherBubble);
   document.body.style.setProperty("--other-bubble-text", otherBubbleText);
-  document.documentElement.style.setProperty("--message-font", dialogMessageFont(state.me.dialogFont || "business"));
+  applyDialogMessageFont(state.me.dialogFont || "business");
   document.documentElement.style.setProperty("--text-scale", ({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[state.me.textScale] || 1);
   const nightAppearance = effectiveNightAppearance();
   document.body.classList.toggle("night-appearance-customized", Boolean(state.me.nightAppearanceCustom) || !sameNightAppearance(defaultNightAppearance(), BASE_NIGHT_APPEARANCE));
@@ -389,8 +460,26 @@ async function loadState() {
 }
 
 function renderAuth() {
-  document.body.classList.remove("theme-dark");
+  document.body.classList.add("theme-dark");
   app.innerHTML = `
+    <style>
+      .auth-shell .auth-card { width: min(440px, 100%); padding: 28px; border: 1px solid rgba(119, 190, 230, .28); border-radius: 28px; color: #eaf5ff; background: linear-gradient(150deg, rgba(17, 34, 55, .96), rgba(10, 22, 39, .97)); box-shadow: 0 26px 80px rgba(0, 0, 0, .42), 0 0 38px rgba(42, 171, 238, .12), inset 0 1px rgba(255, 255, 255, .07); backdrop-filter: blur(18px); }
+      .auth-shell .auth-card .brand { margin-bottom: 20px; }
+      .auth-shell .auth-card .brand p, .auth-shell .auth-card .muted, .auth-shell .auth-card small { color: #a8bfd3; }
+      .auth-shell .auth-brand-title span { background: linear-gradient(110deg, #8deaff, #45b9ff 35%, #8b88ff 65%, #9ef4e2); background-size: 260% 100%; background-position: 100% 50%; -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-fill-color: transparent; animation: auth-brand-letter .72s cubic-bezier(.2, .8, .25, 1) var(--letter-delay) both, auth-brand-gradient 4s ease-in-out both; }
+      .auth-shell .auth-card .tabs { margin: 14px 0; }
+      .auth-shell .auth-card label { color: #c4d7e8; }
+      .auth-shell .auth-card input:not([type="checkbox"]) { min-height: 42px; padding: 9px 13px; border: 1px solid rgba(139, 180, 213, .26); border-radius: 13px; color: #edf7ff; background: rgba(4, 14, 28, .74); box-shadow: inset 0 1px rgba(255, 255, 255, .035); transition: border-color .18s ease, box-shadow .18s ease, background .18s ease; }
+      .auth-shell .auth-card input:not([type="checkbox"]):focus { border-color: rgba(72, 193, 255, .85); background: rgba(6, 20, 38, .96); box-shadow: 0 0 0 3px rgba(47, 177, 245, .18), 0 0 20px rgba(47, 177, 245, .16), inset 0 1px rgba(255, 255, 255, .06); outline: none; }
+      .auth-shell .auth-card .tab, .auth-shell .auth-card .button { min-height: 42px; border: 1px solid rgba(116, 193, 238, .2); border-radius: 13px; color: #deefff; background: linear-gradient(135deg, rgba(29, 55, 80, .96), rgba(20, 42, 65, .96)); box-shadow: 0 8px 20px rgba(0, 0, 0, .2), inset 0 1px rgba(255, 255, 255, .08); transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+      .auth-shell .auth-card .tab.active, .auth-shell .auth-card .button.primary { border-color: rgba(109, 222, 255, .3); color: #fff; background: linear-gradient(115deg, #168bce, #31b9e9 48%, #36c7bc); box-shadow: 0 9px 24px rgba(30, 166, 224, .26), inset 0 1px rgba(255, 255, 255, .28); }
+      .auth-shell .auth-card .button.primary { min-height: 44px; font-size: 15px; }
+      .auth-shell .auth-card .button.small { min-height: 36px; padding: 7px 12px; border-radius: 11px; }
+      .auth-shell .auth-card .tab:hover, .auth-shell .auth-card .tab:focus-visible, .auth-shell .auth-card .button:hover, .auth-shell .auth-card .button:focus-visible { border-color: rgba(100, 211, 255, .68); box-shadow: 0 0 0 3px rgba(45, 175, 239, .13), 0 10px 24px rgba(18, 149, 211, .2); transform: translateY(-1px); }
+      .auth-shell .auth-card > .card { border-color: rgba(120, 173, 211, .18); border-radius: 19px; color: #eaf5ff; background: rgba(7, 19, 34, .68); box-shadow: inset 0 1px rgba(255, 255, 255, .045); }
+      @keyframes auth-brand-gradient { from { background-position: 100% 50%; } to { background-position: 0 50%; } }
+      @media (prefers-reduced-motion: reduce) { .auth-shell .auth-brand-title span { animation: none; } }
+    </style>
     <main class="auth-shell">
       <section class="auth-card">
         <div class="brand">
@@ -402,6 +491,7 @@ function renderAuth() {
           <label>Username или e-mail<input name="login" required autocomplete="username" placeholder="andrei или you@example.com"></label>
           <label>Пароль<span class="password-field"><input name="password" type="password" required><button class="button small" type="button" data-toggle-password>Показать</button></span></label>
           <button class="button primary">Войти</button>
+          <button class="button" type="button" data-login-vk>Войти через VK</button>
           <button class="auth-link" type="button" data-open-password-reset>Забыли пароль?</button>
         </form>
         <form class="form hidden" data-form="register">
@@ -412,6 +502,7 @@ function renderAuth() {
           <small class="muted">Код подтверждения придёт на e-mail.</small>
           <label class="consent"><input name="agreementAccepted" type="checkbox" required> <span>Используя сайт, я принимаю <a href="${esc(publicLegal?.userAgreementUrl || "/requisites#user-agreement")}" target="_blank" rel="noopener">пользовательское соглашение</a>.</span></label>
           <button class="button primary">Создать аккаунт</button>
+          <button class="button" type="button" data-register-vk>Создать аккаунт через VK</button>
         </form>
         <div class="card"><b>Сохранённые аккаунты</b><div id="savedAccounts" class="grid" style="margin-top:10px"></div></div>
       </section>
@@ -424,8 +515,22 @@ function renderAuth() {
   app.querySelector('[data-form="login"]').addEventListener("submit", (event) => submitAuth(event, "/api/login"));
   app.querySelector('[data-form="register"]').addEventListener("submit", submitRegistration);
   app.querySelector("[data-open-password-reset]").addEventListener("click", openPasswordReset);
+  app.querySelector("[data-login-vk]").addEventListener("click", () => startVkLogin(false));
+  app.querySelector("[data-register-vk]").addEventListener("click", () => startVkLogin(true));
   app.querySelectorAll("[data-toggle-password]").forEach((button) => button.addEventListener("click", togglePasswordVisibility));
   renderSavedAccounts();
+}
+
+async function startVkLogin(requireAgreement) {
+  const agreement = app.querySelector('[data-form="register"] input[name="agreementAccepted"]');
+  if (requireAgreement && !agreement?.checked) {
+    toast("Перед входом через VK примите пользовательское соглашение.", true);
+    return;
+  }
+  try {
+    const result = await api("/api/auth/vk/start", { method: "POST", body: { agreementAccepted: requireAgreement && agreement.checked } });
+    window.location.assign(result.authorizationUrl);
+  } catch (error) { toast(error.message, true); }
 }
 
 async function submitRegistration(event) {
@@ -565,10 +670,17 @@ async function submitAuth(event, path) {
   }
 }
 
+function rememberLeftListScroll(list = app.querySelector("#leftList")) {
+  if (!list) return;
+  leftListScrollTops.set(list.dataset.section || activeSection, list.scrollTop);
+}
+
 function renderApp() {
   if (activeSection === "profile") return renderProfileScreen();
+  rememberChatScroll(app.querySelector("#messages"));
+  rememberLeftListScroll();
   app.innerHTML = `
-    <main class="app-shell without-rightbar${activeChatId ? " chat-is-open" : ""}">
+    <main class="app-shell without-rightbar${activeChatId ? " chat-is-open" : ""}${shouldAnimatePanelEntrance ? " app-shell--panel-entrance" : ""}">
       <aside class="sidebar ${chatBackgroundClass(state.me)}"${state.me.chatBackground === "custom" && state.me.chatBackgroundData ? ` style="--sidebar-chat-wallpaper: url('${esc(state.me.chatBackgroundData)}');"` : ""}>
         <header class="profile">
           <button class="profile-trigger" data-menu-toggle aria-expanded="${menuOpen}">
@@ -580,7 +692,7 @@ function renderApp() {
             <span class="profile-menu-arrow" aria-hidden="true">⌄</span>
           </button>
           <nav class="nav menu-drawer${menuOpen ? " open" : ""}" aria-hidden="${!menuOpen}">
-            ${navButton("chats", "Чаты", "💬")}${navButton("profile", "Профиль", "◉")}${navButton("ai-agent", "ИИ-агент", "")}${navButton("channels", "Создать канал", "")}${navButton("autoposting", "Автопостинг в соцсети", "")}${navButton("community", "Создать беседу", "👥")}${navButton("secret-chat", "Скрытый чат", "")}${navButton("stars", "Звёзды", "★")}${navButton("account-level", "Уровень аккаунта", "✦")}${navButton("reviews", "Отзывы о действиях людей", "★")}${navButton("activity-rewards", "Награды за активность", "✧")}${navButton("wallpapers", "Оформление диалогов", "")}${navButton("settings", "Настройки", "⚙")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a>
+            ${navButton("chats", "Чаты", "💬")}${navButton("profile", "Профиль", "◉")}${navButton("channels", "Создать канал", "")}${navButton("autoposting", "Автопостинг в соцсети", "")}${navButton("community", "Создать беседу", "👥")}${navButton("secret-chat", "Скрытый чат", "")}${navButton("stars", "Звёзды", "★")}${navButton("account-level", "Уровень аккаунта", "✦")}${navButton("activity-rewards", "Награды за активность", "✧")}${navButton("wallpapers", "Оформление диалогов", "")}${navButton("settings", "Настройки", "⚙")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a>
           </nav>
         </header>
         <div class="list" id="leftList"></div>
@@ -607,6 +719,7 @@ function renderApp() {
   bindSidebarResize(app.querySelector(".app-shell"), app.querySelector("[data-resize-sidebar]"));
   renderLeft();
   renderChat();
+  shouldAnimatePanelEntrance = false;
 }
 
 function syncMobileViewportHeight() {
@@ -671,7 +784,7 @@ function openMenuSection(section) {
 function openMobileChatMenu() {
   const overlay = document.createElement("div");
   overlay.className = "mobile-chat-menu-overlay";
-  overlay.innerHTML = `<section class="mobile-chat-menu" role="dialog" aria-modal="true" aria-label="Меню чата"><header><div><b>Меню</b><small>Навигация по Chat-Pro</small></div><button type="button" data-close-mobile-chat-menu aria-label="Закрыть меню">×</button></header><div class="mobile-chat-menu__actions"><button class="mobile-chat-menu__chats" type="button" data-mobile-chat-list>${navIcon("chats")}<span>Все чаты</span></button>${["profile", "ai-agent", "channels", "autoposting", "community", "secret-chat", "stars", "account-level", "reviews", "activity-rewards", "wallpapers", "settings"].map((section) => navButton(section, ({ profile: "Профиль", "ai-agent": "ИИ-агент", channels: "Создать канал", autoposting: "Автопостинг в соцсети", community: "Создать беседу", "secret-chat": "Скрытый чат", stars: "Звёзды", "account-level": "Уровень аккаунта", reviews: "Отзывы о действиях людей", "activity-rewards": "Награды за активность", wallpapers: "Оформление диалогов", settings: "Настройки" })[section], "")).join("")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a></div></section>`;
+  overlay.innerHTML = `<section class="mobile-chat-menu" role="dialog" aria-modal="true" aria-label="Меню чата"><header><div><b>Меню</b><small>Навигация по Chat-Pro</small></div><button type="button" data-close-mobile-chat-menu aria-label="Закрыть меню">×</button></header><div class="mobile-chat-menu__actions"><button class="mobile-chat-menu__chats" type="button" data-mobile-chat-list>${navIcon("chats")}<span>Все чаты</span></button>${["profile", "channels", "autoposting", "community", "secret-chat", "stars", "account-level", "activity-rewards", "wallpapers", "settings"].map((section) => navButton(section, ({ profile: "Профиль", channels: "Создать канал", autoposting: "Автопостинг в соцсети", community: "Создать беседу", "secret-chat": "Скрытый чат", stars: "Звёзды", "account-level": "Уровень аккаунта", "activity-rewards": "Награды за активность", wallpapers: "Оформление диалогов", settings: "Настройки" })[section], "")).join("")}<a class="nav-button" href="/requisites"><span class="nav-button__icon nav-button__icon--information" aria-hidden="true">${informationIcon()}</span><span class="nav-button__label">Информация</span></a></div></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-mobile-chat-menu]").addEventListener("click", close);
@@ -699,7 +812,7 @@ function navIcon(id) {
     autoposting: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8.68"/><path d="M20 4.5v4.18h-4.18"/><path d="M20 12a8 8 0 0 1-13.66 5.66L4 15.32"/><path d="M4 19.5v-4.18h4.18"/><path d="M9 12h6M12 9v6"/></svg>',
     "ai-agent": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="4"/><path d="M12 2.5v2M9 12h.01M15 12h.01M9 15.25c1.8 1.15 4.2 1.15 6 0M2.5 11.5H4M20 11.5h1.5"/></svg>',
     stars: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="m12 2.8 2.7 5.55 6.12.88-4.43 4.31 1.05 6.1L12 16.77l-5.44 2.86 1.05-6.1-4.43-4.31 6.12-.88L12 2.8Z"/></svg>',
-    "account-level": '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3.2 14.2 9.8 20.8 12l-6.6 2.2L12 20.8l-2.2-6.6L3.2 12l6.6-2.2L12 3.2Z"/></svg>',
+    "account-level": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 19 6v5.15c0 4.45-2.95 7.55-7 9.65-4.05-2.1-7-5.2-7-9.65V6l7-2.8Z"/><path d="m12 7.2.98 2.03 2.24.33-1.62 1.58.38 2.23L12 12.34l-1.98 1.03.38-2.23-1.62-1.58 2.24-.33L12 7.2Z"/></svg>',
     reviews: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3" width="17" height="18" rx="3"/><path d="m12 7 1.05 2.13 2.35.34-1.7 1.65.4 2.33L12 12.35l-2.1 1.1.4-2.33-1.7-1.65 2.35-.34L12 7Z"/><path d="M7.5 17h9"/></svg>',
     "activity-rewards": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 14.05 9.95 20.5 12l-6.45 2.05L12 20.5l-2.05-6.45L3.5 12l6.45-2.05L12 3.5Z"/></svg>',
     wallpapers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="8" cy="9" r="1.5"/><path d="m5.5 16 4.2-4.1 3.2 2.8 2.2-2 3.1 3.3"/></svg>',
@@ -714,28 +827,28 @@ function navButton(id, label, icon) { return `<button class="nav-button${activeS
 
 function renderLeft() {
   const box = app.querySelector("#leftList");
+  rememberLeftListScroll(box);
   box.dataset.section = activeSection;
-  if (activeSection === "chats") return renderChatsList(box);
-  if (activeSection === "archive") return renderArchiveList(box);
-  if (activeSection === "community") return renderGroupsList(box, "community");
-  if (activeSection === "channels") return renderGroupsList(box, "channel");
-  if (activeSection === "autoposting") return renderAutopostingPanel(box);
-  if (activeSection === "ai-agent") return renderAiAgentPanel(box);
-  if (activeSection === "stars") return renderStarsPanel(box);
-  if (activeSection === "account-level") return renderAccountLevelPanel(box);
-  if (activeSection === "reviews") return renderReviewsPanel(box);
-  if (activeSection === "activity-rewards") return renderActivityRewardsPanel(box);
-  if (activeSection === "wallpapers") return renderWallpaperSettings(box);
-  renderSettingsPanel(box, settingsSection);
+  if (activeSection === "chats") renderChatsList(box);
+  else if (activeSection === "archive") renderArchiveList(box);
+  else if (activeSection === "community") renderGroupsList(box, "community");
+  else if (activeSection === "channels") renderGroupsList(box, "channel");
+  else if (activeSection === "autoposting") renderAutopostingPanel(box);
+  else if (activeSection === "ai-agent") renderAiAgentPanel(box);
+  else if (activeSection === "stars") renderStarsPanel(box);
+  else if (activeSection === "account-level") renderAccountLevelPanel(box);
+  else if (activeSection === "reviews") renderReviewsPanel(box);
+  else if (activeSection === "activity-rewards") renderActivityRewardsPanel(box);
+  else if (activeSection === "wallpapers") renderWallpaperSettings(box);
+  else renderSettingsPanel(box, settingsSection);
+  const scrollTop = leftListScrollTops.get(activeSection);
+  if (Number.isFinite(scrollTop)) requestAnimationFrame(() => { if (box.isConnected) box.scrollTop = scrollTop; });
+  box.addEventListener("scroll", () => rememberLeftListScroll(box), { passive: true });
 }
 
 function renderChatsList(box) {
   const filters = [["all", "Все"], ["direct", "Диалоги"], ["community", "Беседы"], ["channel", "Каналы"]];
   const chats = visibleChats(false).filter((chat) => chatFilter === "all" || chat.type === chatFilter);
-  const hasOnlySavedChats = chatFilter === "all" && !chats.some((chat) => chat.type !== "saved");
-  const recommendedChannels = (chatFilter === "channel" || hasOnlySavedChats)
-    ? (state.recommended || []).map((rec) => state.chats.find((chat) => chat.id === rec.chat_id && chat.type === "channel" && !isMember(chat.id))).filter(Boolean)
-    : [];
   const storyStrip = directStoryStripHtml();
   box.dataset.dialogFilter = chatFilter;
   const agentVisible = chatFilter === "all" || chatFilter === "direct";
@@ -743,10 +856,9 @@ function renderChatsList(box) {
     ...chats.map((chat) => ({ kind: "chat", chat, pinned: Boolean(chat.pinned), updatedAt: Number(chat.updatedAt) || 0 })),
     ...(agentVisible ? [{ kind: "ai-agent", ...aiAgentListState() }] : []),
   ].sort((first, second) => Number(second.pinned) - Number(first.pinned) || second.updatedAt - first.updatedAt);
-  const channelsHtml = dialogRows.map((item) => item.kind === "ai-agent" ? aiAgentChatRow(item) : chatRow(item.chat)).join("") || (recommendedChannels.length ? '<p class="muted">Здесь появятся ваши диалоги. А пока — интересные каналы.</p>' : '<p class="muted">Пока нет диалогов.</p>');
-  const recommendationsHtml = recommendedChannels.length ? `<section class="recommended-channels"><div class="recommended-channels__title"><b>Рекомендованные каналы</b><span>Подборка для вас</span></div>${recommendedChannels.map(recommendedChannelRow).join("")}</section>` : "";
-  const activityPromoHtml = hasOnlySavedChats ? `<section class="activity-rewards-promo"><b>Проявляйте активность и получайте звёзды!</b><button class="button small" type="button" data-open-activity-rewards>Подробнее</button></section>` : "";
-  box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск сообщений и людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="globalSearch" placeholder="Поиск сообщений и людей"></label><div id="searchResults"></div>${channelsHtml}${recommendationsHtml}${activityPromoHtml}`;
+  const channelsHtml = dialogRows.map((item) => item.kind === "ai-agent" ? aiAgentChatRow(item) : chatRow(item.chat)).join("") || '<p class="muted">Пока нет диалогов.</p>';
+  const feedHtml = chatFilter === "all" ? channelFeedHtml() : "";
+  box.innerHTML = `<div class="chat-filters">${filters.map(([id, label]) => `<button class="chip${chatFilter === id ? " active" : ""}" data-chat-filter="${id}">${label}</button>`).join("")}</div>${storyStrip}<label class="chat-search" aria-label="Поиск сообщений и людей"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"></circle><path d="m15.2 15.2 4.3 4.3"></path></svg><input id="globalSearch" placeholder="Поиск сообщений и людей"></label><div id="searchResults"></div>${channelsHtml}${feedHtml}`;
   box.querySelectorAll("[data-chat-filter]").forEach((button) => button.addEventListener("click", () => { chatFilter = button.dataset.chatFilter; renderChatsList(box); }));
   bindChatRows(box);
   box.querySelector("[data-open-ai-agent-chat]")?.addEventListener("click", () => {
@@ -757,16 +869,61 @@ function renderChatsList(box) {
   box.querySelector("[data-ai-agent-menu]")?.addEventListener("click", (event) => openAiAgentMenu(event.currentTarget));
   bindStoriesStrip(box);
   box.querySelector("#globalSearch").addEventListener("input", searchGlobal);
-  box.querySelector("[data-open-activity-rewards]")?.addEventListener("click", () => openMenuSection("activity-rewards"));
-  box.querySelectorAll("[data-open-recommended-channel]").forEach((button) => button.addEventListener("click", () => {
-    activeChatId = button.dataset.openRecommendedChannel;
-    scrollChatToLatest = true;
-    renderApp();
-  }));
-  box.querySelectorAll("[data-join-recommended-channel]").forEach((button) => button.addEventListener("click", async (event) => {
-    try { await api("/api/chats/join", { method: "POST", body: { chatId: event.currentTarget.dataset.joinRecommendedChannel } }); toast("Вы подписались на канал."); await refresh(); }
+  box.querySelectorAll("[data-open-feed-channel]").forEach((button) => button.addEventListener("click", () => openChannelFeedChannel(button.dataset.openFeedChannel)));
+  box.querySelectorAll("[data-join-feed-channel]").forEach((button) => button.addEventListener("click", async (event) => {
+    try { const result = await api("/api/chats/join", { method: "POST", body: { chatId: event.currentTarget.dataset.joinFeedChannel } }); toast(result.requested ? "Заявка отправлена на одобрение." : "Вы подписались на канал."); await refresh(); }
     catch (error) { toast(error.message, true); }
   }));
+  box.querySelector("[data-load-channel-feed]")?.addEventListener("click", loadChannelFeed);
+  if (chatFilter === "all" && !channelFeed.loaded && !channelFeed.loading) void loadChannelFeed();
+}
+
+function channelFeedHtml() {
+  const rows = channelFeed.channels.map(channelFeedRow).join("");
+  const status = channelFeed.error
+    ? `<p class="muted">${esc(channelFeed.error)}</p><button class="button small" type="button" data-load-channel-feed>Повторить</button>`
+    : channelFeed.loading && !rows
+      ? '<p class="muted">Загружаем каналы…</p>'
+      : !rows && channelFeed.loaded
+        ? '<p class="muted">Публичных каналов пока нет.</p>'
+        : "";
+  const loadMore = channelFeed.hasMore && rows
+    ? `<button class="button small channel-feed__more" type="button" data-load-channel-feed ${channelFeed.loading ? "disabled" : ""}>${channelFeed.loading ? "Загрузка…" : "Показать ещё"}</button>`
+    : "";
+  return `<section class="channel-feed"><div class="channel-feed__title"><div><b>Каналы Chat-Pro</b><span>Проявляйте активность и получайте звёзды!</span></div></div>${rows}${status}${loadMore}</section>`;
+}
+
+function channelFeedRow(chat) {
+  const subscribed = isMember(chat.id);
+  return `<article class="channel-feed__item"><button class="channel-feed__info" type="button" data-open-feed-channel="${esc(chat.id)}">${chatAvatarHtml(chat)}<span><b>${esc(chat.title)}</b><small>${chat.subscriberCount} ${subscriberWord(chat.subscriberCount)}${chat.description ? ` · ${esc(chat.description)}` : ""}</small></span></button>${subscribed ? '<span class="channel-feed__subscribed">Вы подписаны</span>' : `<button class="button primary small" type="button" data-join-feed-channel="${esc(chat.id)}">Подписаться</button>`}</article>`;
+}
+
+async function loadChannelFeed() {
+  if (channelFeed.loading || (!channelFeed.hasMore && channelFeed.loaded)) return;
+  channelFeed.loading = true;
+  channelFeed.error = "";
+  if (activeSection === "chats" && chatFilter === "all") renderLeft();
+  try {
+    const data = await api(`/api/channel-feed?offset=${channelFeed.offset}&limit=15`);
+    const seen = new Set(channelFeed.channels.map((channel) => channel.id));
+    channelFeed.channels.push(...(data.channels || []).filter((channel) => !seen.has(channel.id)));
+    channelFeed.offset = Number(data.nextOffset) || channelFeed.channels.length;
+    channelFeed.hasMore = Boolean(data.hasMore);
+    channelFeed.loaded = true;
+  } catch (error) {
+    channelFeed.error = error.message || "Не удалось загрузить каналы.";
+  } finally {
+    channelFeed.loading = false;
+    if (activeSection === "chats" && chatFilter === "all") renderLeft();
+  }
+}
+
+function openChannelFeedChannel(chatId) {
+  const feedChannel = channelFeed.channels.find((channel) => channel.id === chatId);
+  if (feedChannel && !state.chats.some((channel) => channel.id === chatId)) state.chats.push(feedChannel);
+  activeChatId = chatId;
+  scrollChatToLatest = true;
+  renderApp();
 }
 
 function renderArchiveList(box) {
@@ -776,30 +933,95 @@ function renderArchiveList(box) {
 }
 
 function renderAiAgentPanel(box) {
-  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-администратор</b><small>Ваш помощник по сообщениям и управлению каналами.</small></div><span class="badge">Полный доступ</span></div><section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><p class="muted">Отправляю сообщения, подключаю RSS-автопостинг и веду доступные вам каналы. Для сайта пришлите RSS-ссылку и название канала.</p></section>${aiAgentSettingsHtml()}${aiAgentConversationHtml()}</section>`;
+  box.innerHTML = `<section class="ai-agent-panel"><div class="panel-title"><div><b>ИИ-администратор</b><small>Ваш помощник по сообщениям и управлению каналами.</small></div><span class="badge">Права и подтверждения</span></div><section class="card ai-agent-panel__notice"><b>Чем я могу помочь</b><p class="muted">Подключаю RSS-автопостинг: пришлите RSS-ссылку и ссылку своего канала. Могу подсказать источники новостей, технологий, спорта, культуры или бизнеса.</p></section>${aiAgentSettingsHtml()}${aiAgentConversationHtml()}</section>`;
   bindAiAgentSettings(box);
   bindAiAgentConversation(box);
 }
 
+
+function aiAgentModerationSettingsHtml() {
+  const chats = visibleChats(false).filter((chat) => ["channel", "group", "community"].includes(chat.type));
+  const firstRule = aiAgentModerationRules[0] || {};
+  const selectedChannel = firstRule.channelId || chats[0]?.id || "";
+  const selectedRule = aiAgentModerationRules.find((rule) => rule.channelId === selectedChannel) || firstRule;
+  const options = chats.map((chat) => `<option value="${esc(chat.id)}" ${chat.id === selectedChannel ? "selected" : ""}>${esc(chat.title)}${chat.type === "community" ? " · беседа" : ""}</option>`).join("");
+  return `<section class="card ai-agent-settings" data-ai-agent-moderation-settings><div class="panel-title"><div><b>Модерация каналов и бесед</b><small>Безопасный режим по умолчанию — ручная проверка. Автоудаление включайте только после явного решения.</small></div></div><form data-ai-moderation-form><label>Управляемый канал или беседа<select name="channelId" data-ai-moderation-channel required>${options || "<option value=\"\">Нет доступных объектов</option>"}</select></label><label>Слова и фразы для блокировки<textarea name="blockedWords" maxlength="3500" placeholder="мат, спам, мошенничество">${esc((selectedRule.blockedWords || []).join(", "))}</textarea></label><label>Смысловые правила, по одному на строку<textarea name="semanticRules" maxlength="2600" placeholder="Реклама услуг без разрешения\nПодозрение на мошенничество">${esc((selectedRule.semanticRules || []).join("\n"))}</textarea></label><label>Действие<select name="actionMode"><option value="review" ${selectedRule.actionMode !== "delete" ? "selected" : ""}>Отправлять на ручную проверку</option><option value="delete" ${selectedRule.actionMode === "delete" ? "selected" : ""}>Удалять автоматически</option></select></label><label>Проверять<select name="targetScope"><option value="comments" ${selectedRule.targetScope !== "messages" && selectedRule.targetScope !== "all" ? "selected" : ""}>Комментарии</option><option value="messages" ${selectedRule.targetScope === "messages" ? "selected" : ""}>Сообщения и публикации</option><option value="all" ${selectedRule.targetScope === "all" ? "selected" : ""}>Комментарии и сообщения</option></select></label><label class="consent"><input name="aiEnabled" type="checkbox" ${selectedRule.aiEnabled ? "checked" : ""}><span>Включить проверку смысла через ИИ</span></label><label class="consent"><input name="notifyOwner" type="checkbox" ${selectedRule.notifyOwner !== false ? "checked" : ""}><span>Уведомлять владельца о срабатываниях</span></label><button class="button small" type="submit">Сохранить правила</button></form></section>`;
+}
+
+function aiAgentModelPickerHtml() {
+  const settings = state.aiAgent || {};
+  const profiles = Array.isArray(settings.modelProfiles) ? settings.modelProfiles : [];
+  const selected = profiles.find((profile) => profile.id === settings.modelProfile) || profiles[0];
+  return `<details class="ai-agent-model-picker" data-ai-model-picker><summary class="button small">Выбор нейросети</summary><div class="ai-agent-model-picker__options">${profiles.map((profile) => `<label class="ai-agent-model-picker__option"><input type="radio" name="modelProfile" value="${esc(profile.id)}" ${profile.id === (selected?.id || "default") ? "checked" : ""}><span><b>${esc(profile.label)}</b><small>${esc(profile.description || "")}</small></span></label>`).join("")}</div></details>`;
+}
+
 function aiAgentSettingsHtml() {
   const settings = state.aiAgent || {};
-  const directChats = visibleChats(false).filter((chat) => chat.type === "direct");
-  const allowed = new Set(settings.allowedChatIds || []);
+  const booking = settings.bookingConfig || {};
   const isGlobalManager = String(state.me?.username || "").toLowerCase() === "andrei";
+  const bookingDetailFields = (booking.fields || []).map((field) => `<label>${esc(field)}<input name="bookingDetail" data-ai-booking-detail="${esc(field)}" maxlength="300"></label>`).join("");
   const globalItems = (settings.globalInstructions || []).map((item) => `<article class="ai-agent-global-item"><div><b>${esc(item.title)}</b><span>${esc(item.instruction)}</span></div><div><button class="button small" type="button" data-ai-global-edit="${esc(item.id)}">Изменить</button><button class="button small danger" type="button" data-ai-global-delete="${esc(item.id)}">Удалить</button></div></article>`).join("");
-  return `<section class="card ai-agent-settings"><div class="panel-title"><div><b>Мои правила общения</b><small>ИИ использует их только в ваших личных диалогах и отвечает от вашего имени.</small></div></div><form data-ai-agent-settings><label>Как общаться от вашего имени<textarea name="instruction" maxlength="3000" placeholder="Например: отвечай вежливо, кратко; по заказам уточняй номер и срок.">${esc(settings.instruction || "")}</textarea></label><label>Стиль<select name="style"><option value="friendly" ${settings.style === "friendly" ? "selected" : ""}>Дружелюбный</option><option value="business" ${settings.style === "business" ? "selected" : ""}>Деловой</option><option value="brief" ${settings.style === "brief" ? "selected" : ""}>Краткий</option></select></label><fieldset><legend>Диалоги для автопилота</legend><small>Автопилот отвечает только в отмеченных личных диалогах.</small>${directChats.map((chat) => `<label class="consent"><input type="checkbox" name="allowedChatIds" value="${esc(chat.id)}" ${allowed.has(chat.id) ? "checked" : ""}><span>${esc(chatMeta(chat).title)}</span></label>`).join("") || '<p class="muted">Личных диалогов пока нет.</p>'}</fieldset><label class="consent"><input name="autopilotEnabled" type="checkbox" ${settings.autopilotEnabled ? "checked" : ""}><span>Включить автопилот в отмеченных диалогах</span></label><button class="button small" type="submit">Сохранить мои правила</button></form></section>${isGlobalManager ? `<section class="card ai-agent-settings"><div class="panel-title"><div><b>Глобальные сценарии ИИ</b><small>Только для @andrei. Применяются ко всем, но не дают ИИ доступа к чужим данным и не исполняют код.</small></div></div><form data-ai-global-form><input type="hidden" name="id"><label>Название сценария<input name="title" maxlength="120" placeholder="Например: Ответы о доставке" required></label><label>Правило для ИИ<textarea name="instruction" maxlength="3000" placeholder="Например: если спрашивают о доставке, объясняй сроки и предлагай уточнить номер заказа." required></textarea></label><button class="button small" type="submit">Добавить глобальный сценарий</button></form><div class="ai-agent-global-list">${globalItems || '<p class="muted">Глобальных сценариев пока нет.</p>'}</div><p class="muted">В диалоге можно также написать: «добавь глобальный сценарий: Название: правило».</p></section>` : ""}`;
+  const bookings = state.aiAgentBookings.slice(0, 12).map((item) => `<article class="ai-agent-global-item"><div><b>${esc(item.customer_name)} · ${esc(item.resource_name)}</b><span>${new Date(item.start_at * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })}${item.contact ? ` · ${esc(item.contact)}` : ""} · ${item.status === "cancelled" ? "отменена" : "подтверждена"}</span></div><div>${item.status !== "cancelled" ? `<button class="button small danger" type="button" data-ai-booking-cancel="${esc(item.id)}">Отменить</button>` : ""}</div></article>`).join("");
+  return `<section class="card ai-agent-settings"><div class="panel-title"><div><b>Общие правила общения</b><small>Применяются к вашим задачам с автоответами в личных диалогах.</small></div></div><form data-ai-agent-settings><label>Имя вашего ИИ-администратора<input name="agentName" maxlength="60" placeholder="Например: Администратор Анна" value="${esc(settings.agentName || "ИИ-администратор")}"></label><label>Общие правила ответа<textarea name="instruction" maxlength="3000" placeholder="Например: отвечай вежливо, кратко; по заказам уточняй номер и срок.">${esc(settings.instruction || "")}</textarea></label><label>Стиль<select name="style"><option value="friendly" ${settings.style === "friendly" ? "selected" : ""}>Дружелюбный</option><option value="business" ${settings.style === "business" ? "selected" : ""}>Деловой</option><option value="brief" ${settings.style === "brief" ? "selected" : ""}>Краткий</option></select></label><p class="muted">Автоматические ответы теперь настраиваются отдельными задачами через кнопку «Список задач» в диалоге с ИИ-администратором.</p><fieldset><legend>Приём заявок и бронирований</legend><small>ИИ примет бронь в активной задаче автоответов, проверит доступность и сохранит запись.</small><label class="consent"><input name="bookingEnabled" type="checkbox" ${booking.enabled ? "checked" : ""}><span>Включить приём заявок</span></label><label>Тип услуги<input name="bookingServiceName" maxlength="100" placeholder="Ресторан, парикмахерская, салон" value="${esc(booking.serviceName || "")}"></label><label>Столики, мастера или другие ресурсы<textarea name="bookingResources" maxlength="3000" placeholder="Столик 1, Столик 2, Мастер Анна">${esc((booking.resources || []).join(", "))}</textarea></label><label>Рабочее время с<input name="bookingWorkingHoursStart" type="time" value="${esc(booking.workingHours?.start || "")}"></label><label>Рабочее время до<input name="bookingWorkingHoursEnd" type="time" value="${esc(booking.workingHours?.end || "")}"></label><label>Длительность одной записи, минут<input name="bookingDurationMinutes" type="number" min="10" max="480" value="${Number(booking.durationMinutes) || 60}"></label><label>Дополнительные поля через запятую<textarea name="bookingFields" maxlength="1000" placeholder="Количество гостей, услуга, комментарий">${esc((booking.fields || []).join(", "))}</textarea></label></fieldset><button class="button small" type="submit">Сохранить правила ИИ</button></form></section>${aiAgentModerationSettingsHtml()}<section class="card ai-agent-settings"><div class="panel-title"><div><b>Новая запись</b><small>Добавляйте бронирование вручную; совпадающее время для одного ресурса сервер не пропустит.</small></div></div><form data-ai-booking-form><label>Имя клиента<input name="customerName" maxlength="120" required></label><label>Телефон или контакт<input name="contact" maxlength="160"></label><label>Столик или специалист<input name="resourceName" maxlength="80" placeholder="Например: Столик 1" required></label><label>Дата и время<input name="startAt" type="datetime-local" required></label>${bookingDetailFields}<label>Комментарий<textarea name="comment" maxlength="300"></textarea></label><button class="button small" type="submit">Подтвердить запись</button></form><div class="ai-agent-global-list">${bookings || '<p class="muted">Записей пока нет.</p>'}</div></section>${isGlobalManager ? `<section class="card ai-agent-settings"><div class="panel-title"><div><b>Глобальные сценарии ИИ</b><small>Только для @andrei. Применяются ко всем, но не дают ИИ доступа к чужим данным и не исполняют код.</small></div></div><form data-ai-global-form><input type="hidden" name="id"><label>Название сценария<input name="title" maxlength="120" placeholder="Например: Ответы о доставке" required></label><label>Правило для ИИ<textarea name="instruction" maxlength="3000" placeholder="Например: если спрашивают о доставке, объясняй сроки и предлагай уточнить номер заказа." required></textarea></label><button class="button small" type="submit">Добавить глобальный сценарий</button></form><div class="ai-agent-global-list">${globalItems || '<p class="muted">Глобальных сценариев пока нет.</p>'}</div><p class="muted">В диалоге можно также написать: «добавь глобальный сценарий: Название: правило».</p></section>` : ""}`;
 }
 
 function bindAiAgentSettings(root) {
+  const bindModerationForm = () => {
+    const moderationForm = root.querySelector("[data-ai-moderation-form]");
+    if (!moderationForm) return;
+    const applyRule = () => {
+      const rule = aiAgentModerationRules.find((item) => item.channelId === moderationForm.elements.channelId.value) || {};
+      moderationForm.elements.blockedWords.value = (rule.blockedWords || []).join(", ");
+      moderationForm.elements.semanticRules.value = (rule.semanticRules || []).join("\n");
+      moderationForm.elements.actionMode.value = rule.actionMode === "delete" ? "delete" : "review";
+      moderationForm.elements.targetScope.value = ["comments", "messages", "all"].includes(rule.targetScope) ? rule.targetScope : "comments";
+      moderationForm.elements.aiEnabled.checked = Boolean(rule.aiEnabled);
+      moderationForm.elements.notifyOwner.checked = rule.notifyOwner !== false;
+    };
+    moderationForm.elements.channelId.addEventListener("change", applyRule);
+    moderationForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(moderationForm);
+      try {
+        const result = await api("/api/ai-agent/moderation/rules", { method: "POST", body: { channelId: data.get("channelId"), blockedWords: String(data.get("blockedWords") || "").split(/[,;\n]/), semanticRules: String(data.get("semanticRules") || "").split(/[,;\n]/), actionMode: data.get("actionMode"), targetScope: data.get("targetScope"), aiEnabled: moderationForm.elements.aiEnabled.checked, notifyOwner: moderationForm.elements.notifyOwner.checked } });
+        await loadState();
+        renderApp();
+        toast(result.message || "Правила модерации сохранены.");
+      } catch (error) { toast(error.message, true); }
+    });
+  };
+  bindModerationForm();
+  api("/api/ai-agent/moderation/rules").then((result) => {
+    aiAgentModerationRules = Array.isArray(result.rules) ? result.rules : [];
+    const settings = root.querySelector("[data-ai-agent-moderation-settings]");
+    if (settings) { settings.outerHTML = aiAgentModerationSettingsHtml(); bindModerationForm(); }
+  }).catch(() => {});
   root.querySelector("[data-ai-agent-settings]")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
     const data = new FormData(form);
     try {
-      await api("/api/ai-agent/settings", { method: "POST", body: { instruction: data.get("instruction"), style: data.get("style"), allowedChatIds: data.getAll("allowedChatIds"), templateMessageIds: state.aiAgent?.templateMessageIds || [], autopilotEnabled: form.elements.autopilotEnabled.checked } });
-      await loadState(); renderApp(); toast("Ваши правила общения сохранены.");
+      await api("/api/ai-agent/settings", { method: "POST", body: { instruction: data.get("instruction"), agentName: data.get("agentName"), style: data.get("style"), modelProfile: state.aiAgent?.modelProfile || "default", allowedChatIds: [], autopilotAllDirect: false, templateMessageIds: state.aiAgent?.templateMessageIds || [], autopilotEnabled: false, bookingConfig: { enabled: form.elements.bookingEnabled.checked, serviceName: data.get("bookingServiceName"), resources: String(data.get("bookingResources") || "").split(","), workingHours: { start: data.get("bookingWorkingHoursStart"), end: data.get("bookingWorkingHoursEnd") }, durationMinutes: data.get("bookingDurationMinutes"), fields: String(data.get("bookingFields") || "").split(",") } } });
+      await loadState(); renderApp(); toast("Настройки ИИ-администратора сохранены.");
     } catch (error) { toast(error.message, true); }
   });
+  root.querySelector("[data-ai-booking-form]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const startAt = new Date(String(data.get("startAt") || "")).getTime() / 1000;
+    const details = Object.fromEntries([...form.querySelectorAll("[data-ai-booking-detail]")].map((input) => [input.dataset.aiBookingDetail, input.value]).filter(([, value]) => String(value).trim()));
+    if (data.get("comment")) details["Комментарий"] = data.get("comment");
+    try {
+      const result = await api("/api/ai-agent/bookings", { method: "POST", body: { customerName: data.get("customerName"), contact: data.get("contact"), resourceName: data.get("resourceName"), startAt, details } });
+      await loadState(); renderApp(); toast(result.message);
+    } catch (error) { toast(error.message, true); }
+  });
+  root.querySelectorAll("[data-ai-booking-cancel]").forEach((button) => button.addEventListener("click", async () => {
+    if (!window.confirm("Отменить эту запись?")) return;
+    try { await api("/api/ai-agent/bookings/status", { method: "POST", body: { id: button.dataset.aiBookingCancel, status: "cancelled" } }); await loadState(); renderApp(); toast("Запись отменена."); }
+    catch (error) { toast(error.message, true); }
+  }));
   const globalForm = root.querySelector("[data-ai-global-form]");
   globalForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -824,37 +1046,150 @@ function bindAiAgentSettings(root) {
 }
 
 function aiAgentConversationHtml() {
-  const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
-  return `<section class="card ai-agent-help"><div class="panel-title"><div><b>Диалог с ИИ-администратором</b><small>${running ? "Автоматические задачи выполняются" : "Автоматические задачи остановлены"}</small></div><button class="button small" type="button" data-ai-agent-control>${running ? "Остановить" : "Возобновить"}</button></div><div class="ai-agent-conversation${aiAgentConversation.length ? "" : " hidden"}" data-ai-agent-conversation></div><form data-ai-agent-ask><textarea name="question" maxlength="2000" placeholder="Например: настрой автопостинг с сайта https://site.ru/feed.xml в канал Мой канал"></textarea><button class="button primary small" type="submit">Отправить</button></form></section>`;
+  const tasks = state.aiAgent?.tasks || [];
+  const activeTaskCount = tasks.filter((task) => task.enabled).length;
+  const isGlobalManager = String(state.me?.username || "").toLowerCase() === "andrei";
+  const agentName = String(state.aiAgent?.agentName || "").trim();
+  const dialogTitle = agentName && agentName !== "ИИ-администратор" ? `Диалог с ${esc(agentName)}` : "Диалог с ИИ-администратором";
+  const trainingHint = isGlobalManager ? '<p class="muted">Вы можете обучать ИИ в этом диалоге: «запомни: при вопросах о доставке уточняй номер заказа». Правило сохранится для новых ответов всем пользователям.</p>' : "";
+  return `<section class="card ai-agent-help"><div class="panel-title"><div><b>${dialogTitle}</b><small>${activeTaskCount ? `Активных задач: ${activeTaskCount}` : "Активных задач пока нет"}</small></div><button class="button small" type="button" data-ai-agent-tasks>Список задач</button></div>${trainingHint}<div class="ai-agent-conversation${aiAgentConversation.length ? "" : " hidden"}" data-ai-agent-conversation></div><form data-ai-agent-ask><textarea name="question" maxlength="2000" placeholder="Например: создай задачу: Отвечать на все входящие; консультируй по заказам"></textarea><div class="ai-agent-composer__controls"><div class="ai-agent-composer__buttons">${aiAgentModelPickerHtml()}<button class="button small" type="button" data-ai-agent-journal-toggle aria-expanded="false">Журнал ИИ</button><button class="button primary small" type="submit" data-ai-agent-send>Отправить</button></div><div class="ai-agent-composer__journals" data-ai-agent-journals hidden>${aiAgentModerationHtml()}${aiAgentActionLogHtml()}</div></div></form></section>`;
+}
+
+
+function aiAgentModerationContentHtml() {
+  const events = Array.isArray(aiAgentModerationEvents) ? aiAgentModerationEvents : [];
+  const rows = events.map((event) => {
+    const decisionLabels = { allow: "одобрено", delete: "удалено", review: "на проверке" };
+    const targetLabels = { comment: "комментарий", message: "сообщение" };
+    const date = event.created_at ? new Date(Number(event.created_at) * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "";
+    const reviewActions = event.decision === "review" ? `<div class="row"><button class="button small" type="button" data-ai-agent-moderation-resolve="${esc(event.id)}" data-decision="allow">Оставить</button><button class="button small danger" type="button" data-ai-agent-moderation-resolve="${esc(event.id)}" data-decision="delete">Удалить</button></div>` : "";
+    return `<article class="ai-agent-global-item"><div><b>${esc(event.channel_title || "Объект модерации")} · ${esc(targetLabels[event.target_type] || event.target_type || "объект")}</b><span>${esc(decisionLabels[event.decision] || event.decision || "неизвестно")} · ${esc(date)}${event.reason ? ` · ${esc(event.reason)}` : ""}</span><span>${esc(String(event.text || "").slice(0, 240))}</span></div>${reviewActions}</article>`;
+  }).join("");
+  return `${rows || '<p class="muted">Журнал модерации пока пуст.</p>'}`;
+}
+
+function aiAgentModerationHtml() {
+  return `<section class="card ai-agent-moderation" data-ai-agent-moderation><div class="panel-title"><div><b>Журнал ИИ-модерации</b><small>Удалённые и ожидающие проверки объекты</small></div><button class="button small" type="button" data-ai-agent-refresh-moderation>Обновить</button></div><div data-ai-agent-moderation-list>${aiAgentModerationContentHtml()}</div></section>`;
+}
+
+function aiAgentActionLogContentHtml() {
+  const statusLabels = { pending: "ожидает подтверждения", completed: "выполнено", rejected: "отклонено", failed: "ошибка", allow: "оставлено", delete: "удалено", published: "опубликовано" };
+  const rows = (Array.isArray(aiAgentActionLog) ? aiAgentActionLog : []).map((entry) => {
+    const date = entry.created_at ? new Date(Number(entry.created_at) * 1000).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }) : "";
+    const result = entry.result_text ? ` · ${entry.result_text}` : "";
+    return `<article class="ai-agent-global-item"><div><b>${esc(entry.action || "действие")}</b><span>${esc(statusLabels[entry.status] || entry.status || "неизвестно")} · ${esc(date)}</span><span>${esc(entry.summary || "")}${esc(result)}</span></div></article>`;
+  }).join("");
+  return rows || '<p class="muted">Журнал действий пока пуст.</p>';
+}
+
+function aiAgentActionLogHtml() {
+  return `<section class="card ai-agent-action-log" data-ai-agent-action-log><div class="panel-title"><div><b>Журнал действий ИИ</b><small>Аудит запросов, подтверждений и результатов</small></div><button class="button small" type="button" data-ai-agent-refresh-action-log>Обновить</button></div><div data-ai-agent-action-log-list>${aiAgentActionLogContentHtml()}</div></section>`;
 }
 
 function bindAiAgentConversation(root) {
   const conversation = root.querySelector("[data-ai-agent-conversation]");
+  const renderModeration = () => {
+    const panel = root.querySelector("[data-ai-agent-moderation]");
+    const list = panel?.querySelector("[data-ai-agent-moderation-list]");
+    if (!list) return;
+    list.innerHTML = aiAgentModerationContentHtml();
+    const refreshButton = panel.querySelector("[data-ai-agent-refresh-moderation]");
+    if (refreshButton) refreshButton.onclick = () => refreshModeration(false);
+    panel.querySelectorAll("[data-ai-agent-moderation-resolve]").forEach((button) => button.addEventListener("click", async () => {
+      const decision = button.dataset.decision;
+      if (decision === "delete" && !window.confirm("Удалить объект после ручной проверки?")) return;
+      try {
+        button.disabled = true;
+        await api("/api/ai-agent/moderation/resolve", { method: "POST", body: { eventId: button.dataset.aiAgentModerationResolve, decision } });
+        await refreshModeration();
+        toast(decision === "delete" ? "Объект удалён." : "Объект оставлен.");
+      } catch (error) { button.disabled = false; toast(error.message, true); }
+    }));
+  };
+  const refreshModeration = async (silent = true) => {
+    try {
+      const result = await api("/api/ai-agent/moderation/events?limit=50");
+      aiAgentModerationEvents = Array.isArray(result.events) ? result.events : [];
+      renderModeration();
+    } catch (error) { if (!silent) toast(error.message, true); }
+  };
+  const renderActionLog = () => {
+    const panel = root.querySelector("[data-ai-agent-action-log]");
+    const list = panel?.querySelector("[data-ai-agent-action-log-list]");
+    if (!list) return;
+    list.innerHTML = aiAgentActionLogContentHtml();
+    const refreshButton = panel.querySelector("[data-ai-agent-refresh-action-log]");
+    if (refreshButton) refreshButton.onclick = () => refreshActionLog(false);
+  };
+  const refreshActionLog = async (silent = true) => {
+    try {
+      const result = await api("/api/ai-agent/action-log?limit=100");
+      aiAgentActionLog = Array.isArray(result.logs) ? result.logs : [];
+      renderActionLog();
+    } catch (error) { if (!silent) toast(error.message, true); }
+  };
   const renderConversation = () => {
-    conversation.innerHTML = aiAgentConversation.map((item) => `<article class="ai-agent-message ai-agent-message--${item.role}"><b>${item.role === "user" ? "Вы" : "ИИ-администратор"}</b><span>${esc(item.text)}</span>${item.messages?.length ? `<div class="ai-agent-found-messages">${item.messages.map((message) => `<button type="button" data-ai-agent-open-message="${esc(message.id)}" data-ai-agent-chat="${esc(message.chat_id)}"><b>${esc(message.chat_title)}</b><span>${esc(message.text).slice(0, 220)}</span></button>`).join("")}</div>` : ""}</article>`).join("");
+    const thinkingHtml = `<span class="ai-agent-thinking" role="status" aria-label="ИИ-администратор готовит ответ"><i></i><i></i><i></i></span>`;
+    conversation.innerHTML = aiAgentConversation.map((item) => `<article class="ai-agent-message ai-agent-message--${item.role}"><b>${item.role === "user" ? "Вы" : (state.aiAgent?.agentName || "ИИ-администратор")}</b>${item.thinking ? thinkingHtml : `<span>${esc(item.text)}</span>`}${item.pendingAction ? `<div class="ai-agent-pending-action"><b>Требуется подтверждение</b><span>${esc(item.pendingAction.summary || "Опасное действие")}</span><button class="button small danger" type="button" data-ai-agent-confirm="${esc(item.pendingAction.id)}">Подтвердить</button></div>` : ""}${item.messages?.length ? `<div class="ai-agent-found-messages">${item.messages.map((message) => `<button type="button" data-ai-agent-open-message="${esc(message.id)}" data-ai-agent-chat="${esc(message.chat_id)}"><b>${esc(message.chat_title)}</b><span>${esc(message.text).slice(0, 220)}</span></button>`).join("")}</div>` : ""}</article>`).join("");
     conversation.classList.toggle("hidden", !aiAgentConversation.length);
     conversation.querySelectorAll("[data-ai-agent-open-message]").forEach((item) => item.addEventListener("click", () => openSearchMessage(item.dataset.aiAgentChat, item.dataset.aiAgentOpenMessage, item.textContent)));
+    conversation.querySelectorAll("[data-ai-agent-confirm]").forEach((button) => button.addEventListener("click", async () => {
+      if (!window.confirm("Подтвердить опасное действие ИИ-администратора?")) return;
+      try {
+        button.disabled = true;
+        const result = await api("/api/ai-agent/confirm", { method: "POST", body: { actionId: button.dataset.aiAgentConfirm } });
+        const item = aiAgentConversation.find((entry) => entry.pendingAction?.id === button.dataset.aiAgentConfirm);
+        if (item) { item.pendingAction = null; item.text = result.answer; }
+        renderConversation();
+        await refreshModeration();
+        await refreshActionLog();
+        toast(result.answer || "Действие выполнено.");
+      } catch (error) { button.disabled = false; toast(error.message, true); }
+    }));
     conversation.scrollTop = conversation.scrollHeight;
   };
   renderConversation();
-  root.querySelector("[data-ai-agent-control]")?.addEventListener("click", async () => {
-    const button = root.querySelector("[data-ai-agent-control]");
+  renderModeration();
+  renderActionLog();
+  root.querySelector("[data-ai-agent-tasks]")?.addEventListener("click", () => openAiAgentTasks());
+  const modelPicker = root.querySelector("[data-ai-model-picker]");
+  modelPicker?.querySelectorAll("input[name=\"modelProfile\"]").forEach((input) => input.addEventListener("change", async () => {
+    const previousProfile = state.aiAgent?.modelProfile || "default";
+    const options = [...modelPicker.querySelectorAll("input[name=\"modelProfile\"]")];
+    options.forEach((option) => { option.disabled = true; });
     try {
-      button.disabled = true;
-      await api("/api/ai-agent/control", { method: "POST", body: { enabled: !Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled) } });
-      await refresh();
-    } catch (error) { toast(error.message, true); button.disabled = false; }
+      await api("/api/ai-agent/model-profile", { method: "POST", body: { modelProfile: input.value } });
+      state.aiAgent.modelProfile = input.value;
+      modelPicker.open = false;
+      toast(`Выбрана модель: ${state.aiAgent.modelProfiles.find((profile) => profile.id === input.value)?.label || input.value}`);
+    } catch (error) {
+      options.forEach((option) => { option.checked = option.value === previousProfile; });
+      toast(error.message, true);
+    } finally { options.forEach((option) => { option.disabled = false; }); }
+  }));
+  const journalToggle = root.querySelector("[data-ai-agent-journal-toggle]");
+  const journals = root.querySelector("[data-ai-agent-journals]");
+  journalToggle?.addEventListener("click", () => {
+    journals.hidden = !journals.hidden;
+    journalToggle.setAttribute("aria-expanded", String(!journals.hidden));
+    if (!journals.hidden) { refreshModeration(); refreshActionLog(); }
   });
-  root.querySelector("[data-ai-agent-ask]").addEventListener("submit", async (event) => {
+  const askForm = root.querySelector("[data-ai-agent-ask]");
+  askForm.querySelector('textarea[name="question"]').addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    askForm.requestSubmit();
+  });
+  askForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.currentTarget;
-    const button = form.querySelector("button");
+    const button = form.querySelector("[data-ai-agent-send]");
     const question = String(new FormData(form).get("question") || "").trim();
     if (!question) return;
-    const workingMessage = { role: "assistant", text: "Работаю…" };
+    const workingMessage = { role: "assistant", text: "", thinking: true };
     try {
       button.disabled = true;
-      form.reset();
+      form.querySelector('textarea[name="question"]').value = "";
       aiAgentConversation.push({ role: "user", text: question });
       aiAgentConversation.push(workingMessage);
       touchAiAgentList();
@@ -862,7 +1197,13 @@ function bindAiAgentConversation(root) {
       const result = await api("/api/ai-agent/ask", { method: "POST", body: { question, history: aiAgentConversation.slice(-10, -1) } });
       await loadState();
       const index = aiAgentConversation.indexOf(workingMessage);
-      if (index >= 0) aiAgentConversation[index] = { role: "assistant", text: result.answer, messages: result.messages || [] };
+      const responseData = { role: "assistant", text: result.answer, messages: result.messages || [], pendingAction: result.pendingAction || null, moderationEvents: result.moderationEvents || [] };
+      if (index >= 0) aiAgentConversation[index] = responseData;
+      else {
+        const last = aiAgentConversation.at(-1);
+        if (last?.role === "assistant" && last.text === result.answer) Object.assign(last, responseData);
+        else aiAgentConversation.push(responseData);
+      }
       touchAiAgentList();
       renderConversation();
     } catch (error) {
@@ -892,16 +1233,15 @@ function touchAiAgentList() {
 function aiAgentChatRow(listState = aiAgentListState()) {
   const active = activeChatId === "ai-agent" ? " active" : "";
   const latest = aiAgentConversation.at(-1);
-  const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
-  return `<div class="chat-row${active}"><button class="row chat-row__main" data-open-ai-agent-chat>${aiAgentAvatarHtml()}<div class="row__body"><div class="row__title">${listState.pinned ? pinIcon("chat-row__pin-icon") : ""}ИИ-администратор</div><div class="row__sub">${esc(latest?.text || (running ? "Автопилот работает" : "Администратор каналов"))}</div></div><span class="chat-row__aside"><span class="badge">${running ? "Работает" : ""}</span></span></button><button class="chat-menu-button" type="button" data-ai-agent-menu title="Действия с ИИ-администратором" aria-label="Действия с ИИ-администратором">⋮</button></div>`;
+  const activeTaskCount = (state.aiAgent?.tasks || []).filter((task) => task.enabled).length;
+  return `<div class="chat-row${active}"><button class="row chat-row__main" data-open-ai-agent-chat>${aiAgentAvatarHtml()}<div class="row__body"><div class="row__title">${listState.pinned ? pinIcon("chat-row__pin-icon") : ""}${esc(state.aiAgent?.agentName || "ИИ-администратор")}</div><div class="row__sub">${esc(latest?.text || (activeTaskCount ? `Активных задач: ${activeTaskCount}` : "Нет активных задач"))}</div></div><span class="chat-row__aside"><span class="badge">${activeTaskCount ? activeTaskCount : ""}</span></span></button><button class="chat-menu-button" type="button" data-ai-agent-menu title="Действия с ИИ-администратором" aria-label="Действия с ИИ-администратором">⋮</button></div>`;
 }
 
 function aiAgentAvatarHtml() {
-  return '<div class="avatar ai-agent-avatar" aria-hidden="true">И</div>';
+  return `<div class="avatar ai-agent-avatar" aria-hidden="true">${esc((state.aiAgent?.agentName || "ИИ-администратор").trim().slice(0, 1).toUpperCase())}</div>`;
 }
 
 function openAiAgentMenu(anchor) {
-  const running = Boolean(state.aiAgent?.autopilotEnabled || state.aiAgent?.channelRule?.enabled);
   const listState = aiAgentListState();
   openSimpleActions(anchor, [
     {
@@ -911,13 +1251,7 @@ function openAiAgentMenu(anchor) {
         renderApp();
       },
     },
-    {
-      label: running ? "Остановить задачи" : "Возобновить задачи",
-      action: async () => {
-        await api("/api/ai-agent/control", { method: "POST", body: { enabled: !running } });
-        await refresh();
-      },
-    },
+    { label: "Список задач", action: () => openAiAgentTasks() },
     {
       label: "Очистить историю этого диалога",
       action: () => {
@@ -928,17 +1262,55 @@ function openAiAgentMenu(anchor) {
   ]);
 }
 
+function openAiAgentTasks(editing = null) {
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  const tasks = state.aiAgent?.tasks || [];
+  const directChats = visibleChats(false).filter((chat) => chat.type === "direct");
+  const selectedChats = new Set(editing?.chatIds || []);
+  const scope = editing?.scope || "all_direct";
+  const taskRows = tasks.map((task) => `<article class="ai-agent-global-item"><div><b>${esc(task.title)}${task.enabled ? "" : " · приостановлена"}</b><span>${task.scope === "all_direct" ? "Все новые входящие личные сообщения" : `Выбранные диалоги: ${(task.chatIds || []).length}`}</span>${task.instruction ? `<span>${esc(task.instruction)}</span>` : ""}</div><div><button class="button small" type="button" data-ai-task-toggle="${esc(task.id)}" data-enabled="${task.enabled ? "0" : "1"}">${task.enabled ? "Приостановить" : "Включить"}</button><button class="button small" type="button" data-ai-task-edit="${esc(task.id)}">Изменить</button><button class="button small danger" type="button" data-ai-task-delete="${esc(task.id)}">Удалить</button></div></article>`).join("");
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Список задач ИИ"><header><div><b>Список задач</b><small>Каждая задача отвечает только за новые входящие личные сообщения в выбранной области.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-ai-task-form><input type="hidden" name="id" value="${esc(editing?.id || "")}"><label>Название задачи<input name="title" maxlength="120" required placeholder="Например: Консультации по колёсам BMW" value="${esc(editing?.title || "")}"></label><label>Что делать в этой задаче<textarea name="instruction" maxlength="3000" placeholder="Например: рассказывай о колёсах BMW, цена 50 000 ₽; уточняй размер и наличие.">${esc(editing?.instruction || "")}</textarea></label><label>Где отвечать<select name="scope" data-ai-task-scope><option value="all_direct" ${scope === "all_direct" ? "selected" : ""}>Во всех новых личных сообщениях</option><option value="selected_direct" ${scope === "selected_direct" ? "selected" : ""}>Только в выбранных диалогах</option></select></label><div data-ai-task-chats ${scope === "selected_direct" ? "" : "hidden"}>${directChats.map((chat) => `<label class="consent"><input type="checkbox" name="chatIds" value="${esc(chat.id)}" ${selectedChats.has(chat.id) ? "checked" : ""}><span>${esc(chatMeta(chat).title)}</span></label>`).join("") || '<p class="muted">Личных диалогов пока нет.</p>'}</div><label class="consent"><input name="enabled" type="checkbox" ${editing?.enabled === false ? "" : "checked"}><span>Задача активна</span></label><button class="button primary" type="submit">${editing ? "Сохранить задачу" : "Добавить задачу"}</button></form><div class="ai-agent-global-list">${taskRows || '<p class="muted">Задач пока нет.</p>'}</div></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  overlay.querySelector("[data-ai-task-scope]").addEventListener("change", (event) => { overlay.querySelector("[data-ai-task-chats]").hidden = event.target.value !== "selected_direct"; });
+  overlay.querySelector("[data-ai-task-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    try {
+      await api("/api/ai-agent/tasks", { method: "POST", body: { id: data.get("id"), title: data.get("title"), instruction: data.get("instruction"), scope: data.get("scope"), chatIds: data.getAll("chatIds"), enabled: form.elements.enabled.checked } });
+      await refresh(); close(); toast("Задача сохранена.");
+    } catch (error) { toast(error.message, true); }
+  });
+  overlay.querySelectorAll("[data-ai-task-toggle]").forEach((button) => button.addEventListener("click", async () => {
+    try { await api("/api/ai-agent/tasks/toggle", { method: "POST", body: { id: button.dataset.aiTaskToggle, enabled: button.dataset.enabled === "1" } }); await refresh(); close(); openAiAgentTasks(); }
+    catch (error) { toast(error.message, true); }
+  }));
+  overlay.querySelectorAll("[data-ai-task-edit]").forEach((button) => button.addEventListener("click", () => { const task = tasks.find((item) => item.id === button.dataset.aiTaskEdit); if (task) { close(); openAiAgentTasks(task); } }));
+  overlay.querySelectorAll("[data-ai-task-delete]").forEach((button) => button.addEventListener("click", async () => {
+    if (!window.confirm("Удалить задачу?")) return;
+    try { await api("/api/ai-agent/tasks/delete", { method: "POST", body: { id: button.dataset.aiTaskDelete } }); await refresh(); close(); openAiAgentTasks(); }
+    catch (error) { toast(error.message, true); }
+  }));
+}
+
 function renderAutopostingPanel(box) {
   const channels = state.chats.filter((chat) => chat.type === "channel" && chat.ownerId === state.me.id);
   const sourceCount = (channelId) => state.telegramChannelLinks.filter((item) => item.channel_id === channelId).length
     + state.rssChannelLinks.filter((item) => item.channel_id === channelId).length
     + state.vkChannelLinks.filter((item) => item.channel_id === channelId).length;
-  box.innerHTML = `<section class="autoposting-panel"><div class="panel-title"><div><b>Автопостинг в соцсети</b><small>Импортируйте новые публикации в свои каналы Chat‑Pro.</small></div></div><section class="card autoposting-panel__notice"><b>Подключённые возможности</b><p>RSS, VK и Telegram уже публикуются в выбранный канал как обычные посты. Для материалов из сайта и VK показывается кликабельный «Источник».</p><p class="muted">Вход через VK / Telegram / MAX и публикация обратно в эти сервисы появятся только после подключения их официальных приложений. Сейчас эти сервисы не имитируются.</p></section>${channels.length ? `<div class="autoposting-channel-list">${channels.map((chat) => {
+  const vkTargetCount = (channelId) => state.vkChannelTargets.filter((item) => item.channel_id === channelId).length;
+  box.innerHTML = `<section class="autoposting-panel"><div class="panel-title"><div><b>Интеграции и автопостинг</b><small>Импортируйте публикации в Chat-Pro и подключайте собственные внешние сообщества.</small></div></div><section class="card autoposting-panel__notice"><b>VK: два независимых потока</b><p>Открытая VK-группа по ссылке импортирует новые публичные посты в канал Chat-Pro. Для собственного сообщества VK вручную добавляется отдельный ключ сообщества — тогда оно получает текстовые копии новых постов канала.</p><p class="muted">Токен для открытых источников не нужен. Для собственного сообщества не выполняется нативный репост и не переносятся медиа: отправляется только текст, а у импортированных VK-постов добавляется ссылка на оригинал.</p></section>${channels.length ? `<div class="autoposting-channel-list">${channels.map((chat) => {
     const rss = state.rssChannelLinks.filter((item) => item.channel_id === chat.id).length;
     const vk = state.vkChannelLinks.filter((item) => item.channel_id === chat.id).length;
+    const vkTargets = vkTargetCount(chat.id);
     const telegram = state.telegramChannelLinks.some((item) => item.channel_id === chat.id);
     const scheduled = (state.scheduledPosts || []).filter((item) => item.chat_id === chat.id).length;
-    return `<article class="card autoposting-channel"><div class="autoposting-channel__head">${chatAvatarHtml(chat)}<div><b>${esc(chat.title)}</b><small>${sourceCount(chat.id) ? `Подключено источников: ${sourceCount(chat.id)}` : "Источники не подключены"}</small></div><button class="button small" type="button" data-open-autopost-channel="${chat.id}">Открыть</button></div><div class="autoposting-channel__sources"><button type="button" data-autopost-source="telegram" data-autopost-channel="${chat.id}">Telegram${telegram ? " · подключён" : ""}</button><button type="button" data-autopost-source="rss" data-autopost-channel="${chat.id}">Сайты / RSS${rss ? ` · ${rss}` : ""}</button><button type="button" data-autopost-source="vk" data-autopost-channel="${chat.id}">VK${vk ? ` · ${vk}` : ""}</button><button type="button" data-autopost-schedule="${chat.id}">План · ${scheduled}</button></div></article>`;
+    const connectionSummary = [sourceCount(chat.id) ? `Источники: ${sourceCount(chat.id)}` : "Источники не подключены", vkTargets ? `Мои сообщества VK: ${vkTargets}` : "Мои сообщества VK не подключены"].join(" · ");
+    return `<article class="card autoposting-channel"><div class="autoposting-channel__head">${chatAvatarHtml(chat)}<div><b>${esc(chat.title)}</b><small>${connectionSummary}</small></div><button class="button small" type="button" data-open-autopost-channel="${chat.id}">Открыть</button></div><div class="autoposting-channel__sources"><button type="button" data-autopost-source="telegram" data-autopost-channel="${chat.id}">Telegram${telegram ? " · подключён" : ""}</button><button type="button" data-autopost-source="rss" data-autopost-channel="${chat.id}">Сайты / RSS${rss ? ` · ${rss}` : ""}</button><button type="button" data-autopost-source="vk" data-autopost-channel="${chat.id}">VK · источники ${vk} · мои ${vkTargets}</button><button type="button" data-autopost-schedule="${chat.id}">План · ${scheduled}</button></div></article>`;
   }).join("")}</div>` : '<section class="card"><b>Нет собственных каналов</b><p class="muted">Сначала создайте канал, затем вернитесь сюда, чтобы подключить источники.</p><button class="button primary small" type="button" data-create-autopost-channel>Создать канал</button></section>'}</section>`;
   box.querySelectorAll("[data-autopost-source]").forEach((button) => button.addEventListener("click", () => {
     const chat = state.chats.find((item) => item.id === button.dataset.autopostChannel);
@@ -966,7 +1338,11 @@ function bindChatRows(box) {
     renderApp();
     markChatRead(row.dataset.chat);
   }));
-  box.querySelectorAll("[data-chat-menu]").forEach((button) => button.addEventListener("click", () => openChatMenu(button.dataset.chatMenu)));
+  box.querySelectorAll("[data-chat-menu]").forEach((button) => button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openChatMenu(button.dataset.chatMenu);
+  }));
 }
 
 function highlightedText(value, query = "") {
@@ -1030,65 +1406,80 @@ async function searchGlobal(event) {
   }, 220);
 }
 
-async function runChatMessageSearch(chat, query, target, count) {
+function focusActiveChatSearchResult(panel) {
+  const result = activeChatSearchResults[activeChatSearchIndex];
+  if (!result) return;
+  const message = panel.querySelector(`#message-${CSS.escape(result.id)}`);
+  if (!message) return toast("Сообщение больше недоступно.", true);
+  message.scrollIntoView({ block: "center", behavior: "smooth" });
+  message.classList.add("message--search-match");
+  window.setTimeout(() => message.classList.remove("message--search-match"), 1800);
+}
+
+async function runChatMessageSearch(chat, query, target, count, panel) {
   const text = query.trim();
-  if (!text) { target.innerHTML = ""; count.textContent = ""; return; }
-  if (text.length < 2) { target.innerHTML = '<p class="chat-search-empty">Введите ещё один символ.</p>'; count.textContent = ""; return; }
+  if (!text) { activeChatSearchResults = []; activeChatSearchIndex = -1; target.innerHTML = ""; count.textContent = ""; return; }
+  if (text.length < 2) { activeChatSearchResults = []; activeChatSearchIndex = -1; target.innerHTML = '<p class="chat-search-empty">Введите ещё один символ.</p>'; count.textContent = ""; return; }
   target.innerHTML = '<p class="chat-search-empty">Ищем…</p>';
   try {
     const response = await api(`/api/messages/search?chatId=${encodeURIComponent(chat.id)}&q=${encodeURIComponent(text)}`);
     if (!target.isConnected) return;
     const results = response.messages || [];
-    count.textContent = results.length ? `${results.length}` : "";
-    target.innerHTML = results.length ? results.map((message) => messageSearchResultHtml(message, text, true)).join("") : '<p class="chat-search-empty">Совпадений нет.</p>';
-    bindMessageSearchResults(target, text);
+    activeChatSearchResults = results;
+    activeChatSearchIndex = results.length ? 0 : -1;
+    count.textContent = results.length ? `1 из ${results.length}` : "";
+    target.innerHTML = results.length ? '<p class="chat-search-empty">Используйте стрелки, чтобы перейти к совпадениям.</p>' : '<p class="chat-search-empty">Совпадений нет.</p>';
+    if (results.length) focusActiveChatSearchResult(panel);
   } catch (error) {
     if (target.isConnected) target.innerHTML = `<p class="chat-search-empty">${esc(error.message || "Поиск недоступен.")}</p>`;
   }
 }
 
 
+function profileOwnedChannels(profileUser) {
+  return state.chats.filter((chat) => chat.type === "channel" && chat.ownerId === profileUser.id && !chat.settings?.hideFromProfile);
+}
+
+async function openProfileChatTool(userId, tool) {
+  try {
+    const direct = await openDirectChat(userId);
+    const chat = state.chats.find((item) => item.id === direct.id);
+    if (!chat) throw new Error("Личный диалог не найден.");
+    if (tool === "media") openChatMedia(chat);
+    else { activeChatSearchOpen = true; renderChat(); }
+  } catch (error) { toast(error.message || "Не удалось открыть диалог.", true); }
+}
+
+function openProfileChannel(chatId) {
+  const chat = state.chats.find((item) => item.id === chatId && item.type === "channel");
+  if (!chat) return toast("Канал сейчас недоступен.", true);
+  activeChatId = chat.id;
+  activeSection = "chats";
+  scrollChatToLatest = true;
+  renderApp();
+}
+
+function profileChannelCard(chat, ownProfile) {
+  return `<article class="profile-channel"><button class="profile-channel__open" type="button" data-open-profile-channel="${chat.id}">${chatAvatarHtml(chat, "profile-channel__avatar")}<span class="profile-channel__body"><b>${esc(chat.title)}</b><small>${esc(chat.description || "Канал")}</small></span><span class="profile-channel__arrow" aria-hidden="true">›</span></button>${ownProfile ? `<button class="profile-channel__visibility" type="button" data-hide-profile-channel="${chat.id}">Скрыть</button>` : ""}</article>`;
+}
+
 function renderProfileScreen() {
   const profileUser = userById(openedProfileId) || state.me;
   const ownProfile = profileUser.id === state.me.id;
-  const posts = (state.posts || []).filter((post) => post.user_id === profileUser.id);
-  const stories = (state.stories || []).filter((story) => story.user_id === profileUser.id);
   const avatarSources = [profileUser.avatarData, ...(profileUser.avatarHistory || [])].filter(Boolean);
-  app.innerHTML = `<main class="profile-screen"><header class="profile-screen__head"><button class="back-button" data-close-profile aria-label="Вернуться">←</button><b>${ownProfile ? "Мой профиль" : "Профиль"}</b><button class="profile-more" type="button" data-profile-menu="${profileUser.id}" aria-label="Действия с профилем">⋯</button></header><section class="profile-screen__content"><div class="profile-hero"><button class="profile-avatar-button" data-open-avatar="${profileUser.id}" ${avatarSources.length ? "" : "disabled"}>${avatarHtml(profileUser, "avatar profile-avatar")}</button><div><h1>${esc(profileUser.name)} ${premiumBadge(profileUser)}</h1><p class="muted">@${esc(profileUser.username)}</p>${!ownProfile ? `<button class="button primary small" data-message-user="${profileUser.id}">Написать</button>` : ""}</div></div>
-    ${ownProfile ? `<section class="profile-actions"><div class="profile-action-grid"><button class="profile-action-button" type="button" data-profile-action="avatar"><span class="profile-action-button__icon">◉</span><span><b>Аватар</b><small>Фото профиля</small></span></button><button class="profile-action-button" type="button" data-profile-action="post"><span class="profile-action-button__icon">▤</span><span><b>Публикация</b><small>Текст или фото</small></span></button><button class="profile-action-button" type="button" data-profile-action="story"><span class="profile-action-button__icon">◌</span><span><b>История</b><small>На 48 часов</small></span></button></div><form class="card form profile-edit-card" id="avatarForm" data-profile-action-panel="avatar" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">◉</span><div><b>Фото профиля</b><p class="muted">Обновите аватар, который видят друзья.</p></div></div><label>Аватар<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" data-image-preview-input="avatar-preview"></label><img class="profile-upload-preview profile-upload-preview--avatar" data-image-preview="avatar-preview" alt="Предпросмотр нового аватара" hidden><button class="button primary">Загрузить аватар</button></form><form class="card form profile-edit-card" id="postForm" data-profile-action-panel="post" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">▤</span><div><b>Новая публикация</b><p class="muted">Добавьте текст или фото в профиль.</p></div></div><label>Подпись<textarea name="text" placeholder="Что у вас нового?"></textarea></label><label>Фото<input name="photo" type="file" accept="image/png,image/jpeg,image/webp" data-image-preview-input="post-preview"></label><img class="profile-upload-preview" data-image-preview="post-preview" alt="Предпросмотр фото для публикации" hidden><button class="button primary">Опубликовать пост</button></form><form class="card form profile-edit-card" id="storyForm" data-profile-action-panel="story" hidden><div class="profile-edit-card__head"><span class="profile-action-button__icon">◌</span><div><b>История на 48 часов</b><p class="muted">После выбора фото откроется редактор с текстом и вторым изображением.</p></div></div><label>Основное фото<input name="media" type="file" accept="image/png,image/jpeg,image/webp" required data-image-preview-input="story-preview"></label><img class="profile-upload-preview profile-upload-preview--story" data-image-preview="story-preview" alt="Предпросмотр истории" hidden><label>Подпись<input name="caption" placeholder="Можно оставить пустым"></label><button class="button primary">Открыть редактор</button></form></section>${state.notifications.length ? `<section class="card owner-notifications"><b>Уведомления владельца</b>${state.notifications.map((notice) => `<p>${esc(notice.text)}</p>`).join("")}</section>` : ""}` : ""}<div class="profile-publications"><section class="card"><b>Сторис</b><div class="stories-row">${stories.map(storyHtml).join("") || '<p class="muted">Сторис пока нет.</p>'}</div></section>${posts.some((post) => post.media_data) ? `<section class="card"><b>Фотографии</b><div class="post-gallery">${posts.filter((post) => post.media_data).map(galleryPostHtml).join("")}</div></section>` : ""}${posts.some((post) => post.text) ? `<section class="card"><b>Публикации</b>${posts.filter((post) => post.text).map(postHtml).join("")}</section>` : ""}${posts.length ? "" : '<section class="card"><p class="muted">Постов пока нет.</p></section>'}</div></section></main>`;
+  const description = String(profileUser.profileDescription || "").trim();
+  const channels = profileOwnedChannels(profileUser);
+  app.innerHTML = `<main class="profile-screen"><header class="profile-screen__head"><button class="back-button" data-close-profile aria-label="Вернуться">←</button><b>${ownProfile ? "Мой профиль" : "Профиль"}</b><button class="profile-more" type="button" data-profile-menu="${profileUser.id}" aria-label="Действия с профилем">⋯</button></header><section class="profile-screen__content"><div class="profile-hero"><button class="profile-avatar-button" data-open-avatar="${profileUser.id}" ${avatarSources.length ? "" : "disabled"}>${avatarHtml(profileUser, "avatar profile-avatar")}</button><div class="profile-hero__body"><h1>${esc(profileUser.name)}</h1><p class="muted">@${esc(profileUser.username)}</p>${!ownProfile ? `<div class="profile-hero__actions"><button class="button primary small" type="button" data-message-user="${profileUser.id}">Написать</button><button class="button small" type="button" data-profile-media="${profileUser.id}">Вложения</button><button class="button small" type="button" data-profile-search="${profileUser.id}">Поиск сообщений</button></div>` : ""}</div></div>${ownProfile ? `<form class="card form profile-edit-card" id="avatarForm"><div class="profile-edit-card__head"><span class="profile-action-button__icon">◉</span><div><b>Фото профиля</b><p class="muted">Обновите аватар.</p></div></div><label>Аватар<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp" required></label><button class="button primary">Загрузить аватар</button></form><form class="card form profile-edit-card" id="profileDescriptionForm"><b>Описание профиля</b><label>Расскажите о себе<textarea name="description" maxlength="1000" placeholder="Короткое описание">${esc(description)}</textarea></label><button class="button primary">Сохранить описание</button></form>` : description ? `<section class="card profile-description-card"><b>О пользователе</b><p class="profile-description">${esc(description)}</p></section>` : ""}<section class="card profile-channels-card"><b>${ownProfile ? "Мои каналы" : "Каналы пользователя"}</b><div class="profile-channels">${channels.map((chat) => profileChannelCard(chat, ownProfile)).join("") || '<p class="muted">Каналов для отображения нет.</p>'}</div>${ownProfile ? `<details><summary>Скрытые каналы</summary>${state.chats.filter((chat) => chat.type === "channel" && chat.ownerId === profileUser.id && chat.settings?.hideFromProfile).map((chat) => `<p><button class="button small" type="button" data-show-profile-channel="${chat.id}">Показать</button> ${esc(chat.title)}</p>`).join("") || '<p class="muted">Нет скрытых каналов.</p>'}</details>` : ""}</section></section></main>`;
   app.querySelector("#avatarForm")?.addEventListener("submit", submitAvatar);
-  app.querySelector("#postForm")?.addEventListener("submit", submitProfilePost);
-  app.querySelector("#storyForm")?.addEventListener("submit", submitStory);
-  app.querySelectorAll("[data-profile-action]").forEach((button) => button.addEventListener("click", () => {
-    const action = button.dataset.profileAction;
-    app.querySelectorAll("[data-profile-action]").forEach((item) => item.classList.toggle("active", item === button));
-    app.querySelectorAll("[data-profile-action-panel]").forEach((panel) => { panel.hidden = panel.dataset.profileActionPanel !== action; });
-  }));
-  app.querySelectorAll("[data-image-preview-input]").forEach((input) => input.addEventListener("change", () => {
-    const preview = app.querySelector(`[data-image-preview="${input.dataset.imagePreviewInput}"]`);
-    const file = input.files?.[0];
-    if (!preview || !file) return;
-    const reader = new FileReader();
-    reader.onload = () => { preview.src = reader.result; preview.hidden = false; };
-    reader.readAsDataURL(file);
-  }));
+  app.querySelector("#profileDescriptionForm")?.addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/profile/description", { method: "POST", body: { description: new FormData(event.currentTarget).get("description") } }); await refresh(); toast("Описание сохранено."); } catch (error) { toast(error.message, true); } });
   app.querySelector("[data-close-profile]").addEventListener("click", closeProfile);
-  app.querySelector("[data-message-user]")?.addEventListener("click", async (event) => { await openDirectChat(event.currentTarget.dataset.messageUser); });
+  app.querySelector("[data-message-user]")?.addEventListener("click", (event) => openDirectChat(event.currentTarget.dataset.messageUser).catch((error) => toast(error.message, true)));
+  app.querySelector("[data-profile-media]")?.addEventListener("click", (event) => openProfileChatTool(event.currentTarget.dataset.profileMedia, "media"));
+  app.querySelector("[data-profile-search]")?.addEventListener("click", (event) => openProfileChatTool(event.currentTarget.dataset.profileSearch, "search"));
   app.querySelector("[data-profile-menu]")?.addEventListener("click", (event) => openSimpleActions(event.currentTarget, profileMenuActions(profileUser)));
   app.querySelectorAll("[data-open-avatar]").forEach((item) => item.addEventListener("click", () => openMedia(avatarSources[0], "photo", avatarSources)));
-  app.querySelectorAll("[data-open-profile-post]").forEach((item) => item.addEventListener("click", () => openProfilePost(item.dataset.openProfilePost)));
-  app.querySelectorAll("[data-open-story]").forEach((item) => item.addEventListener("click", () => openStory(item.dataset.openStory)));
-  app.querySelectorAll("[data-share-profile-post]").forEach((item) => item.addEventListener("click", () => openGroupContentShare("profile-post", item.dataset.shareProfilePost)));
-  app.querySelectorAll("[data-post-menu]").forEach((item) => item.addEventListener("click", (event) => {
-    const post = state.posts.find((entry) => entry.id === event.currentTarget.dataset.postMenu);
-    if (!post) return;
-    const actions = [
-      { label: "Открыть публикацию", action: () => openProfilePost(post.id) },
-      { label: "Поделиться", action: () => openGroupContentShare("profile-post", post.id) },
-    ];
-    if (post.user_id !== state.me.id) actions.push({ label: "Пожаловаться", action: () => reportTarget("profile-post", post.id) });
-    openSimpleActions(event.currentTarget, actions);
-  }));
+  app.querySelectorAll("[data-open-profile-channel]").forEach((item) => item.addEventListener("click", () => openProfileChannel(item.dataset.openProfileChannel)));
+  app.querySelectorAll("[data-hide-profile-channel], [data-show-profile-channel]").forEach((button) => button.addEventListener("click", async () => { try { await api("/api/profile/channels/visibility", { method: "POST", body: { chatId: button.dataset.hideProfileChannel || button.dataset.showProfileChannel, hidden: Boolean(button.dataset.hideProfileChannel) } }); await refresh(); } catch (error) { toast(error.message, true); } }));
 }
 
 async function submitAvatar(event) {
@@ -1371,13 +1762,13 @@ function reviewItemHtml(review) {
 
 const ACTIVITY_CRITERIA_LABELS = {
   stars_balance: "звёзд на балансе", direct_chats: "личных диалогов", channels_joined: "подписок на каналы",
-  communities_joined: "бесед", channels_created: "созданных каналов",
+  channel_subscriptions: "подписок на каналы", communities_joined: "бесед", channels_created: "созданных каналов",
   communities_created: "созданных бесед", channel_subscribers: "подписчиков в одном канале",
   community_subscribers: "участников в одной беседе", messages: "сообщений",
-  posts: "публикаций", stories: "сторис", reviews: "отзывов", donations_sent: "отправленных донатов",
-  stars_donated: "отправленных звёзд", donations_received: "полученных донатов", login_streak: "дней подряд в приложении",
+  posts: "публикаций", channel_comments_written: "комментариев к постам в каналах", stories: "сторис", reviews: "отзывов", donations_sent: "отправленных донатов",
+  stars_donated: "отправленных звёзд в донатах за текущий месяц", donations_received: "полученных донатов", login_streak: "дней подряд в приложении",
   completed_calls: "принятых звонков", call_partners: "уникальных собеседников в принятых звонках",
-  chat_pro_review_video: "видеообзоров Chat‑Pro в своём канале",
+  chat_pro_review_video: "роликов или постов о Chat‑Pro в своём канале",
 };
 
 function activityCriteriaHtml(criteria = {}, progress = {}) {
@@ -1424,7 +1815,11 @@ function renderActivityRewardsPanel(box) {
   const activeRewards = rewards.filter((reward) => !reward.claimed);
   const completedRewards = rewards.filter((reward) => reward.claimed);
   const rewardCard = (reward) => `<article class="card activity-reward${reward.available ? " activity-reward--available" : ""}${reward.claimed ? " activity-reward--claimed" : ""}"><div class="activity-reward__head"><div><h3>${esc(reward.title)}</h3>${reward.description ? `<p class="muted">${esc(reward.description)}</p>` : ""}</div></div><p class="muted"><b>Награда:</b> ${esc(rewardBenefitsHtml(reward.reward || { stars: reward.reward_stars }))}</p><b class="activity-reward__label">${reward.claimed ? "Условия выполнены" : reward.levelAvailable === false ? "Ваш уровень уже выше" : "Нужно выполнить"}</b>${activityCriteriaHtml(reward.criteria, reward.progress)}<button class="button primary small" data-claim-activity-reward="${esc(reward.id)}" ${reward.claimed || !reward.available ? "disabled" : ""}>${reward.claimed ? "Награда получена" : reward.available ? "Получить" : reward.levelAvailable === false ? "Уровень уже выше" : "Условия не выполнены"}</button></article>`;
-  box.innerHTML = `<div class="panel-title"><div><b>Актуальные акции</b><small>Условия проверяются сервером, каждую награду можно получить только один раз.</small></div></div>${activeRewards.map(rewardCard).join("") || '<div class="card"><p class="muted">Актуальных наград пока нет.</p></div>'}${completedRewards.length ? `<div class="activity-rewards-completed-title"><b>Полученные награды</b><span>${completedRewards.length}</span></div>${completedRewards.map(rewardCard).join("")}` : ""}`;
+  const vkReviews = state.vkReviewSubmissions || [];
+  const vkStatus = { pending: "Ожидает проверки", credited: "Награда начислена", rejected: "Отклонена", revoked: "Награда отменена" };
+  const vkReviewCard = `<article class="card activity-reward"><div class="activity-reward__head"><div><h3>Ролик или пост о Chat‑Pro в VK</h3><p class="muted">Опубликуйте открытый пост или ролик о Chat‑Pro в любой группе VK или на своей странице. В тексте или названии должно быть «Chat‑Pro» либо «Чат‑Про».</p></div></div><p class="muted"><b>Награда:</b> ★ по числу лайков на момент проверки. Одна публикация участвует только один раз.</p><button class="button primary small" type="button" data-open-vk-review-reward>Отправить ссылку на ролик или пост</button>${vkReviews.length ? `<div class="admin-list">${vkReviews.map((submission) => `<article class="admin-report"><div><b>${esc(vkStatus[submission.status] || submission.status)}</b><small>★ ${Number(submission.reward_stars)} по ${Number(submission.likes_count)} лайкам · ${timeFmt(submission.created_at)}</small><p><a href="${esc(submission.external_url)}" target="_blank" rel="noopener">Открыть публикацию VK</a></p>${submission.admin_response ? `<p class="muted">Ответ администрации: ${esc(submission.admin_response)}</p>` : ""}</div></article>`).join("")}</div>` : ""}</article>`;
+  box.innerHTML = `<div class="panel-title"><div><b>Награды за активность</b><small>Условия проверяются сервером, каждую награду можно получить только один раз.</small></div></div>${vkReviewCard}${activeRewards.map(rewardCard).join("") || ""}${!activeRewards.length && !completedRewards.length ? '<div class="card"><p class="muted">Других актуальных наград пока нет.</p></div>' : ""}${completedRewards.length ? `<div class="activity-rewards-completed-title"><b>Полученные награды</b><span>${completedRewards.length}</span></div>${completedRewards.map(rewardCard).join("")}` : ""}`;
+  box.querySelector("[data-open-vk-review-reward]")?.addEventListener("click", openVkReviewRewardDialog);
   box.querySelectorAll("[data-claim-activity-reward]").forEach((button) => button.addEventListener("click", async (event) => {
     const reward = rewards.find((item) => item.id === event.currentTarget.dataset.claimActivityReward);
     if (reward?.reward?.recommendOwnChannel) return openActivityRewardChannelPicker(reward);
@@ -1468,15 +1863,16 @@ function starPackageButtonHtml(item, attribute = "data-buy-stars") {
   const hasDiscount = originalPrice !== String(item.price);
   const stars = Number(item.stars);
   const price = `${esc(item.price)} ₽`;
-  return `<button class="button star-package" type="button" ${attribute}="${esc(item.id)}" aria-label="Купить ${stars} звёзд за ${price}"><b class="star-package__stars">★ ${stars} звёзд</b><span class="star-package__price">${hasDiscount ? `<s>${esc(originalPrice)} ₽</s>` : ""}<strong>Цена: ${price}</strong></span></button>`;
+  return `<button class="button star-package" type="button" ${attribute}="${esc(item.id)}" aria-label="Купить ${stars} звёзд за ${price}"><b class="star-package__stars"><span class="star-package__star" aria-hidden="true">★</span> ${stars} звёзд</b><span class="star-package__price">${hasDiscount ? `<s>${esc(originalPrice)} ₽</s>` : ""}<strong>Цена: ${price}</strong></span></button>`;
 }
 
 function openStarPurchaseConsent(packageId, channel = null) {
   const termsUrl = state.settings?.public_legal?.purchaseTermsUrl || "/requisites#purchase-terms";
   const bonus = channel ? channelStarBonus(channel) : null;
+  const gift = channel?.type === "channel" ? channelBuyerGift(channel, packageId) : 0;
   const overlay = document.createElement("div");
   overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Условия покупки"><header><div><b>Подтверждение покупки</b><small>Перед переходом к оплате ознакомьтесь с условиями.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header>${bonus ? `<div class="channel-purchase-note"><b>${esc(channel.title)} получит бонус</b><span>${esc(channelBonusDescription(bonus))}</span></div>` : ""}<form class="form" data-star-purchase-consent><label class="consent"><input name="purchaseTermsAccepted" type="checkbox" required> <span>Я принимаю <a href="${esc(termsUrl)}" target="_blank" rel="noopener">условия покупки</a>.</span></label><button class="button primary" type="submit" disabled>Перейти к оплате</button></form></section>`;
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Условия покупки"><header><div><b>Подтверждение покупки</b><small>Перед переходом к оплате ознакомьтесь с условиями.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header>${bonus ? `<div class="channel-purchase-note"><b>${esc(channel.title)} получит бонус</b><span>${esc(channelBonusDescription(bonus))}</span>${gift ? `<span>Ваш подарок за этот пакет: ★ ${gift} от владельца канала.</span>` : ""}</div>` : ""}<form class="form" data-star-purchase-consent><label class="consent"><input name="purchaseTermsAccepted" type="checkbox" required> <span>Я принимаю <a href="${esc(termsUrl)}" target="_blank" rel="noopener">условия покупки</a>.</span></label><button class="button primary" type="submit" disabled>Перейти к оплате</button></form></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector(".member-manager__close").addEventListener("click", close);
@@ -1499,33 +1895,51 @@ function openStarPurchaseConsent(packageId, channel = null) {
 }
 
 function channelStarBonus(channel) {
-  const percent = Math.max(1, Math.min(100, Number(channel?.settings?.starBonusPercent) || 10));
-  return { percent };
+  const monetization = state.settings?.channel_monetization || {};
+  const members = Math.max(0, Number(channel?.subscriberCount) || 0);
+  const tier = (monetization.tiers || []).find((item) => members >= Number(item.minSubscribers || 0) && (item.maxSubscribers === null || item.maxSubscribers === "" || members < Number(item.maxSubscribers)));
+  return { percent: Number(tier?.percent) || 0, rate: String(monetization.starRateRubles || "0.00") };
 }
 
-function channelBuyerGift(channel) {
-  return Math.max(0, Number(channel?.settings?.buyerGiftStars) || 0);
+function channelBuyerGift(channel, packageId = "") {
+  const gifts = channel?.settings?.buyerGiftStarsByPackage;
+  const configured = gifts && typeof gifts === "object" && packageId ? gifts[packageId] : channel?.settings?.buyerGiftStars;
+  return Math.max(0, Number(configured) || 0);
 }
 
 function channelBonusDescription(bonus) {
-  return `Владелец получит ${bonus.percent}% от купленных звёзд на баланс.`;
+  return bonus?.percent ? `Владелец получит ${bonus.percent}% от стоимости звёзд по курсу ${bonus.rate} ₽ за ★. Начисление доступно для запроса выплаты.` : "Для этого числа участников пока не настроена комиссия.";
 }
 
 function starButtonIcon() {
   return '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.8 2.72 5.52 6.09.88-4.4 4.28 1.04 6.05L12 16.68l-5.45 2.85 1.04-6.05-4.4-4.28 6.09-.88L12 2.8Z"/><path d="m12 6.15 1.56 3.16 3.49.5-2.53 2.47.6 3.48L12 14.13l-3.12 1.63.6-3.48-2.53-2.47 3.49-.5L12 6.15Z"/></svg>';
 }
 
+function openChannelPayoutRequest(channel, available, afterSave) {
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Запросить выплату"><header><div><b>Запросить выплату</b><small>${esc(channel.title)} · доступно ${esc(available)} ₽</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-channel-payout-form><label>Сумма, ₽<input name="amount" type="text" inputmode="decimal" placeholder="${esc(available)}" required></label><p class="muted">Заявка будет передана @andrei. Сумма резервируется в учёте и не переводится автоматически; при отклонении она снова станет доступна.</p><button class="button primary">Создать заявку</button></form></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  overlay.querySelector("[data-channel-payout-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try { await api("/api/channel-payouts", { method: "POST", body: { channelId: channel.id, amount: new FormData(event.currentTarget).get("amount") } }); await refresh(); close(); toast("Заявка на выплату создана."); afterSave?.(); } catch (error) { toast(error.message, true); }
+  });
+}
+
 function openChannelStarPurchase(channel) {
   const packages = state.yookassa?.packages || [];
+  const isChannel = channel?.type === "channel";
   if (!state.yookassa?.available) {
     toast("Оплата ЮKassa пока недоступна.", true);
     return;
   }
   const bonus = channelStarBonus(channel);
-  const gift = channelBuyerGift(channel);
   const overlay = document.createElement("div");
   overlay.className = "member-manager-overlay";
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Купить звёзды через канал"><header><div><b>Купить звёзды</b><small>${esc(channel.title)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-purchase-note"><b>Бонус каналу</b><span>${esc(channelBonusDescription(bonus))}</span>${gift ? `<span>После оплаты вы получите подарок: ★ ${gift} от владельца канала.</span>` : ""}${channel.settings?.buyerPurchaseMessage ? `<span>${esc(channel.settings.buyerPurchaseMessage)}</span>` : ""}</div><p class="muted">Оплата пройдёт на защищённой странице ЮKassa. Звёзды начислятся после проверки оплаты сервером.</p><div class="star-packages">${packages.map((item) => starPackageButtonHtml(item, "data-channel-star-package")).join("")}</div></section>`;
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Купить звёзды через объект"><header><div><b>Купить звёзды</b><small>${esc(channel.title)}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-purchase-note"><b>Бонус владельцу</b><span>${esc(channelBonusDescription(bonus))}</span>${isChannel && channel.settings?.buyerPurchaseMessage ? `<span>${esc(channel.settings.buyerPurchaseMessage)}</span>` : ""}</div><p class="muted">Оплата пройдёт на защищённой странице ЮKassa. Звёзды начислятся после проверки оплаты сервером.</p><div class="star-packages">${packages.map((item) => `${starPackageButtonHtml(item, "data-channel-star-package")}${isChannel && channelBuyerGift(channel, item.id) ? `<small class="channel-package-gift">Подарок от канала: ★ ${channelBuyerGift(channel, item.id)}</small>` : ""}`).join("")}</div></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector(".member-manager__close").addEventListener("click", close);
@@ -1541,28 +1955,46 @@ function renderAccountLevelPanel(box) {
   const current = level.current;
   const next = level.next;
   const names = { ...ACTIVITY_CRITERIA_LABELS, communities: "созданных бесед", channels: "созданных каналов" };
-  const requirement = (criteria = {}) => Object.entries(criteria).map(([key, value]) => `<li>${Math.min(level.activity[key] || 0, value)} / ${value} ${names[key] || key}</li>`).join("") || "<li>Все условия выполнены</li>";
-  const limitsHtml = (limits = {}) => `<ul class="level-limits__list">${Object.entries(limits).map(([key, value]) => `<li>${esc(limitLabel(key))}: <b>${esc(value)}</b></li>`).join("") || "<li>Без дополнительных ограничений</li>"}</ul>`;
-  const limitsButton = (limits, label) => `<button class="button small level-limits__toggle" type="button" data-toggle-level-limits aria-expanded="false">${label}</button><div class="level-limits" hidden>${limitsHtml(limits)}</div>`;
+  const requirement = (criteria = {}) => Object.entries(criteria).map(([key, value]) => `<li><span>${esc(names[key] || key)}</span><b>${Math.min(level.activity[key] || 0, value)} / ${value}</b></li>`).join("") || "<li>Дополнительных условий нет</li>";
+  const criteriaSection = (criteria = {}) => `<section class="level-card__criteria"><b>Чтобы получить уровень</b><ul>${requirement(criteria)}</ul><p class="muted">Поддерживать эти условия нужно постоянно, пока уровень получен за активность.</p></section>`;
+  const subscriptionInfo = (monthlyPrice) => monthlyPrice > 0 ? `<section class="level-card__subscription"><b>По подписке</b><p class="muted">Подписка за ${esc(monthlyPrice)} ₽ в месяц даёт этот уровень без необходимости постоянно поддерживать условия.</p></section>` : "";
+  const capabilitiesHtml = (limits = {}) => `<ul class="level-limits__list">${Object.entries(limits).map(([key, value]) => `<li>${esc(limitLabel(key))}: <b>${esc(value)}</b></li>`).join("") || "<li>Без дополнительных возможностей</li>"}</ul>`;
+  const capabilitiesButton = (limits, label = "Показать возможности аккаунта") => `<button class="button small level-limits__toggle" type="button" data-toggle-level-limits aria-expanded="false">${label}</button><div class="level-limits" hidden>${capabilitiesHtml(limits)}</div>`;
   const limits = level.limits || current.limits || {};
   const levelCards = (level.levels || [current]).map((item) => {
     const reward = item.reward || {};
     const isNext = item.id === next?.id;
-    const purchase = item.starsPrice > 0 && !item.unlocked ? `<button class="button small" data-buy-level="${esc(item.id)}" ${item.id !== next?.id ? "disabled" : ""}>Купить за ★ ${item.starsPrice}</button>` : "";
+    const monthlyPrice = Number(item.monthlyPrice || 0);
+    const subscription = item.subscription;
+    const subscribe = monthlyPrice > 0 && !item.unlocked ? `<button class="button small" data-subscribe-level="${esc(item.id)}" ${!isNext ? "disabled" : ""}>Оформить подписку за ${esc(item.monthlyPrice)} ₽/мес.</button>` : "";
+    const activeSubscription = subscription ? `<p class="muted">Подписка активна до ${timeFmt(subscription.active_until)}${subscription.status === "cancelled" ? ". Автопродление отключено." : "."}</p>${subscription.status === "active" ? `<button class="button small" data-cancel-level-subscription="${esc(item.id)}">Отключить автопродление</button>` : ""}` : "";
     const hasReward = Number(reward.stars) || Number(reward.recurringStars) || Number(reward.starPackageDiscountPercent) || Object.values(reward.limits || {}).some((value) => Number(value) > 0);
     const claim = hasReward && item.unlocked ? `<button class="button primary small" data-claim-level="${esc(item.id)}" ${item.rewardClaimed ? "disabled" : ""}>${item.rewardClaimed ? "Награда получена" : "Забрать награду"}</button>` : "";
-    return `<article class="card level-card${item.id === current.id ? " level-card--current" : ""}"><span class="badge">${item.id === current.id ? "Текущий" : item.unlocked ? "Открыт" : "Следующий уровень"}</span><h2>${esc(item.title)}</h2><p class="muted">${esc(item.description || "")}</p>${hasReward ? `<div class="level-next-reward"><b>Награда за уровень</b><span>${esc(rewardBenefitsHtml(reward))}</span></div>` : ""}${!item.unlocked ? `<b>Нужно выполнить</b><ul>${requirement(item.criteria)}</ul>` : ""}${limitsButton(item.limits, "Показать лимиты уровня")}${purchase}${claim}</article>`;
+    return `<article class="card level-card${item.id === current.id ? " level-card--current" : ""}"><span class="badge">${item.id === current.id ? "Текущий" : item.unlocked ? "Открыт" : "Следующий уровень"}</span><h2>${esc(item.title)}</h2><p class="muted">${esc(item.description || "")}</p>${hasReward ? `<div class="level-next-reward"><b>Награда за уровень</b><span>${esc(rewardBenefitsHtml(reward))}</span></div>` : ""}${criteriaSection(item.criteria)}${subscriptionInfo(monthlyPrice)}${capabilitiesButton(item.limits)}${activeSubscription}${subscribe}${claim}</article>`;
   }).join("");
-  box.innerHTML = `<div class="panel-title"><b>Уровень аккаунта</b></div><div class="card level-current-limits"><span class="badge">Действующие лимиты</span><p class="muted">Ограничения, доступные вам сейчас. Если вы получили награду за активность или уровень выше лимита в уровне, ваш лимит будет персонально повышен как на текущем, так и на новом уровне.</p>${limitsButton(limits, "Показать действующие лимиты")}</div>${levelCards}`;
+  const warning = level.achievementLost ? '<div class="card"><p class="muted">Условия достигнутого уровня больше не выполнены, поэтому доступ по активности возвращён к начальному уровню. Активная подписка сохраняет уровень до окончания оплаченного периода.</p></div>' : "";
+  box.innerHTML = `<div class="panel-title"><b>Уровень аккаунта</b></div>${warning}<div class="card level-current-limits"><span class="badge">Действующие возможности</span><p class="muted">Возможности, доступные вам сейчас. Они зависят от уровня, активной подписки и персонально полученных наград.</p>${capabilitiesButton(limits)}</div>${levelCards}`;
   box.querySelectorAll("[data-claim-level]").forEach((button) => button.addEventListener("click", async (event) => { try { await api("/api/account-level/claim", { method: "POST", body: { levelId: event.currentTarget.dataset.claimLevel } }); toast("Награда за уровень получена."); await refresh(); } catch (error) { toast(error.message, true); } }));
-  box.querySelectorAll("[data-buy-level]").forEach((button) => button.addEventListener("click", async (event) => { try { await api("/api/account-level/buy", { method: "POST", body: { levelId: event.currentTarget.dataset.buyLevel } }); toast("Уровень куплен."); await refresh(); } catch (error) { toast(error.message, true); } }));
-  box.querySelectorAll("[data-toggle-level-limits]").forEach((button) => button.addEventListener("click", () => {
-    const details = button.nextElementSibling;
-    const expanded = button.getAttribute("aria-expanded") === "true";
-    button.setAttribute("aria-expanded", String(!expanded));
-    button.textContent = expanded ? button.textContent.replace("Скрыть", "Показать") : button.textContent.replace("Показать", "Скрыть");
-    details.hidden = expanded;
-  }));
+  box.querySelectorAll("[data-subscribe-level]").forEach((button) => button.addEventListener("click", () => openAccountLevelSubscription(button.dataset.subscribeLevel)));
+  box.querySelectorAll("[data-cancel-level-subscription]").forEach((button) => button.addEventListener("click", async () => { if (!window.confirm("Отключить автопродление? Уровень сохранится до конца оплаченного периода.")) return; try { await api("/api/account-level/subscriptions/cancel", { method: "POST", body: { levelId: button.dataset.cancelLevelSubscription } }); toast("Автопродление отключено."); await refresh(); } catch (error) { toast(error.message, true); } }));
+  box.querySelectorAll("[data-toggle-level-limits]").forEach((button) => button.addEventListener("click", () => { const details = button.nextElementSibling; const expanded = button.getAttribute("aria-expanded") === "true"; button.setAttribute("aria-expanded", String(!expanded)); button.textContent = expanded ? "Показать возможности аккаунта" : "Скрыть возможности аккаунта"; details.hidden = expanded; }));
+}
+
+function openAccountLevelSubscription(levelId) {
+  const item = (state.accountLevel?.levels || []).find((level) => level.id === levelId);
+  if (!item || Number(item.monthlyPrice || 0) <= 0) return toast("Подписка на этот уровень недоступна.", true);
+  const termsUrl = state.settings?.public_legal?.purchaseTermsUrl || "/requisites#purchase-terms";
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Подписка на уровень"><header><div><b>${esc(item.title)} — подписка</b><small>★ Уровень будет активен 30 дней за ${esc(item.monthlyPrice)} ₽. Далее ЮKassa будет автоматически списывать эту сумму раз в 30 дней, пока вы не отключите автопродление.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-level-subscription-form><label class="consent"><input name="subscriptionTermsAccepted" type="checkbox" required> <span>Я принимаю <a href="${esc(termsUrl)}" target="_blank" rel="noopener">условия покупки</a> и соглашаюсь на регулярные списания ${esc(item.monthlyPrice)} ₽ каждые 30 дней.</span></label><button class="button primary" type="submit" disabled>Перейти к оплате</button></form></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  const form = overlay.querySelector("[data-level-subscription-form]");
+  const submitButton = form.querySelector("button[type=submit]");
+  form.elements.subscriptionTermsAccepted.addEventListener("change", () => { submitButton.disabled = !form.elements.subscriptionTermsAccepted.checked; });
+  form.addEventListener("submit", async (event) => { event.preventDefault(); submitButton.disabled = true; try { const payment = await api("/api/account-level/subscriptions", { method: "POST", body: { levelId, subscriptionTermsAccepted: true } }); window.location.assign(payment.confirmationUrl); } catch (error) { submitButton.disabled = false; toast(error.message, true); } });
 }
 
 function renderSettingsPanel(box, section = "general") {
@@ -1578,6 +2010,8 @@ function renderSettingsPanel(box, section = "general") {
   box.innerHTML = `
     <div class="panel-title"><b>Настройки</b></div>
     <form class="card form" id="accountSettingsForm"><label>Username<input name="username" value="${esc(state.me.username)}" maxlength="20" autocomplete="username"></label><p class="muted">Используйте от 3 до 20 латинских символов, цифр или подчёркиваний.</p><button class="button primary">Сохранить username</button><button class="button danger" type="button" data-logout>Выйти из аккаунта</button></form>
+    <section class="card form account-deletion"><b>Удаление страницы</b><p class="muted">Страница и данные будут скрыты сразу и окончательно удалены через 7 дней. Войдите в аккаунт в этот срок, чтобы отменить удаление.</p><button class="button danger" type="button" data-delete-account>Удалить страницу</button></section>
+    <section class="card form media-cache-settings"><b>Кэш медиа</b><p class="muted">Фото и видео, которые вы уже открывали, сохраняются в браузере и могут появляться быстрее при повторном просмотре. Кэш хранится только на этом устройстве.</p><button class="button small" type="button" data-clear-media-cache>Очистить кэш медиа</button></section>
     <section class="settings-cards" aria-label="Разделы настроек">
       <button class="settings-card settings-card--archive" type="button" data-open-archive><span class="settings-card__art" aria-hidden="true"><i></i><i></i></span><span><b>Архив чатов</b><small>В архиве: ${visibleChats(true).length}</small></span><em>›</em></button>
       <button class="settings-card settings-card--privacy" type="button" data-settings-section="privacy"><span class="settings-card__art" aria-hidden="true">⌁</span><span><b>Приватность</b><small>Приглашения в беседы и новые сообщения</small></span><em>›</em></button>
@@ -1603,6 +2037,14 @@ function renderSettingsPanel(box, section = "general") {
     await refresh();
   });
   box.querySelector("[data-logout]").addEventListener("click", logout);
+  box.querySelector("[data-delete-account]").addEventListener("click", requestAccountDeletion);
+  box.querySelector("[data-clear-media-cache]").addEventListener("click", async () => {
+    const button = box.querySelector("[data-clear-media-cache]");
+    button.disabled = true;
+    try { await clearMediaCache(); toast("Кэш фото и видео очищен."); }
+    catch (error) { toast(error.message || "Не удалось очистить кэш.", true); }
+    finally { button.disabled = false; }
+  });
   box.querySelectorAll("[data-settings-section]").forEach((button) => button.addEventListener("click", (event) => { settingsSection = event.currentTarget.dataset.settingsSection; renderSettingsPanel(box, settingsSection); }));
   box.querySelector("[data-open-archive]").addEventListener("click", () => { activeSection = "archive"; renderApp(); });
   box.querySelector("#statusSettingsForm").addEventListener("submit", async (event) => {
@@ -1653,8 +2095,16 @@ async function renderMyReactionsSettings(box) {
     const renderReactions = (query = "") => {
       const normalized = query.trim().toLocaleLowerCase("ru-RU");
       const filtered = reactions.filter((reaction) => !normalized || [reaction.emoji, labels[reaction.type], reaction.title, reaction.text].some((value) => String(value || "").toLocaleLowerCase("ru-RU").includes(normalized)));
-      reactionBox.innerHTML = `<label class="reaction-history__search"><span>⌕</span><input type="search" placeholder="Поиск по моим реакциям" value="${esc(query)}"></label>${filtered.length ? filtered.map((reaction) => `<article class="reaction-history__item"><span class="reaction-history__emoji">${esc(reaction.emoji)}</span><span><small>${highlightedText(`${labels[reaction.type] || "Реакция"} · ${reaction.title || "Без названия"}`, query)}</small><b>${highlightedText(reaction.text || "Без текста", query)}</b></span><time>${new Date(reaction.createdAt * 1000).toLocaleDateString("ru-RU")}</time></article>`).join("") : `<p class="muted">${reactions.length ? "По вашему запросу ничего не найдено." : "Вы ещё не оставляли реакций."}</p>`}`;
+      reactionBox.innerHTML = `<label class="reaction-history__search"><span>⌕</span><input type="search" placeholder="Поиск по моим реакциям" value="${esc(query)}"></label>${filtered.length ? filtered.map((reaction) => {
+        const mediaLabel = reaction.mediaType === "photo" ? "Фото" : reaction.mediaType === "circle" ? "Видеокружок" : reaction.mediaType === "video" ? "Видео" : reaction.mediaType === "voice" ? "Голосовое сообщение" : "";
+        const content = reaction.text || mediaLabel || "Без текста";
+        const source = reaction.type === "message" && reaction.chatId
+          ? ` data-open-reaction-message="${esc(reaction.targetId)}" data-reaction-chat="${esc(reaction.chatId)}"`
+          : "";
+        return `<button class="reaction-history__item${source ? " reaction-history__item--openable" : ""}" type="button"${source}><span class="reaction-history__emoji">${esc(reaction.emoji)}</span><span><small>${highlightedText(`${labels[reaction.type] || "Реакция"} · ${reaction.title || "Без названия"}`, query)}</small><b>${highlightedText(content, query)}</b>${mediaLabel ? `<em>${mediaLabel} · открыть сообщение</em>` : ""}</span><time>${new Date(reaction.createdAt * 1000).toLocaleDateString("ru-RU")}</time></button>`;
+      }).join("") : `<p class="muted">${reactions.length ? "По вашему запросу ничего не найдено." : "Вы ещё не оставляли реакций."}</p>`}`;
       reactionBox.querySelector("input")?.addEventListener("input", (event) => renderReactions(event.target.value));
+      reactionBox.querySelectorAll("[data-open-reaction-message]").forEach((item) => item.addEventListener("click", () => openSearchMessage(item.dataset.reactionChat, item.dataset.openReactionMessage, "")));
     };
     renderReactions();
   } catch (error) {
@@ -1663,25 +2113,27 @@ async function renderMyReactionsSettings(box) {
 }
 
 function renderCallRingtoneSettings(box) {
-  const currentRingtone = CALL_RINGTONES.some((ringtone) => ringtone.id === state.me.callRingtone) ? state.me.callRingtone : "classic";
-  const canChooseCustom = hasActiveAccountLevel();
-  box.innerHTML = `<div class="panel-title"><button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button><b>Мелодия звонка</b></div><form class="card form ringtone-settings-form" id="ringtoneSettingsForm"><p class="muted">Эту мелодию услышит собеседник, пока ожидает ваш звонок.</p>${CALL_RINGTONES.map((ringtone) => `<button class="ringtone-option${currentRingtone === ringtone.id ? " is-selected" : ""}${ringtone.id !== "classic" && !canChooseCustom ? " is-locked" : ""}" type="button" data-select-ringtone="${ringtone.id}"><span class="ringtone-option__icon" aria-hidden="true">${ringtone.id === "classic" ? "♪" : ringtone.id === "pulse" ? "♫" : "✦"}</span><span><b>${ringtone.title}</b><small>${ringtone.description}${ringtone.id !== "classic" ? " · Уровень «Активный»" : ""}</small></span><em>${ringtone.id !== "classic" && !canChooseCustom ? "🔒" : currentRingtone === ringtone.id ? "✓" : ""}</em></button>`).join("")}<button class="button primary" type="submit">Сохранить мелодию</button>${canChooseCustom ? "" : '<p class="muted">Дополнительные мелодии доступны с уровня «Активный».</p><button class="button small" type="button" data-open-account-level>Уровень аккаунта</button>'}</form>`;
+  const currentRingtone = state.me.callRingtone === "custom" ? "custom" : "classic";
+  const canChooseCustom = hasEnhancedAccountLevel();
+  box.innerHTML = `<div class="panel-title"><button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button><b>Мелодия звонка</b></div><form class="card form ringtone-settings-form" id="ringtoneSettingsForm"><p class="muted">Её услышит пользователь при звонке вам</p><button class="ringtone-option${currentRingtone === "classic" ? " is-selected" : ""}" type="button" data-select-ringtone="classic"><span class="ringtone-option__icon" aria-hidden="true">♪</span><span><b>Классический</b><small>Спокойный стандартный сигнал</small></span><em>${currentRingtone === "classic" ? "✓" : ""}</em></button><button class="ringtone-option${currentRingtone === "custom" ? " is-selected" : ""}${!canChooseCustom ? " is-locked" : ""}" type="button" data-select-ringtone="custom"><span class="ringtone-option__icon" aria-hidden="true">♫</span><span><b>Своя мелодия</b><small>${canChooseCustom ? "Загрузите аудиофайл до 2 МБ" : "Доступна на уровне выше «Обычного»"}</small></span><em>${!canChooseCustom ? "🔒" : currentRingtone === "custom" ? "✓" : ""}</em></button><label${canChooseCustom ? "" : " hidden"}>Аудиофайл<input type="file" accept="audio/mpeg,audio/mp4,audio/ogg,audio/wav,audio/webm,.mp3,.m4a,.ogg,.wav,.webm" data-ringtone-file></label><button class="button primary" type="submit">Сохранить мелодию</button>${canChooseCustom ? "" : '<p class="muted">Своя мелодия доступна на уровне выше «Обычного».</p><button class="button small" type="button" data-open-account-level>Уровень аккаунта</button>'}</form>`;
   let selectedRingtone = currentRingtone;
-  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box); });
-  box.querySelectorAll("[data-select-ringtone]").forEach((button) => button.addEventListener("click", () => {
-    const ringtone = button.dataset.selectRingtone;
-    if (ringtone !== "classic" && !canChooseCustom) {
-      toast("Эта функция доступна с уровня «Активный». Повысьте уровень аккаунта.", true);
-      return;
-    }
+  let ringtoneData = "";
+  const selectRingtone = (ringtone) => {
+    if (ringtone === "custom" && !canChooseCustom) return toast("Эта функция доступна на уровне выше «Обычного».", true);
     selectedRingtone = ringtone;
     box.querySelectorAll("[data-select-ringtone]").forEach((option) => option.classList.toggle("is-selected", option.dataset.selectRingtone === ringtone));
-  }));
+  };
+  box.querySelector("[data-settings-back]").addEventListener("click", () => { settingsSection = "general"; renderSettingsPanel(box); });
+  box.querySelectorAll("[data-select-ringtone]").forEach((button) => button.addEventListener("click", () => selectRingtone(button.dataset.selectRingtone)));
+  box.querySelector("[data-ringtone-file]")?.addEventListener("change", async (event) => {
+    try { ringtoneData = await fileToDataUrl(event.currentTarget.files[0], 2_000_000); selectRingtone("custom"); }
+    catch (error) { event.currentTarget.value = ""; toast(error.message, true); }
+  });
   box.querySelector("[data-open-account-level]")?.addEventListener("click", () => openMenuSection("account-level"));
   box.querySelector("#ringtoneSettingsForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await api("/api/preferences", { method: "POST", body: preferencePayload({ callRingtone: selectedRingtone }) });
+      await api("/api/preferences", { method: "POST", body: preferencePayload({ callRingtone: selectedRingtone, callRingtoneData: ringtoneData }) });
       state.me.callRingtone = selectedRingtone;
       toast("Мелодия звонка сохранена.");
     } catch (error) { toast(error.message, true); }
@@ -1712,33 +2164,29 @@ function preferencePayload(overrides = {}) {
     groupInvitePrivacy: state.me.groupInvitePrivacy || "contacts",
     directMessagePrivacy: state.me.directMessagePrivacy || "everyone",
     callRingtone: state.me.callRingtone || "classic",
+    callRingtoneData: "",
     ...overrides,
   };
 }
 
 function renderWallpaperSettings(box) {
-  const currentWallpaper = ["whatsapp", "live"].includes(state.me.chatBackground) ? "default" : state.me.chatBackground || "default";
+  const currentWallpaper = CHAT_WALLPAPERS.some((wallpaper) => wallpaper.id === state.me.chatBackground) || state.me.chatBackground === "custom"
+    ? state.me.chatBackground
+    : "default";
   const currentFont = state.me.dialogFont || "business";
   const currentTextScale = state.me.textScale || "system";
   const bubbleColor = state.me.dialogColor || "#dff9f9";
   const otherBubbleColor = state.me.otherDialogColor || "#ffffff";
   const bubbleText = dialogBubbleTextColor(bubbleColor);
   const otherBubbleText = dialogBubbleTextColor(otherBubbleColor);
-  const adminNightAppearance = defaultNightAppearance();
-  const personalNightAppearance = effectiveNightAppearance();
-  const usesPersonalNightAppearance = Boolean(state.me.nightAppearanceCustom);
   box.innerHTML = `<div class="panel-title"><b>Оформление диалогов</b></div><form class="card form" id="wallpaperSettingsForm"><div class="dialog-color-controls"><label class="dialog-color-control">Цвет моих сообщений<input name="dialogColor" type="color" value="${esc(bubbleColor)}"><button class="dialog-color-control__button" type="button" data-open-dialog-color aria-label="Выбрать цвет моих сообщений"><span class="dialog-color-control__dot" data-dialog-color-dot style="--dialog-color: ${esc(bubbleColor)}"></span><span>Выбрать цвет</span></button></label><label class="dialog-color-control">Цвет сообщений собеседника<input name="otherDialogColor" type="color" value="${esc(otherBubbleColor)}"><button class="dialog-color-control__button" type="button" data-open-other-dialog-color aria-label="Выбрать цвет сообщений собеседника"><span class="dialog-color-control__dot" data-other-dialog-color-dot style="--dialog-color: ${esc(otherBubbleColor)}"></span><span>Выбрать цвет</span></button></label></div><label>Шрифт сообщений<select name="dialogFont">${DIALOG_FONTS.map((font) => `<option value="${font.id}" ${currentFont === font.id ? "selected" : ""}>${font.title}</option>`).join("")}</select></label><label>Размер текста<select name="textScale"><option value="system" ${currentTextScale === "system" ? "selected" : ""}>Системный</option><option value="110" ${currentTextScale === "110" ? "selected" : ""}>Крупнее · 110%</option><option value="120" ${currentTextScale === "120" ? "selected" : ""}>Большой · 120%</option><option value="130" ${currentTextScale === "130" ? "selected" : ""}>Очень большой · 130%</option></select></label><fieldset class="wallpaper-picker"><legend>Обои диалога</legend><p class="muted">Все варианты совпадают с палитрой оформления сайта. Нажмите на вариант — демо изменится сразу.</p><section class="wallpaper-chat-preview ${currentWallpaper === "custom" ? "chat-background-custom" : `chat-background-${currentWallpaper}`}" data-wallpaper-chat-preview style="--preview-text-scale: ${({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[currentTextScale] || 1}; --preview-own-bubble: ${bubbleColor}; --preview-own-text: ${bubbleText}; --preview-other-bubble: ${otherBubbleColor}; --preview-other-text: ${otherBubbleText}${currentWallpaper === "custom" && state.me.chatBackgroundData ? `; background-image: linear-gradient(rgba(255,255,255,.12), rgba(255,255,255,.12)), url('${esc(state.me.chatBackgroundData)}')` : ""}"><header><span class="wallpaper-preview-avatar">А</span><span><b>Алексей</b><small>в сети</small></span></header><div class="wallpaper-preview-messages" data-dialog-font-preview style="font-family: ${dialogMessageFont(currentFont)}"><p class="wallpaper-preview-message">Привет! Как тебе новые обои?</p><p class="wallpaper-preview-message own">Очень красиво, выбираю этот вариант ✨</p><p class="wallpaper-preview-message">Так будет выглядеть ваш диалог.</p></div></section><div class="wallpaper-grid">${CHAT_WALLPAPERS.map((wallpaper) => `<label class="wallpaper-option${currentWallpaper === wallpaper.id ? " selected" : ""}"><input type="radio" name="chatBackground" value="${wallpaper.id}" ${currentWallpaper === wallpaper.id ? "checked" : ""}><span class="wallpaper-preview chat-background-${wallpaper.id}" aria-hidden="true"></span><span><b>${esc(wallpaper.title)}</b><small>${esc(wallpaper.description)}</small></span></label>`).join("")}</div></fieldset><label>Своя картинка<input name="chatBackgroundImage" type="file" accept="image/png,image/jpeg,image/webp"></label><p class="muted">Загруженная картинка заменит выбранный вариант. Для чёткости на большом экране выбирайте изображение от 1920 px по ширине.</p><button class="button primary">Сохранить оформление</button></form>`;
   const form = box.querySelector("#wallpaperSettingsForm");
   box.querySelector(".panel-title").insertAdjacentHTML("afterbegin", '<button class="settings-back" type="button" data-settings-back aria-label="Вернуться к настройкам">‹</button>');
   box.querySelector("[data-settings-back]").addEventListener("click", () => { activeSection = "chats"; renderApp(); });
   form.insertAdjacentHTML("afterbegin", `<fieldset class="dialog-theme-picker"><legend>Режим</legend><div class="theme-mode-options"><label><input type="radio" name="theme" value="light" ${state.me.theme !== "dark" ? "checked" : ""}><span class="theme-mode-option theme-mode-option--light"><i>☀</i><b>Дневной</b><small>Светлый интерфейс</small></span></label><label><input type="radio" name="theme" value="dark" ${state.me.theme === "dark" ? "checked" : ""}><span class="theme-mode-option theme-mode-option--dark"><i>☾</i><b>Ночной</b><small>Мягкий тёмный интерфейс</small></span></label></div></fieldset>`);
-  form.querySelector(".dialog-theme-picker").insertAdjacentHTML("afterend", `<fieldset class="night-appearance-picker"><legend>Подсветка ночного режима</legend><p class="muted">Цвет обводок и мягкого свечения для кнопок, полей и меню. В дневном режиме не применяется.</p><label class="night-appearance-toggle"><input name="nightAppearanceCustom" type="checkbox" ${usesPersonalNightAppearance ? "checked" : ""}> Использовать мои цвета вместо настроек администратора</label><div class="dialog-color-controls"><label class="dialog-color-control">Цвет обводок<input name="nightOutlineColor" type="color" value="${esc(personalNightAppearance.outlineColor)}"><button class="dialog-color-control__button" type="button" data-open-night-outline-color aria-label="Выбрать цвет обводок"><span class="dialog-color-control__dot" data-night-outline-color-dot style="--dialog-color: ${esc(personalNightAppearance.outlineColor)}"></span><span>Выбрать цвет</span></button></label><label class="dialog-color-control">Цвет свечения<input name="nightGlowColor" type="color" value="${esc(personalNightAppearance.glowColor)}"><button class="dialog-color-control__button" type="button" data-open-night-glow-color aria-label="Выбрать цвет свечения"><span class="dialog-color-control__dot" data-night-glow-color-dot style="--dialog-color: ${esc(personalNightAppearance.glowColor)}"></span><span>Выбрать цвет</span></button></label></div><label class="night-glow-intensity">Яркость свечения <output data-night-glow-intensity-output>${personalNightAppearance.glowIntensity}%</output><input name="nightGlowIntensity" type="range" min="0" max="100" step="1" value="${personalNightAppearance.glowIntensity}"></label><small class="muted" data-night-appearance-defaults>По умолчанию администратора: обводки ${esc(adminNightAppearance.outlineColor)}, свечение ${esc(adminNightAppearance.glowColor)}, ${adminNightAppearance.glowIntensity}%.</small></fieldset>`);
   const wallpaperPreview = box.querySelector("[data-wallpaper-chat-preview]");
   const colorDot = box.querySelector("[data-dialog-color-dot]");
   const otherColorDot = box.querySelector("[data-other-dialog-color-dot]");
-  const nightOutlineDot = box.querySelector("[data-night-outline-color-dot]");
-  const nightGlowDot = box.querySelector("[data-night-glow-color-dot]");
-  const nightGlowIntensityOutput = box.querySelector("[data-night-glow-intensity-output]");
   const fontPreview = box.querySelector("[data-dialog-font-preview]");
   const previewWallpaper = (background, image = "") => {
     if (!wallpaperPreview) return;
@@ -1765,26 +2213,7 @@ function renderWallpaperSettings(box) {
   form.elements.otherDialogColor.addEventListener("input", updateBubblePreview);
   box.querySelector("[data-open-dialog-color]")?.addEventListener("click", () => form.elements.dialogColor.click());
   box.querySelector("[data-open-other-dialog-color]")?.addEventListener("click", () => form.elements.otherDialogColor.click());
-  const updateNightAppearancePreview = () => {
-    nightOutlineDot?.style.setProperty("--dialog-color", form.elements.nightOutlineColor.value);
-    nightGlowDot?.style.setProperty("--dialog-color", form.elements.nightGlowColor.value);
-    if (nightGlowIntensityOutput) nightGlowIntensityOutput.value = `${form.elements.nightGlowIntensity.value}%`;
-  };
-  const syncNightAppearanceControls = () => {
-    const disabled = !form.elements.nightAppearanceCustom.checked;
-    form.querySelectorAll("[data-open-night-outline-color], [data-open-night-glow-color]").forEach((button) => { button.disabled = disabled; });
-    form.elements.nightGlowIntensity.disabled = disabled;
-    form.querySelector(".night-appearance-picker").classList.toggle("uses-admin-defaults", disabled);
-  };
-  box.querySelector("[data-open-night-outline-color]")?.addEventListener("click", () => form.elements.nightOutlineColor.click());
-  box.querySelector("[data-open-night-glow-color]")?.addEventListener("click", () => form.elements.nightGlowColor.click());
-  form.elements.nightOutlineColor.addEventListener("input", updateNightAppearancePreview);
-  form.elements.nightGlowColor.addEventListener("input", updateNightAppearancePreview);
-  form.elements.nightGlowIntensity.addEventListener("input", updateNightAppearancePreview);
-  form.elements.nightAppearanceCustom.addEventListener("change", syncNightAppearanceControls);
   updateBubblePreview();
-  updateNightAppearancePreview();
-  syncNightAppearanceControls();
   form.elements.dialogFont?.addEventListener("change", () => { if (fontPreview) fontPreview.style.fontFamily = dialogMessageFont(form.elements.dialogFont.value); });
   form.elements.textScale?.addEventListener("change", () => {
     wallpaperPreview?.style.setProperty("--preview-text-scale", ({ system: 1, 110: 1.1, 120: 1.2, 130: 1.3 })[form.elements.textScale.value] || 1);
@@ -1807,8 +2236,9 @@ function renderWallpaperSettings(box) {
     const otherDialogColor = values.get("otherDialogColor");
     const dialogFont = values.get("dialogFont");
     const textScale = values.get("textScale");
-    await api("/api/preferences", { method: "POST", body: preferencePayload({ theme, dialogColor, otherDialogColor, dialogBubbleStyle: "custom", dialogFont, textScale, chatBackground, chatBackgroundData, nightAppearanceCustom: values.get("nightAppearanceCustom") === "on", nightOutlineColor: values.get("nightOutlineColor"), nightGlowColor: values.get("nightGlowColor"), nightGlowIntensity: Number(values.get("nightGlowIntensity")) }) });
+    await api("/api/preferences", { method: "POST", body: preferencePayload({ theme, dialogColor, otherDialogColor, dialogBubbleStyle: "custom", dialogFont, textScale, chatBackground, chatBackgroundData,  }) });
     Object.assign(state.me, { theme, dialogColor, otherDialogColor, dialogFont, textScale, chatBackground, chatBackgroundData });
+    applyDialogMessageFont(dialogFont);
     document.body.classList.toggle("theme-dark", theme === "dark");
     toast("Оформление диалогов сохранено.");
     activeSection = "wallpapers";
@@ -1819,10 +2249,35 @@ function renderWallpaperSettings(box) {
 function logout() {
   if (!window.confirm("Выйти из аккаунта? Он останется в списке сохранённых аккаунтов.")) return;
   finishCall();
+  clearMediaCache().catch(() => {});
   token = "";
   localStorage.removeItem(TOKEN_KEY);
   clearInterval(callPollTimer);
   renderAuth();
+}
+
+async function requestAccountDeletion() {
+  if (!window.confirm("Удалить страницу? Данные будут скрыты сразу, а через 7 дней удалены окончательно. Вход в аккаунт до этого срока отменит удаление.")) return;
+  const confirmation = window.prompt("Введите УДАЛИТЬ, чтобы продолжить.");
+  if (confirmation !== "УДАЛИТЬ") {
+    toast("Удаление отменено: слово подтверждения не совпало.", true);
+    return;
+  }
+  const password = window.prompt("Введите текущий пароль. Если вы входите только через VK, оставьте поле пустым.");
+  if (password === null) return;
+  try {
+    await api("/api/account/delete", { method: "POST", body: { confirmation, password } });
+    removeSavedAccount(state.me.id);
+    finishCall();
+    clearMediaCache().catch(() => {});
+    token = "";
+    localStorage.removeItem(TOKEN_KEY);
+    clearInterval(callPollTimer);
+    renderAuth();
+    toast("Страница скрыта. Войдите в течение 7 дней, чтобы отменить удаление.");
+  } catch (error) {
+    toast(error.message, true);
+  }
 }
 
 function colorToRgb(hex) {
@@ -1869,11 +2324,12 @@ function colorShade(hex, amount) {
 function renderChat() {
   const panel = app.querySelector("#chatPanel");
   const previousMessages = panel.querySelector("#messages");
-  const previousScrollTop = previousMessages?.scrollTop || 0;
+  const savedScroll = previousMessages ? null : chatScrollState.get(activeChatId);
+  const previousScrollTop = previousMessages?.scrollTop ?? savedScroll?.scrollTop ?? 0;
   const previousDistanceToBottom = previousMessages
     ? previousMessages.scrollHeight - previousMessages.scrollTop - previousMessages.clientHeight
-    : 0;
-  const shouldScrollToLatest = scrollChatToLatest || !previousMessages || previousDistanceToBottom < 8;
+    : savedScroll?.distanceToBottom ?? 0;
+  const shouldScrollToLatest = scrollChatToLatest || (!previousMessages && !savedScroll) || previousDistanceToBottom < 8;
   scrollChatToLatest = false;
   if (activeChatId === "ai-agent") {
     panel.className = "chat-panel";
@@ -1891,7 +2347,7 @@ function renderChat() {
   }
   const channelAppearance = chat.type === "channel" ? chat.settings?.appearance : null;
   const appearanceStyle = channelAppearance ? channelAppearanceStyle(channelAppearance) : "";
-  panel.className = `chat-panel${channelAppearance ? ` ${chatBackgroundClass({ chatBackground: channelAppearance.wallpaper })} chat-panel--channel-themed` : ""}`;
+  panel.className = `chat-panel${chat.type === "direct" ? " chat-panel--direct" : ""}${channelAppearance ? ` ${chatBackgroundClass({ chatBackground: channelAppearance.wallpaper })} chat-panel--channel-themed` : ""}`;
   panel.style.cssText = appearanceStyle;
   const messages = state.messages.filter((msg) => msg.chatId === chat.id);
   const pendingMessages = [...pendingOutgoingMessages.values()].filter((msg) => msg.chatId === chat.id);
@@ -1906,24 +2362,27 @@ function renderChat() {
   const emptyChatNotice = "";
   const canPublish = chat.type !== "channel" || isChannelManagerRole(chatMemberRole(chat.id));
   const channelNeedsMediaBar = chat.type === "channel" && !canPublish;
+  const channelCanSellStars = channelNeedsMediaBar && channelStarBonus(chat).percent > 0;
   const mediaButton = '<button class="call-button" data-open-chat-media title="Вложения" aria-label="Вложения">▦</button>';
-  const searchButton = '<button class="call-button" type="button" data-toggle-chat-search title="Поиск в диалоге" aria-label="Поиск в диалоге">⌕</button>';
-  const callButtons = `${searchButton}${chat.type === "secret" && chat.ownerId === state.me.id ? '<button class="call-button" data-add-secret-member title="Пригласить участника" aria-label="Пригласить участника">+</button>' : ""}${chat.type === "direct" ? '<button class="call-button" data-call="audio" title="Аудиозвонок" aria-label="Аудиозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.1 3.8 8.2 3l1.7 4.2-2 1.8a15.2 15.2 0 0 0 7.1 7.1l1.8-2 4.2 1.7-.8 3.1c-.2.8-1 1.3-1.8 1.2C10.5 19.1 4.9 13.5 3.9 5.6 3.8 4.8 4.3 4 5.1 3.8Z"/></svg></button><button class="call-button" data-call="video" title="Видеозвонок" aria-label="Видеозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3Z"/></svg></button>' : ""}`;
+  const channelSubscriberCount = chat.type === "channel" ? `<span class="channel-subscriber-count" title="${chat.subscriberCount || 0} подписчиков" aria-label="${chat.subscriberCount || 0} подписчиков"><svg class="channel-subscriber-count__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="10" r="2.2"/><path d="M3.5 20c.6-3.5 2.6-5.4 5.5-5.4s4.9 1.9 5.5 5.4"/><path d="M15.2 15.3c2.7.1 4.3 1.6 4.8 4.2"/></svg>${chat.subscriberCount || 0}</span>` : "";
+  const chatSearchButton = '<button class="call-button" type="button" data-toggle-chat-search title="Поиск сообщений" aria-label="Поиск сообщений">⌕</button>';
+  const callButtons = `${chat.type === "secret" && chat.ownerId === state.me.id ? '<button class="call-button" data-add-secret-member title="Пригласить участника" aria-label="Пригласить участника">+</button>' : ""}${chat.type === "direct" ? '<button class="call-button" data-call="audio" title="Аудиозвонок" aria-label="Аудиозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.1 3.8 8.2 3l1.7 4.2-2 1.8a15.2 15.2 0 0 0 7.1 7.1l1.8-2 4.2 1.7-.8 3.1c-.2.8-1 1.3-1.8 1.2C10.5 19.1 4.9 13.5 3.9 5.6 3.8 4.8 4.3 4 5.1 3.8Z"/></svg></button><button class="call-button" data-call="video" title="Видеозвонок" aria-label="Видеозвонок"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3Z"/></svg></button>' : ""}`;
   const chatIdentity = chat.type === "direct" && meta.user
     ? `<div class="chat-identity"><button class="chat-profile-avatar" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}" aria-label="Открыть профиль ${esc(meta.title)}">${avatarHtml(meta.user)}</button><button class="chat-profile-name" data-open-profile="${meta.user.id}" title="Открыть профиль ${esc(meta.title)}"><div class="chat-head__body"><strong>${esc(meta.title)}</strong>${chatActivityHtml(chat, meta.subtitle)}</div></button></div>`
-    : `${meta.user ? avatarHtml(meta.user) : chatAvatarHtml(chat)}<div class="chat-head__body"><strong>${esc(meta.title)}</strong><span>${esc(meta.subtitle)}</span></div>`;
+    : `${meta.user ? avatarHtml(meta.user) : chatAvatarHtml(chat)}<div class="chat-head__body"><strong>${esc(meta.title)}</strong>${meta.subtitle ? `<span>${esc(meta.subtitle)}</span>` : ""}</div>`;
   const showComposer = chat.type !== "channel" || canPublish;
   const channelJoinButton = chat.type === "channel" && !isMember(chat.id) ? '<button class="button small" type="button" data-join-open-channel>Подписаться</button>' : "";
+  const headerTools = chat.type === "direct" ? "" : `${channelJoinButton}${channelSubscriberCount}${chatSearchButton}${mediaButton}`;
   panel.innerHTML = `
-    <header class="chat-head${["group", "community", "channel"].includes(chat.type) ? " chat-head--group" : ""}${chat.type === "channel" ? " chat-head--channel" : ""}${activePinnedMessage && !selectedMessageIds.size ? " chat-head--with-pinned" : ""}"${["group", "community", "channel"].includes(chat.type) ? ` data-open-group-profile="${chat.id}"` : ""}><button class="chat-back-button chat-head-action" type="button" data-back-to-chats title="Вернуться к списку чатов" aria-label="Вернуться к списку чатов">←</button><button class="chat-mobile-menu-button chat-head-action" type="button" data-open-mobile-chat-menu title="Открыть меню" aria-label="Открыть меню"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>${chatIdentity}${callButtons}${channelJoinButton}${chat.type === "channel" && chat.ownerId !== state.me.id ? `<button class="call-button" type="button" data-report-channel="${chat.id}" aria-label="Пожаловаться на канал">${actionIcon("report")}</button>` : ""}${mediaButton}</header>
+    <header class="chat-head${["group", "community", "channel"].includes(chat.type) ? " chat-head--group" : ""}${chat.type === "channel" ? " chat-head--channel" : ""}${activePinnedMessage && !selectedMessageIds.size ? " chat-head--with-pinned" : ""}"${["group", "community", "channel"].includes(chat.type) ? ` data-open-group-profile="${chat.id}"` : ""}><button class="chat-back-button chat-head-action" type="button" data-back-to-chats title="Вернуться к списку чатов" aria-label="Вернуться к списку чатов">←</button><button class="chat-mobile-menu-button chat-head-action" type="button" data-open-mobile-chat-menu title="Открыть меню" aria-label="Открыть меню"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>${chatIdentity}${callButtons}${headerTools}</header>
     ${selectedMessageIds.size ? `<div class="message-selection-toolbar"><b class="message-selection-toolbar__count">Выбрано: ${selectedMessageIds.size}</b><div class="message-selection-toolbar__actions"><button type="button" data-bulk-forward>${actionIcon("forward")}<span>Переслать</span></button><button type="button" data-bulk-confidential>${actionIcon("confidential")}<span>В скрытый чат</span></button><button type="button" data-bulk-delete>${actionIcon("delete")}<span>Удалить</span></button><button type="button" data-bulk-clear>${actionIcon("cancel")}<span>Отмена</span></button></div></div>` : ""}
-    ${activeChatSearchOpen ? `<div class="chat-search-panel"><input type="search" data-chat-search-input placeholder="Поиск в «${esc(meta.title)}»" value="${esc(activeChatSearchQuery)}" autofocus><span data-chat-search-count></span><button type="button" data-close-chat-search aria-label="Закрыть поиск">×</button><div class="chat-search-panel__results" data-chat-search-results></div></div>` : ""}
+    ${activeChatSearchOpen ? `<div class="chat-search-panel"><input type="search" data-chat-search-input placeholder="Поиск в «${esc(meta.title)}»" value="${esc(activeChatSearchQuery)}" autofocus><button type="button" data-chat-search-previous aria-label="Предыдущее совпадение" title="Предыдущее совпадение">↑</button><span data-chat-search-count></span><button type="button" data-chat-search-next aria-label="Следующее совпадение" title="Следующее совпадение">↓</button><button type="button" data-close-chat-search aria-label="Закрыть поиск">×</button><div class="chat-search-panel__results" data-chat-search-results></div></div>` : ""}
     <div class="chat-body${activePinnedMessage && !selectedMessageIds.size ? " chat-body--with-pinned" : ""}${channelNeedsMediaBar ? " chat-body--channel-viewer" : ""}">
-      ${activePinnedMessage && !selectedMessageIds.size ? `<div class="pinned-messages"><button class="pinned-messages__content" type="button" data-scroll-pinned-message="${activePinnedMessage.id}" title="Перейти к закреплённому сообщению"><span class="pinned-messages__label">${pinIcon("pinned-messages__pin-icon")}<span>Закреплённое сообщение${pinnedMessages.length > 1 ? ` · ${pinnedMessageIndex + 1} из ${pinnedMessages.length}` : ""}</span></span><span class="pinned-messages__text">${esc(pinnedMessagePreview(activePinnedMessage))}</span></button>${pinnedMessages.length > 1 ? '<button type="button" class="pinned-messages__next" data-next-pinned-message title="Следующее закреплённое сообщение" aria-label="Следующее закреплённое сообщение">⌄</button>' : ""}<button type="button" class="pinned-messages__menu" data-toggle-pinned-actions title="Действия с закрепом" aria-label="Действия с закрепом">${actionIcon("more")}</button></div>` : ""}
+      ${activePinnedMessage && !selectedMessageIds.size ? `<div class="pinned-messages"><button class="pinned-messages__content" type="button" data-scroll-pinned-message="${activePinnedMessage.id}" title="Перейти к закреплённому сообщению"><span class="pinned-messages__label">${pinIcon("pinned-messages__pin-icon")}<span>Закреплённое сообщение${pinnedMessages.length > 1 ? ` · ${pinnedMessageIndex + 1} из ${pinnedMessages.length}` : ""}</span></span><span class="pinned-messages__text">${esc(pinnedMessagePreview(activePinnedMessage))}</span></button>${pinnedMessages.length > 1 ? '<button type="button" class="pinned-messages__next" data-previous-pinned-message title="Предыдущее закреплённое сообщение" aria-label="Предыдущее закреплённое сообщение">↑</button><button type="button" class="pinned-messages__next" data-next-pinned-message title="Следующее закреплённое сообщение" aria-label="Следующее закреплённое сообщение">↓</button>' : ""}<button type="button" class="pinned-messages__menu" data-toggle-pinned-actions title="Действия с закрепом" aria-label="Действия с закрепом">${actionIcon("more")}</button></div>` : ""}
       <div class="scroll-date-bubble hidden" data-scroll-date></div><div class="messages ${channelAppearance ? "" : chatBackgroundClass(state.me)}" id="messages"${channelAppearance ? "" : chatBackgroundStyle(state.me)}>${messages.map((message) => `${message.id === firstUnreadMessageId ? '<div class="unread-divider"><span>Новые сообщения</span></div>' : ""}${messageHtml(message)}`).join("") || emptyChatNotice}</div>
       <button class="jump-to-latest hidden" type="button" data-jump-to-latest title="К последним сообщениям" aria-label="К последним сообщениям">↓</button>
     </div>
-    ${channelNeedsMediaBar ? `<div class="channel-viewer-bar" id="channelViewerBar"><button type="button" data-buy-stars-channel aria-label="Купить звёзды через канал">${starButtonIcon()}<span>Звёзды</span></button><button type="button" data-toggle-chat-search aria-label="Поиск в канале">⌕<span>Поиск</span></button></div>` : showComposer ? `<form class="composer" id="composer">
+    ${channelNeedsMediaBar ? `<div class="channel-viewer-bar" id="channelViewerBar"><button type="button" data-open-chat-media aria-label="Вложения канала"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.75h7.2L19 8.55v11.7H7z"/><path d="M14 3.75v5h5M9.75 13h6.5M9.75 16.25h4.5"/></svg><span>Вложения</span></button>${channelCanSellStars ? `<button type="button" data-buy-stars-channel aria-label="Купить звёзды через канал">${starButtonIcon()}<span>Купить звёзды</span></button>` : ""}</div>` : showComposer ? `<form class="composer" id="composer">
       <label class="composer-icon attach-button" title="Прикрепить фото, видео или документ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11.2 12 19.7a5.3 5.3 0 0 1-7.5-7.5l9-9a3.7 3.7 0 1 1 5.2 5.3l-9.1 9.1a2 2 0 0 1-2.8-2.8l8-8"/></svg><input name="attachment" type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime,application/pdf,text/plain,.doc,.docx" hidden></label>
       <div class="composer-input"><textarea name="text" placeholder="${chat.type === "channel" ? "Новая публикация" : "Сообщение"}"></textarea><button class="composer-icon composer-icon--emoji" type="button" data-emoji-toggle title="Эмодзи" aria-label="Открыть эмодзи"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.75a8.25 8.25 0 1 0 8.25 8.25"/><path d="M7.8 13.65c1.12 1.44 2.5 2.1 4.2 2.1s3.08-.66 4.2-2.1M8.75 9.75h.01M14.5 9.75h.01"/><path d="m18.6 3.25.48 1.32 1.32.48-1.32.48-.48 1.32-.48-1.32-1.32-.48 1.32-.48.48-1.32Z"/></svg></button></div>
       <div class="composer-tools">
@@ -1941,6 +2400,7 @@ function renderChat() {
     updateChatHeadSpace();
     new ResizeObserver(updateChatHeadSpace).observe(chatHead);
   }
+  bindMessageMediaLoading(panel);
   const composer = panel.querySelector("#composer");
   if (composer) {
   const updateComposerSpace = () => panel.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
@@ -1954,6 +2414,20 @@ function renderChat() {
     const body = { chatId: chat.id, text: form.get("text") };
     const temporaryId = `pending-${crypto.randomUUID()}`;
     let previewUrl = null;
+    const attachmentMediaType = attachment?.size ? (attachment.type.startsWith("image/") ? "photo" : attachment.type.startsWith("video/") ? "video" : "document") : null;
+    const pending = {
+      id: temporaryId,
+      chatId: chat.id,
+      senderId: state.me.id,
+      text: body.text,
+      mediaType: attachmentMediaType,
+      mediaData: null,
+      mediaLoading: Boolean(attachmentMediaType),
+      createdAt: Math.floor(Date.now() / 1000),
+      deliveryState: "sending",
+    };
+    pendingOutgoingMessages.set(temporaryId, pending);
+    appendLiveMessage(pending);
     try {
       stopTypingActivity(chat.id);
       if (attachment?.size) {
@@ -1970,18 +2444,12 @@ function renderChat() {
           body.fileName = attachment.name;
         }
       }
+      pending.mediaType = body.mediaType || null;
+      pending.mediaData = previewUrl || body.mediaData || null;
+      pending.mediaLoading = false;
+      pendingOutgoingMessages.set(temporaryId, pending);
+      replaceLiveMessage(temporaryId, pending);
       const response = await api("/api/messages", { method: "POST", body });
-      const pendingStartedAt = Date.now();
-      pendingOutgoingMessages.set(temporaryId, {
-        id: temporaryId,
-        chatId: chat.id,
-        senderId: state.me.id,
-        text: body.text,
-        mediaType: body.mediaType || null,
-        mediaData: previewUrl || body.mediaData || null,
-        createdAt: Math.floor(pendingStartedAt / 1000),
-        deliveryState: "sending",
-      });
       composerForm.reset();
       attachmentNotice.classList.add("hidden");
       composerForm.querySelector(".composer-tools")?.classList.remove("composer-tools--with-text");
@@ -2059,10 +2527,6 @@ function renderChat() {
       toast("Вы подписались на канал.");
       await refresh();
     } catch (error) { toast(error.message, true); }
-  });
-  panel.querySelector("[data-report-channel]")?.addEventListener("click", async (event) => {
-    event.stopPropagation();
-    try { await reportTarget("channel", event.currentTarget.dataset.reportChannel); } catch (error) { toast(error.message, true); }
   });
   panel.querySelectorAll("[data-open-reacts]").forEach((btn) => btn.addEventListener("click", () => toggleReactionPicker(btn.dataset.openReacts)));
   panel.querySelectorAll("[data-close-reactions]").forEach((btn) => btn.addEventListener("click", () => closeReactionPickers()));
@@ -2145,6 +2609,12 @@ function renderChat() {
   panel.querySelector("[data-next-pinned-message]")?.addEventListener("click", () => {
     pinnedMessageIndex = (pinnedMessageIndex + 1) % pinnedMessages.length;
     renderChat();
+    requestAnimationFrame(() => app.querySelector(`#message-${CSS.escape(pinnedMessages[pinnedMessageIndex].id)}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  });
+  panel.querySelector("[data-previous-pinned-message]")?.addEventListener("click", () => {
+    pinnedMessageIndex = (pinnedMessageIndex - 1 + pinnedMessages.length) % pinnedMessages.length;
+    renderChat();
+    requestAnimationFrame(() => app.querySelector(`#message-${CSS.escape(pinnedMessages[pinnedMessageIndex].id)}`)?.scrollIntoView({ behavior: "smooth", block: "center" }));
   });
   panel.querySelectorAll("[data-open-profile]").forEach((btn) => btn.addEventListener("click", () => openProfile(btn.dataset.openProfile)));
   panel.querySelectorAll("[data-remove-pending-message]").forEach((button) => button.addEventListener("click", () => removePendingMessage(button.dataset.removePendingMessage)));
@@ -2284,7 +2754,7 @@ function renderChat() {
   });
   panel.querySelectorAll("[data-record]").forEach((btn) => btn.addEventListener("click", () => recordMediaMessage(chat.id, btn.dataset.record)));
   panel.querySelectorAll(".message").forEach((message) => message.addEventListener("click", (event) => {
-    if (event.target.closest("button, audio, video, input, label")) return;
+    if (event.target.closest("a, button, audio, video, input, label")) return;
     const selectedMessage = messages.find((item) => item.id === message.id.replace("message-", ""));
     if (!selectedMessage || selectedMessage.mediaType === "system") return;
     if (selectedMessageIds.size) {
@@ -2296,7 +2766,7 @@ function renderChat() {
     openMessageMenu(selectedMessage);
   }));
   panel.querySelectorAll("[data-call]").forEach((btn) => btn.addEventListener("click", () => startCall(chat, btn.dataset.call)));
-  panel.querySelector("[data-open-chat-media]")?.addEventListener("click", () => openChatMedia(chat));
+  panel.querySelectorAll("[data-open-chat-media]").forEach((button) => button.addEventListener("click", () => openChatMedia(chat)));
   panel.querySelectorAll("[data-toggle-chat-search]").forEach((button) => button.addEventListener("click", () => {
     activeChatSearchOpen = true;
     renderChat();
@@ -2304,21 +2774,34 @@ function renderChat() {
   panel.querySelector("[data-close-chat-search]")?.addEventListener("click", () => {
     activeChatSearchOpen = false;
     activeChatSearchQuery = "";
+    activeChatSearchResults = [];
+    activeChatSearchIndex = -1;
     renderChat();
   });
   const chatSearchInput = panel.querySelector("[data-chat-search-input]");
   if (chatSearchInput) {
     const chatSearchResults = panel.querySelector("[data-chat-search-results]");
     const chatSearchCount = panel.querySelector("[data-chat-search-count]");
-    const search = () => runChatMessageSearch(chat, activeChatSearchQuery, chatSearchResults, chatSearchCount);
+    const search = () => runChatMessageSearch(chat, activeChatSearchQuery, chatSearchResults, chatSearchCount, panel);
     chatSearchInput.addEventListener("input", (event) => {
       activeChatSearchQuery = event.target.value;
       clearTimeout(activeChatSearchTimer);
       activeChatSearchTimer = setTimeout(search, 180);
     });
+    const moveSearch = (direction) => {
+      if (!activeChatSearchResults.length) return;
+      activeChatSearchIndex = (activeChatSearchIndex + direction + activeChatSearchResults.length) % activeChatSearchResults.length;
+      chatSearchCount.textContent = `${activeChatSearchIndex + 1} из ${activeChatSearchResults.length}`;
+      focusActiveChatSearchResult(panel);
+    };
+    panel.querySelector("[data-chat-search-previous]")?.addEventListener("click", () => moveSearch(-1));
+    panel.querySelector("[data-chat-search-next]")?.addEventListener("click", () => moveSearch(1));
+    chatSearchInput.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowUp") { event.preventDefault(); moveSearch(-1); }
+      if (event.key === "ArrowDown") { event.preventDefault(); moveSearch(1); }
+    });
     if (activeChatSearchQuery) search();
   }
-  panel.querySelector("[data-buy-stars-channel]")?.addEventListener("click", () => openChannelStarPurchase(chat));
   panel.querySelector("[data-open-group-profile]")?.addEventListener("click", (event) => {
     if (!event.target.closest("button, input, label")) openGroupProfile(chat);
   });
@@ -2359,13 +2842,14 @@ function renderChat() {
     clearTimeout(dateBubble._hideTimer);
     dateBubble._hideTimer = setTimeout(() => dateBubble.classList.add("hidden"), 1200);
   };
-  messagesBox.addEventListener("scroll", () => { updateJumpButton(); updateScrollDate(); }, { passive: true });
+  messagesBox.addEventListener("scroll", () => { rememberChatScroll(messagesBox); updateJumpButton(); updateScrollDate(); }, { passive: true });
   jumpToLatest.addEventListener("click", (event) => { event.preventDefault(); scrollToLatest(); jumpToLatest.blur(); updateJumpButton(); });
   if (shouldScrollToLatest) {
     scrollToLatest();
     requestAnimationFrame(() => requestAnimationFrame(scrollToLatest));
   }
-  else messagesBox.scrollTop = previousScrollTop;
+  else messagesBox.scrollTop = Math.max(0, messagesBox.scrollHeight - messagesBox.clientHeight - previousDistanceToBottom);
+  rememberChatScroll(messagesBox);
   updateJumpButton();
 }
 
@@ -2549,7 +3033,11 @@ async function reportTarget(targetType, targetId) {
 
 function profileMenuActions(profileUser) {
   const actions = [];
-  if (profileUser.id !== state.me.id) actions.push({ label: "Пожаловаться на страницу", action: () => reportTarget("profile", profileUser.id) });
+  if (profileUser.id !== state.me.id) {
+    const blocked = (state.me.blockedUserIds || []).includes(profileUser.id);
+    actions.push({ label: blocked ? "Разблокировать" : "Заблокировать", action: async () => { try { await api("/api/profile/block", { method: "POST", body: { userId: profileUser.id, blocked: !blocked } }); await refresh(); toast(blocked ? "Пользователь разблокирован." : "Пользователь заблокирован."); } catch (error) { toast(error.message, true); } } });
+    actions.push({ label: "Пожаловаться на страницу", action: () => reportTarget("profile", profileUser.id) });
+  }
   actions.push(
     { label: "Скопировать username", action: () => copyText(`@${profileUser.username}`, "Username скопирован.") },
     { label: "Отправить профиль в чат", action: () => openProfileShareDialog(profileUser) },
@@ -2619,17 +3107,23 @@ async function setStoryPrivacyHidden(userId, hidden) {
 }
 
 function openChatMedia(chat) {
-  const media = state.messages.filter((message) => message.chatId === chat.id && ["photo", "voice", "circle", "document"].includes(message.mediaType));
+  const media = state.messages.filter((message) => message.chatId === chat.id && ["photo", "video", "voice", "circle", "document"].includes(message.mediaType));
   const photos = media.filter((message) => message.mediaType === "photo");
+  const videos = media.filter((message) => message.mediaType === "video");
   const voices = media.filter((message) => message.mediaType === "voice");
   const circles = media.filter((message) => message.mediaType === "circle");
   const documents = media.filter((message) => message.mediaType === "document");
   const overlay = document.createElement("div");
   overlay.className = "group-card-overlay";
-  overlay.innerHTML = `<section class="group-card chat-media-card" role="dialog" aria-modal="true" aria-label="Вложения диалога"><header class="group-card__header"><div><b>Вложения</b><small>Фото, документы, голосовые и кружки</small></div><button type="button" data-close-chat-media aria-label="Закрыть">×</button></header><section class="group-card__section">${photos.length ? `<div class="group-card__photos">${photos.map((message) => `<button type="button" data-chat-photo="${message.id}"><img src="${esc(messageMediaUrl(message))}" alt="Фото"></button>`).join("")}</div>` : ""}${documents.length ? `<div class="group-card__media-list"><b>Документы · ${documents.length}</b>${documents.map((message) => `<a class="document-link" href="${esc(messageMediaUrl(message))}" target="_blank" rel="noopener">📄 ${esc(message.text?.replace(/^Документ:\s*/, "") || "Документ")}</a>`).join("")}</div>` : ""}${voices.length ? `<div class="group-card__media-list"><b>Голосовые · ${voices.length}</b>${voices.map((message) => `<audio controls preload="metadata" src="${esc(messageMediaUrl(message))}"></audio>`).join("")}</div>` : ""}${circles.length ? `<div class="group-card__circles"><b>Кружки · ${circles.length}</b><div>${circles.map((message) => `<button type="button" data-chat-circle="${message.id}"><video muted preload="metadata" src="${esc(messageMediaUrl(message))}"></video><span>▶</span></button>`).join("")}</div></div>` : ""}${!media.length ? '<p class="muted">В этом диалоге пока нет вложений.</p>' : ""}</section></section>`;
+  const reportButton = chat.type === "channel" && chat.ownerId !== state.me.id ? `<button class="button small" type="button" data-report-channel-media="${chat.id}">Пожаловаться на канал</button>` : "";
+  overlay.innerHTML = `<section class="group-card chat-media-card" role="dialog" aria-modal="true" aria-label="Вложения диалога"><header class="group-card__header"><div><b>Вложения</b><small>Фото, видео, документы, голосовые и кружки</small></div><button type="button" data-close-chat-media aria-label="Закрыть">×</button></header><section class="group-card__section"><div class="group-card__section-head"><button class="button small" type="button" data-open-chat-search>Поиск сообщений</button>${reportButton}</div>${photos.length ? `<div class="group-card__photos">${photos.map((message) => `<button type="button" data-chat-photo="${message.id}"><img src="${esc(messageMediaUrl(message))}" alt="Фото"></button>`).join("")}</div>` : ""}${videos.length ? `<div class="group-card__media-list"><b>Видео · ${videos.length}</b>${videos.map((message) => `<video controls preload="metadata" src="${esc(messageMediaUrl(message))}"></video>`).join("")}</div>` : ""}${documents.length ? `<div class="group-card__media-list"><b>Документы · ${documents.length}</b>${documents.map((message) => `<a class="document-link" href="${esc(messageMediaUrl(message))}" target="_blank" rel="noopener">📄 ${esc(message.text?.replace(/^Документ:\s*/, "") || "Документ")}</a>`).join("")}</div>` : ""}${voices.length ? `<div class="group-card__media-list"><b>Голосовые · ${voices.length}</b>${voices.map((message) => `<audio controls preload="metadata" src="${esc(messageMediaUrl(message))}"></audio>`).join("")}</div>` : ""}${circles.length ? `<div class="group-card__circles"><b>Кружки · ${circles.length}</b><div>${circles.map((message) => `<button type="button" data-chat-circle="${message.id}"><video muted preload="metadata" src="${esc(messageMediaUrl(message))}"></video><span>▶</span></button>`).join("")}</div></div>` : ""}${!media.length ? '<p class="muted">В этом диалоге пока нет вложений.</p>' : ""}</section></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-chat-media]").addEventListener("click", close);
+  overlay.querySelector("[data-open-chat-search]")?.addEventListener("click", () => { close(); activeChatSearchOpen = true; renderChat(); });
+  overlay.querySelector("[data-report-channel-media]")?.addEventListener("click", async (event) => {
+    try { await reportTarget("channel", event.currentTarget.dataset.reportChannelMedia); } catch (error) { toast(error.message, true); }
+  });
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
   overlay.querySelectorAll("[data-chat-photo]").forEach((button) => button.addEventListener("click", () => openMedia(messageMediaUrl(state.messages.find((message) => message.id === button.dataset.chatPhoto)))));
   overlay.querySelectorAll("[data-chat-circle]").forEach((button) => button.addEventListener("click", () => { close(); openCircle(button.dataset.chatCircle); }));
@@ -2780,7 +3274,7 @@ function messageHtml(msg) {
   const reactionHtml = reactions.length ? `<div class="reacts visible-reacts">${reactions.map(([emoji, count]) => `<button data-react="${msg.id}" data-emoji="${esc(emoji)}">${esc(emoji)} ${count}</button>`).join("")}</div>` : "";
   const isCircle = msg.mediaType === "circle";
   const isVoice = msg.mediaType === "voice";
-  const isGroup = ["group", "community", "channel"].includes(chat?.type);
+  const isGroup = ["group", "community"].includes(chat?.type);
   const author = userById(msg.senderId);
   const sharedProfile = msg.profileUserId ? userById(msg.profileUserId) : null;
   const forwardedFromUser = msg.forwardedFromUserId ? userById(msg.forwardedFromUserId) : null;
@@ -2791,7 +3285,8 @@ function messageHtml(msg) {
     && !msg.profileUserId
     && !String(msg.text || "").includes("\n")
     && String(msg.text || "").length <= 52;
-  const canDeleteRssPost = ["rss", "vk"].includes(msg.sourceType) && chat?.type === "channel" && isChannelManagerRole(chatMemberRole(msg.chatId));
+  const isImportedSourcePost = ["rss", "vk"].includes(msg.sourceType);
+  const canDeleteRssPost = isImportedSourcePost && chat?.type === "channel" && isChannelManagerRole(chatMemberRole(msg.chatId));
   const sourcePostActions = canDeleteRssPost
     ? `<div class="group-post-actions"><button type="button" data-delete-message="${msg.id}" data-delete-scope="everyone">Удалить публикацию</button></div>`
     : msg.sourceType && !["telegram", "rss"].includes(msg.sourceType)
@@ -2799,17 +3294,19 @@ function messageHtml(msg) {
       : "";
   const commentableChat = ["channel", "group", "community"].includes(chat?.type);
   const comments = commentableChat ? state.channelComments.filter((comment) => comment.message_id === msg.id) : [];
+  const viewsHtml = chat?.type === "channel" && settings.showViews !== false ? `<span class="message__views" title="Просмотры"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.75 12s3.35-5.5 9.25-5.5S21.25 12 21.25 12 17.9 17.5 12 17.5 2.75 12 2.75 12Z"/><circle cx="12" cy="12" r="2.7"/></svg><span>${Number(msg.views || 0).toLocaleString("ru-RU")}</span></span>` : "";
   const channelReactionPickerHtml = chat?.type === "channel" && settings.showReactions !== false ? `<div class="reaction-picker hidden" data-reaction-picker="${msg.id}"><div class="reaction-picker__head"><b>Выберите реакцию</b><button class="reaction-picker__close" type="button" data-close-reactions aria-label="Закрыть">×</button></div><div class="reaction-picker__emojis">${availableMessageReactions(chat).map((emoji) => `<button type="button" data-react="${msg.id}" data-emoji="${esc(emoji)}" aria-label="Реакция ${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div></div>` : "";
   const commentsHtml = commentableChat && settings.commentsEnabled !== false ? `<div class="channel-comments"><button type="button" data-open-channel-comments="${msg.id}" aria-label="Комментарии${comments.length ? `: ${comments.length}` : ""}" title="Комментарии"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.75A2.75 2.75 0 0 1 6.75 3h7.5A2.75 2.75 0 0 1 17 5.75v4.5A2.75 2.75 0 0 1 14.25 13H10l-3.75 2.5V13A2.75 2.75 0 0 1 4 10.25v-4.5Z"/><path d="M8 17h6.25A2.75 2.75 0 0 0 17 14.25V13M7.5 7.75h6M7.5 10h3.75"/></svg>${comments.length ? `<span>${comments.length}</span>` : ""}</button>${chat?.type === "channel" && settings.showReactions !== false ? `<button type="button" data-open-reacts="${msg.id}" aria-label="Выбрать реакцию" title="Выбрать реакцию">${actionIcon("reaction")}</button>` : ""}${chat?.type === "channel" ? `<button type="button" data-share-channel-post="${msg.id}" aria-label="Поделиться публикацией" title="Поделиться">${actionIcon("forward")}</button>` : ""}</div>` : "";
   return `<div class="message ${msg.senderId === state.me.id ? "own" : ""}${showAuthor ? " message--with-author" : ""}${msg.pinned ? " pinned" : ""}${isCircle ? " message--circle" : ""}${isVoice ? " message--audio" : ""}${String(msg.id).startsWith("pending-") ? " message--pending" : ""}${msg.deliveryState === "failed" ? " message--failed" : ""}${selectedMessageIds.has(msg.id) ? " selected" : ""}" id="message-${msg.id}">
     ${showAuthor ? `<button class="message__author" type="button" data-open-profile="${msg.senderId}" title="Открыть профиль ${esc(author?.name || "участника")}">${avatarHtml(author, "message__author-avatar")}</button>` : ""}
     <div class="message__content">
-      <div class="message__bubble${showInlineDelivery ? " message__bubble--inline-meta" : " message__bubble--with-meta"}">
+      <div class="message__bubble${showInlineDelivery ? " message__bubble--inline-meta" : " message__bubble--with-meta"}${isImportedSourcePost && msg.mediaType === "photo" ? " message__bubble--source-photo" : ""}">
         ${msg.forwardedFrom ? forwardedFromUser ? `<button type="button" class="message__forwarded message__forwarded--link" data-open-profile="${forwardedFromUser.id}" title="Открыть профиль автора источника"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 3 12l6 7M4 12h10a6 6 0 0 1 6 6v1"/></svg>Переслано от ${esc(msg.forwardedFrom)}</button>` : `<div class="message__forwarded"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5 3 12l6 7M4 12h10a6 6 0 0 1 6 6v1"/></svg>Переслано от ${esc(msg.forwardedFrom)}</div>` : ""}
         ${messageMediaHtml(msg)}
         ${sharedProfile ? `<button type="button" class="shared-profile-card" data-open-profile="${sharedProfile.id}" title="Открыть профиль ${esc(sharedProfile.name)}">${avatarHtml(sharedProfile, "shared-profile-card__avatar")}<span><b>${esc(sharedProfile.name)}</b><small>@${esc(sharedProfile.username)}</small></span><em>Профиль</em></button>` : msg.profileUserId ? '<div class="shared-profile-card shared-profile-card--missing"><span><b>Профиль недоступен</b><small>Пользователь больше не найден</small></span></div>' : ""}
         ${["rss", "vk"].includes(msg.sourceType) ? rssPostHtml(msg) : msg.text ? `<div class="message__text">${highlightedMessageSearch.chatId === msg.chatId ? highlightedText(msg.text, highlightedMessageSearch.query) : esc(msg.text)}</div>` : ""}
         ${selectedMessageIds.has(msg.id) ? `<span class="message__selected-marker" aria-label="Сообщение выбрано">${actionIcon("select")}</span>` : ""}
+        ${viewsHtml}
         ${messageDeliveryHtml(msg, showInlineDelivery ? "inline" : "inside")}
         ${msg.deliveryState === "failed" ? `<button class="message__pending-delete" type="button" data-remove-pending-message="${msg.id}" title="Удалить неотправленное сообщение" aria-label="Удалить неотправленное сообщение">${actionIcon("delete")}</button>` : ""}
       </div>
@@ -2848,6 +3345,15 @@ function externalHttpUrl(value) {
   try {
     const url = new URL(String(value || ""));
     return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function vkVideoEmbedUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" && ["vk.com", "www.vk.com", "vkvideo.ru", "www.vkvideo.ru"].includes(url.hostname) && url.pathname === "/video_ext.php" && url.searchParams.has("oid") && url.searchParams.has("id") && url.searchParams.has("hash") ? url.href : "";
   } catch {
     return "";
   }
@@ -2994,12 +3500,13 @@ function openGroupProfile(chat) {
     .sort((a, b) => (roleOrder[a.role] ?? 99) - (roleOrder[b.role] ?? 99) || (a.user?.name || "").localeCompare(b.user?.name || "", "ru"));
   const myRole = chatMemberRole(chat.id);
   const isChannel = chat.type === "channel";
+  const isMonetizedChat = ["channel", "group", "community"].includes(chat.type);
   const canManageChannel = isChannel && isChannelManagerRole(myRole);
   const canModerate = isChannel ? canManageChannel : ["owner", "admin"].includes(myRole);
   const canEditProfile = myRole === "owner";
   const canAuthorChannel = canManageChannel;
   const subscriberCount = Number(chat.subscriberCount) || 0;
-  const media = state.messages.filter((message) => message.chatId === chat.id && ["photo", "voice", "circle", "document"].includes(message.mediaType));
+  const media = state.messages.filter((message) => message.chatId === chat.id && ["photo", "video", "voice", "circle", "document"].includes(message.mediaType));
   const photos = media.filter((message) => message.mediaType === "photo");
   const audio = media.filter((message) => message.mediaType === "voice");
   const circles = media.filter((message) => message.mediaType === "circle");
@@ -3019,20 +3526,32 @@ function openGroupProfile(chat) {
   overlay.className = `group-card-overlay${isChannel ? " group-card-overlay--channel" : ""}`;
   const bonus = channelStarBonus(chat);
   const channelPurchases = state.channelStarPurchases.filter((purchase) => purchase.channel_id === chat.id);
-  const channelSettings = isChannel && canEditProfile ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Настройки канала</b><small>Видимость и взаимодействия</small></div></div><div class="channel-settings">${[["showSubscribers", "Подписчики", "Показывать число подписчиков"], ["showReactions", "Реакции", "Показывать реакции под публикациями"], ["commentsEnabled", "Комментарии", "Разрешить комментарии к постам"], ["isPublic", "Публичный канал", "Показывать канал в общем поиске"]].map(([key, title, hint]) => `<label class="channel-setting"><span><b>${title}</b><small>${hint}</small></span><input type="checkbox" name="${key}" ${chat.settings?.[key] !== false ? "checked" : ""}></label>`).join("")}<label class="channel-setting"><span><b>Бонус владельцу за покупку</b><small>Процент купленных звёзд, который начислится на ваш баланс.</small></span><input name="starBonusPercent" type="number" min="1" max="100" value="${bonus.percent}"></label><label class="channel-setting"><span><b>Звёзды покупателю</b><small>Подарок списывается с вашего баланса после успешной оплаты.</small></span><input name="buyerGiftStars" type="number" min="0" max="100000" value="${channelBuyerGift(chat)}"></label><label>Сообщение покупателю / промокод<textarea name="buyerPurchaseMessage" maxlength="500" placeholder="Например: промокод CHANNEL10 на следующую покупку">${esc(chat.settings?.buyerPurchaseMessage || "")}</textarea></label><div class="channel-settings__actions"><button class="button small" type="button" data-link-telegram>Импорт из Telegram</button><button class="button small" type="button" data-link-rss>Автопостинг из RSS</button><button class="button small" type="button" data-link-vk>Автопостинг из VK</button></div></div></section>` : "";
-  const channelPurchaseHistory = isChannel && canEditProfile ? `<section class="group-card__section channel-purchase-history"><div class="group-card__section-head"><div><b>Покупки через канал</b><small>${channelPurchases.length ? "Покупатели и начисленные бонусы" : "Покупок пока не было"}</small></div></div>${channelPurchases.length ? `<div class="channel-purchase-list">${channelPurchases.map((purchase) => `<article><span><b>${esc(purchase.buyer_name)}</b><small>@${esc(purchase.buyer_username)} · ${timeFmt(purchase.created_at)}</small></span><strong>★ ${purchase.stars}<small>${purchase.bonus_type === "money" ? `${esc(purchase.bonus_amount)} ₽ к выплате` : `+ ★ ${esc(purchase.bonus_amount)}`}</small></strong></article>`).join("")}</div>` : ""}</section>` : "";
-  const channelAdminTools = canAuthorChannel ? `<section class="group-card__section group-card__section--tools"><div class="group-card__section-head"><div><b>Инструменты администратора</b><small>Публикации, оформление и связь с группой</small></div></div><div class="channel-settings__actions"><button class="button small" type="button" data-schedule-channel-post>Запланировать пост</button><button class="button small" type="button" data-link-channel>Привязать группу / беседу</button><button class="button small" type="button" data-channel-appearance>Оформление канала</button></div></section>` : "";
+  const buyerGiftPackages = (state.yookassa?.packages || []).map((item) => `<label class="channel-setting"><span><b>★ ${item.stars} покупателю</b><small>Подарок за этот пакет списывается с вашего баланса после оплаты.</small></span><input name="buyerGiftStarsByPackage.${esc(item.id)}" type="number" min="0" max="100000" value="${channelBuyerGift(chat, item.id)}"></label>`).join("");
+  const payout = state.channelPayoutSummaries.find((item) => item.channelId === chat.id) || { available: "0.00", reserved: "0.00", earned: "0.00" };
+  const demoPackages = state.demoActivityPackages || [];
+  const accountLevelIndexes = new Map((state.accountLevel?.levels || []).map((level, index) => [level.id, index]));
+  const currentAccountLevelIndex = accountLevelIndexes.get(state.accountLevel?.current?.id) ?? -1;
+  const demoPackageAvailable = (item) => !item.required_account_level_id || currentAccountLevelIndex >= (accountLevelIndexes.get(item.required_account_level_id) ?? Number.MAX_SAFE_INTEGER);
+  const demoPackageRequirement = (item) => item.required_account_level_id ? ` · уровень: ${(state.accountLevel?.levels || []).find((level) => level.id === item.required_account_level_id)?.title || item.required_account_level_id}` : "";
+  const joinRequests = state.channelJoinRequests || [];
+  const shareSubmissions = (state.channelShareSubmissions || []).filter((submission) => submission.channel_id === chat.id);
+  const shareStatus = { pending: "Ожидает 10 минут", credited: "Награда начислена", rejected: "Отклонена", revoked: "Награда отменена" };
+  const channelSettings = isChannel && canEditProfile ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Настройки канала</b><small>Видимость и взаимодействия</small></div></div><div class="channel-settings">${[["showSubscribers", "Подписчики", "Показывать число подписчиков"], ["showReactions", "Реакции", "Показывать реакции под публикациями"], ["commentsEnabled", "Комментарии", "Разрешить комментарии к постам"], ["isPublic", "Публичный канал", "Показывать канал в общем поиске"], ["joinApprovalRequired", "Закрытый канал", "Скрыть канал из публичного доступа и принимать подписчиков только после одобрения"], ["protectContent", "Запретить пересылку", "Не разрешать пересылать публикации этого канала"]].map(([key, title, hint]) => `<label class="channel-setting"><span><b>${title}</b><small>${hint}</small></span><input type="checkbox" name="${key}" ${chat.settings?.[key] !== false ? "checked" : ""}></label>`).join("")}<div class="channel-setting"><span><b>Комиссия за покупки</b><small>${esc(channelBonusDescription(bonus))} Настраивается администратором.</small></span><strong>${bonus.percent || 0}%</strong></div><details class="channel-gift-settings"><summary>Звёзды покупателю · пакет звёзд</summary><p class="muted">Настройте подарок для каждого пакета. При успешной оплате звёзды списываются с вашего баланса.</p>${buyerGiftPackages || '<p class="muted">Пакеты звёзд пока недоступны.</p>'}</details><label>Сообщение покупателю / промокод<textarea name="buyerPurchaseMessage" maxlength="500" placeholder="Например: промокод CHANNEL10 на следующую покупку">${esc(chat.settings?.buyerPurchaseMessage || "")}</textarea></label><div class="channel-settings__actions"><button class="button small" type="button" data-link-telegram>Импорт из Telegram</button><button class="button small" type="button" data-link-rss>Автопостинг из RSS</button><button class="button small" type="button" data-link-vk>Автопостинг из VK</button></div></div></section>` : "";
+  const channelPurchaseHistory = isMonetizedChat && canEditProfile ? `<section class="group-card__section channel-purchase-history"><div class="group-card__section-head"><div><b>Доход и выплаты</b><small>Начислено ${esc(payout.earned)} ₽ · в заявках ${esc(payout.reserved)} ₽</small></div><button class="button small" type="button" data-request-channel-payout ${Number(payout.available) > 0 ? "" : "disabled"}>Запросить выплату</button></div><p class="muted">Доступно к выплате: <b>${esc(payout.available)} ₽</b>. После создания заявки сумма резервируется; автоматический перевод не выполняется.</p>${isChannel && demoPackages.length ? `<details class="channel-gift-settings"><summary>Пакеты локальной активности</summary><p class="muted">Работают только внутри Chat-Pro и не влияют на внешние сервисы.</p>${demoPackages.filter((item) => !item.required_account_level_id).map((item) => `<button class="button small" type="button" data-buy-demo-package="${esc(item.id)}" ${demoPackageAvailable(item) ? "" : "disabled"}>${esc(item.title)} · ${item.price_stars ? `★ ${item.price_stars}` : "бесплатно"}</button>`).join(" ")}<p class="muted">Пакеты с требуемым уровнем подключаются автоматически ко всем каналам подходящих владельцев после первой публикации. У новых публикаций в первые часы приоритет, а у каждого подключения есть индивидуальные случайные всплески активности.</p></details>` : ""}${channelPurchases.length ? `<div class="channel-purchase-list">${channelPurchases.map((purchase) => `<article><span><b>${esc(purchase.buyer_name)}</b><small>@${esc(purchase.buyer_username)} · ${timeFmt(purchase.created_at)}</small></span><strong>★ ${purchase.stars}<small>${purchase.bonus_type === "money" ? `${esc(purchase.bonus_amount)} ₽ к выплате` : `+ ★ ${esc(purchase.bonus_amount)}`}</small></strong></article>`).join("")}</div>` : ""}</section>` : "";
+  const channelJoinRequests = canManageChannel && joinRequests.filter((request) => request.channelId === chat.id).length ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Заявки на вступление</b><small>Ожидают одобрения: ${joinRequests.filter((request) => request.channelId === chat.id).length}</small></div></div><div class="group-card__members">${joinRequests.filter((request) => request.channelId === chat.id).map((request) => `<article class="group-card__member">${avatarHtml(userById(request.userId), "group-card__member-avatar")}<span class="group-card__member-info"><b>${esc(request.userName)}</b><small>@${esc(request.username)} · ${timeFmt(request.createdAt)}</small></span><span class="group-card__member-actions"><button class="button small" type="button" data-resolve-channel-request="${esc(request.userId)}" data-channel-request-decision="approve">Одобрить</button><button class="button small" type="button" data-resolve-channel-request="${esc(request.userId)}" data-channel-request-decision="reject">Отклонить</button></span></article>`).join("")}</div></section>` : "";
+  const channelAdminTools = canAuthorChannel ? `<section class="group-card__section group-card__section--tools"><div class="group-card__section-head"><div><b>Инструменты администратора</b><small>Публикации, оформление и связь с группой</small></div></div><div class="channel-settings__actions"><button class="button small" type="button" data-schedule-channel-post>Запланировать пост</button><button class="button small" type="button" data-link-channel>Привязать группу / беседу</button><button class="button small" type="button" data-channel-appearance>Оформление канала</button><button class="button small" type="button" data-channel-share-reward>Поделиться каналом и получить звёзды</button></div>${vkReviewSubmissions.length ? `<div class="admin-list">${vkReviewSubmissions.map((submission) => `<article class="admin-report"><div><b>Обзор VK: ${esc(shareStatus[submission.status] || submission.status)}</b><small>★ ${submission.reward_stars} по ${submission.likes_count} лайкам · ${timeFmt(submission.created_at)}</small><p><a href="${esc(submission.external_url)}" target="_blank" rel="noopener">Открыть обзор VK</a></p>${submission.admin_response ? `<p class="muted">Ответ администрации: ${esc(submission.admin_response)}</p>` : ""}</div></article>`).join("")}</div>` : ""}${shareSubmissions.length ? `<div class="admin-list">${shareSubmissions.map((submission) => `<article class="admin-report"><div><b>${esc(shareStatus[submission.status] || submission.status)}</b><small>★ ${submission.reward_stars} · ${timeFmt(submission.created_at)}</small><p><a href="${esc(submission.external_url)}" target="_blank" rel="noopener">Открыть публикацию</a></p>${submission.admin_response ? `<p class="muted">Ответ администрации: ${esc(submission.admin_response)}</p>` : ""}</div></article>`).join("")}</div>` : ""}</section>` : "";
+  const channelVkProposalTools = "";
   const channelPublicLink = isChannel ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Ссылка на канал</b><small>По ней пользователь откроет канал и сможет подписаться.</small></div></div><div class="invite-link"><code>${esc(channelLink)}</code><button class="button small" type="button" data-copy-channel-link>Копировать</button></div></section>` : "";
   const channelMedia = isChannel ? `<section class="group-card__section group-card__section--media"><div class="group-card__section-head"><div><b>Вложения</b><small>${media.length ? `${media.length} ${media.length === 1 ? "файл" : "файлов"}` : "Фото, документы, голосовые и кружки"}</small></div><button class="button small" type="button" data-open-group-media>Открыть</button></div></section>` : "";
   const groupTools = !isChannel ? `<section class="group-card__section"><div class="group-card__section-head"><div><b>Вложения</b><small>${media.length ? `${media.length} ${media.length === 1 ? "файл" : "файлов"}` : "Пока нет файлов"}</small></div><button class="button small" type="button" data-open-group-media>Открыть</button></div></section><section class="group-card__section"><div class="group-card__section-head"><div><b>Ссылка-приглашение</b><small>${inviteEnabled ? "Доступна всем, у кого есть ссылка" : "Выдавать ссылку могут только администраторы"}</small></div></div>${canModerate ? `<div class="invite-link"><code>${esc(inviteLink)}</code><button class="button small" type="button" data-copy-invite-link>Копировать</button></div><label class="channel-setting"><span><b>Публичная ссылка</b><small>Разрешить вступление по ссылке без приглашения администратора</small></span><input type="checkbox" name="inviteLinkEnabled" ${inviteEnabled ? "checked" : ""}></label>` : '<p class="muted">Ссылка доступна у владельца и администраторов группы.</p>'}</section>` : "";
   const profileEditor = canEditProfile
     ? `<form class="group-card__form" data-group-profile-form><label>Название<input name="title" maxlength="120" required value="${esc(chat.title)}"></label><label>Описание<textarea name="description" maxlength="1000" placeholder="Расскажите о ${isChannel ? "канале" : "беседе"}">${esc(chat.description || "")}</textarea></label><label>Аватар<input name="avatar" type="file" accept="image/png,image/jpeg,image/webp"></label><div class="group-card__form-actions"><button class="button small" type="submit">Сохранить профиль</button>${chat.avatarData ? '<button class="button small" type="button" data-clear-group-avatar>Убрать аватар</button>' : ""}</div></form>`
     : `<section class="group-card__section"><b>О канале</b><p class="muted">Название, описание и аватар меняет только создатель.</p></section>`;
-  const memberSection = isChannel && !canManageChannel
-    ? `<section class="group-card__section group-card__section--subscriber-count"><div class="group-card__section-head"><div><b>Подписчики</b><small>Список подписчиков скрыт создателем канала</small></div><strong>${subscriberCount}</strong></div></section>`
-    : `<section class="group-card__section"><div class="group-card__section-head"><div><b>${isChannel ? "Подписчики и администраторы" : "Участники"}</b><small>${isChannel ? `${subscriberCount} ${subscriberWord(subscriberCount)}` : `${members.length} ${memberWord(members.length)}`}</small></div>${myRole === "owner" ? '<button class="button small" type="button" data-add-group-member>Добавить</button>' : ""}</div><div class="group-card__members">${memberHtml}</div></section>`;
+  const memberSection = isChannel
+    ? `<section class="group-card__section group-card__section--subscriber-count"><div class="group-card__section-head"><div><b>Подписчики</b></div><strong>${subscriberCount} ${subscriberWord(subscriberCount)}</strong></div>${members.length ? `<div class="group-card__members">${memberHtml}</div>` : ""}</section>`
+    : `<section class="group-card__section"><div class="group-card__section-head"><div><b>Участники</b><small>${members.length} ${memberWord(members.length)}</small></div>${myRole === "owner" ? '<button class="button small" type="button" data-add-group-member>Добавить</button>' : ""}</div><div class="group-card__members">${memberHtml}</div></section>`;
   const profileCount = isChannel ? subscriberCount : members.length;
-  overlay.innerHTML = `<section class="group-card${isChannel ? " group-card--channel" : ""}" role="dialog" aria-modal="true" aria-label="Профиль ${isChannel ? "канала" : "группы"}"><header class="group-card__header"><div class="group-card__identity">${chatAvatarHtml(chat, "group-card__avatar")}<div><b>${esc(chat.title)}</b><small>${profileCount} ${isChannel ? subscriberWord(profileCount) : memberWord(profileCount)} · ${isChannel ? "канал" : chat.type === "group" ? "группа" : "комьюнити"}</small></div></div><button type="button" data-close-group-card aria-label="Закрыть">×</button></header>${profileEditor}${channelSettings}${channelPurchaseHistory}${channelAdminTools}${channelPublicLink}${channelMedia}${groupTools}${memberSection}<footer class="group-card__footer${isChannel ? " group-card__footer--channel" : ""}">${isChannel ? `<button class="button primary group-card__buy-stars" type="button" data-buy-stars-through-channel>${starButtonIcon()} Купить звёзды</button>` : ""}${isChannel && chat.ownerId !== state.me.id ? `<button class="button small" type="button" data-report-channel-profile="${chat.id}">Пожаловаться на канал</button>` : ""}<button class="button danger" type="button" data-group-leave>Выйти из ${isChannel ? "канала" : "беседы"}</button></footer></section>`;
+  overlay.innerHTML = `<section class="group-card${isChannel ? " group-card--channel" : ""}" role="dialog" aria-modal="true" aria-label="Профиль ${isChannel ? "канала" : "группы"}"><header class="group-card__header"><div class="group-card__identity">${chatAvatarHtml(chat, "group-card__avatar")}<div><b>${esc(chat.title)}</b><small>${profileCount} ${isChannel ? subscriberWord(profileCount) : memberWord(profileCount)} · ${isChannel ? "канал" : chat.type === "group" ? "группа" : "комьюнити"}</small></div></div><button type="button" data-close-group-card aria-label="Закрыть">×</button></header>${profileEditor}${channelSettings}${channelJoinRequests}${channelPurchaseHistory}${channelAdminTools}${channelVkProposalTools}${channelPublicLink}${channelMedia}${groupTools}${memberSection}<footer class="group-card__footer${isChannel ? " group-card__footer--channel" : ""}">${isMonetizedChat ? `<button class="button primary group-card__buy-stars" type="button" data-buy-stars-through-channel>${starButtonIcon()} Купить звёзды</button>` : ""}${isChannel && canEditProfile ? '<button class="button danger" type="button" data-delete-owned-channel>Удалить канал навсегда</button>' : ""}<button class="button danger" type="button" data-group-leave>Выйти из ${isChannel ? "канала" : "беседы"}</button></footer></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-group-card]").addEventListener("click", close);
@@ -3045,11 +3564,12 @@ function openGroupProfile(chat) {
       const avatarData = avatar?.size ? await fileToDataUrl(avatar, 1_800_000) : (chat.avatarData || "");
       const body = { chatId: chat.id, title: form.get("title"), description: form.get("description"), avatarData };
       if (isChannel) {
-        ["showSubscribers", "showReactions", "commentsEnabled", "isPublic"].forEach((key) => { body[key] = overlay.querySelector(`[name="${key}"]`)?.checked; });
-        ["starBonusPercent", "buyerGiftStars", "buyerPurchaseMessage"].forEach((key) => {
+        ["showSubscribers", "showReactions", "commentsEnabled", "isPublic", "joinApprovalRequired", "protectContent"].forEach((key) => { body[key] = overlay.querySelector(`[name="${key}"]`)?.checked; });
+        ["buyerPurchaseMessage"].forEach((key) => {
           const input = overlay.querySelector(`[name="${key}"]`);
           if (input) body[key] = input.value;
         });
+        body.buyerGiftStarsByPackage = Object.fromEntries([...overlay.querySelectorAll('[name^="buyerGiftStarsByPackage."]')].map((input) => [input.name.slice("buyerGiftStarsByPackage.".length), input.value]));
       }
       if (!isChannel && canModerate) body.inviteLinkEnabled = overlay.querySelector('[name="inviteLinkEnabled"]')?.checked;
       await api("/api/chats/update", { method: "POST", body });
@@ -3077,11 +3597,23 @@ function openGroupProfile(chat) {
   overlay.querySelector("[data-link-rss]")?.addEventListener("click", () => openChannelRssDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
   overlay.querySelector("[data-link-vk]")?.addEventListener("click", () => openChannelVkDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
   overlay.querySelector("[data-channel-appearance]")?.addEventListener("click", () => openChannelAppearanceDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
+  overlay.querySelector("[data-channel-share-reward]")?.addEventListener("click", () => openChannelShareRewardDialog(chat, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
   overlay.querySelector("[data-buy-stars-through-channel]")?.addEventListener("click", () => { close(); openChannelStarPurchase(chat); });
-  overlay.querySelector("[data-report-channel-profile]")?.addEventListener("click", async (event) => {
-    try { await reportTarget("channel", event.currentTarget.dataset.reportChannelProfile); } catch (error) { toast(error.message, true); }
-  });
+  overlay.querySelector("[data-request-channel-payout]")?.addEventListener("click", () => openChannelPayoutRequest(chat, payout.available, () => { close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }));
+  overlay.querySelectorAll("[data-buy-demo-package]").forEach((button) => button.addEventListener("click", async () => {
+    const packageId = button.dataset.buyDemoPackage;
+    const item = demoPackages.find((entry) => entry.id === packageId);
+    if (!item || !window.confirm(`Подключить пакет «${item.title}» к каналу?${item.price_stars ? ` Будет списано ★ ${item.price_stars}.` : ""}`)) return;
+    try { await api("/api/demo-activity-packages/purchase", { method: "POST", body: { packageId, channelId: chat.id } }); await refresh(); close(); openGroupProfile(state.chats.find((entry) => entry.id === chat.id)); toast("Пакет локальной активности подключён."); } catch (error) { toast(error.message, true); }
+  }));
   overlay.querySelectorAll("[data-group-member-profile]").forEach((button) => button.addEventListener("click", () => { close(); openProfile(button.dataset.groupMemberProfile); }));
+  overlay.querySelectorAll("[data-resolve-channel-request]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      await api("/api/channels/join-requests/resolve", { method: "POST", body: { channelId: chat.id, userId: button.dataset.resolveChannelRequest, decision: button.dataset.channelRequestDecision } });
+      await refresh(); close(); openGroupProfile(state.chats.find((item) => item.id === chat.id));
+      toast(button.dataset.channelRequestDecision === "approve" ? "Заявка одобрена." : "Заявка отклонена.");
+    } catch (error) { toast(error.message, true); }
+  }));
   overlay.querySelectorAll("[data-member-role]").forEach((button) => button.addEventListener("click", async () => {
     try { await api("/api/chats/members/role", { method: "POST", body: { chatId: chat.id, userId: button.dataset.memberRole, role: button.dataset.nextRole } }); await refresh(); close(); openGroupProfile(state.chats.find((item) => item.id === chat.id)); }
     catch (error) { toast(error.message, true); }
@@ -3094,10 +3626,63 @@ function openGroupProfile(chat) {
   }));
   overlay.querySelectorAll("[data-group-photo]").forEach((button) => button.addEventListener("click", () => openMedia(messageMediaUrl(state.messages.find((message) => message.id === button.dataset.groupPhoto)))));
   overlay.querySelectorAll("[data-group-circle]").forEach((button) => button.addEventListener("click", () => { close(); openCircle(button.dataset.groupCircle); }));
+  overlay.querySelector("[data-delete-owned-channel]")?.addEventListener("click", async () => {
+    if (!window.confirm(`Удалить канал «${chat.title}» вместе со всеми публикациями, подписчиками и настройками? Это нельзя отменить.`)) return;
+    try {
+      await api("/api/chats/delete", { method: "POST", body: { chatId: chat.id, scope: "everyone" } });
+      activeChatId = null;
+      close();
+      await refresh();
+      toast("Канал удалён.");
+    } catch (error) { toast(error.message, true); }
+  });
   overlay.querySelector("[data-group-leave]").addEventListener("click", async () => {
     if (!window.confirm(`Выйти из «${chat.title}»?`)) return;
     try { await api("/api/chats/leave", { method: "POST", body: { chatId: chat.id } }); activeChatId = null; close(); toast("Вы вышли из беседы."); await refresh(); }
     catch (error) { toast(error.message, true); }
+  });
+}
+
+function openVkReviewRewardDialog() {
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Заявка на ролик или пост о Chat-Pro в VK"><header><div><b>Ролик или пост о Chat‑Pro в VK</b><small>Разместите открытый пост или ролик в любой группе VK либо на своей странице. В названии или тексте должно быть «Chat‑Pro» либо «Чат‑Про». Награда равна числу лайков на момент проверки.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-vk-review-reward-form><label>Ссылка на ролик или пост VK<input name="externalUrl" type="url" maxlength="2048" placeholder="https://vk.com/wall-... или https://vk.com/video-..." required></label><p class="muted">Можно подать публикацию из чужой открытой группы VK. За одну и ту же публикацию награда выдаётся только раз. При накрутке администрация может отменить выплату.</p><button class="button primary">Проверить и отправить заявку</button></form></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  overlay.querySelector("[data-vk-review-reward-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const form = new FormData(event.currentTarget);
+      const result = await api("/api/vk-review-submissions", { method: "POST", body: { externalUrl: form.get("externalUrl") } });
+      await refresh(false); close();
+      toast(`VK проверен. Через 10 минут будет начислено ★ ${result.rewardStars}, если заявка не будет отменена.`);
+    } catch (error) { toast(error.message, true); }
+  });
+}
+
+function openChannelShareRewardDialog(chat, afterSave) {
+  const overlay = document.createElement("div");
+  overlay.className = "member-manager-overlay";
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Заявка на награду за публикацию"><header><div><b>Поделиться каналом и получить звёзды</b><small>Награда: число подписчиков канала, делённое на 3. Заявку можно отправлять раз в 30 дней; ссылка на публикацию не может повторяться.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-channel-share-reward-form><label>Площадка<select name="platform" required><option value="">Выберите площадку</option><option>VK</option><option>Telegram</option><option>Instagram</option><option>Другая</option></select></label><label>Ссылка на опубликованный пост или сторис<input name="externalUrl" type="url" maxlength="2048" placeholder="https://..." required></label><label>Скриншот публикации<input name="screenshot" type="file" accept="image/png,image/jpeg,image/webp" required></label><label>Дополнительное описание (необязательно)<textarea name="description" maxlength="2000" placeholder="Например, где опубликован канал"></textarea></label><p class="muted">Если заявка не будет отменена администрацией, звёзды начислятся через 10 минут.</p><button class="button primary">Отправить заявку</button></form></section>`;
+  document.body.append(overlay);
+  const close = () => overlay.remove();
+  overlay.querySelector(".member-manager__close").addEventListener("click", close);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  overlay.querySelector("[data-channel-share-reward-form]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const form = new FormData(event.currentTarget);
+      const screenshot = form.get("screenshot");
+      if (!(screenshot instanceof File) || !screenshot.size) throw new Error("Прикрепите скриншот публикации.");
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(fileMimeType(screenshot))) throw new Error("Скриншот должен быть в формате PNG, JPG или WebP.");
+      const result = await api("/api/channel-share-submissions", { method: "POST", body: { channelId: chat.id, platform: form.get("platform"), externalUrl: form.get("externalUrl"), screenshotData: await fileToDataUrl(screenshot, 2_500_000), description: form.get("description") } });
+      await refresh(false);
+      close();
+      toast(`Заявка отправлена. Через 10 минут будет начислено ★ ${result.rewardStars}, если администрация её не отменит.`);
+      afterSave?.();
+    } catch (error) { toast(error.message, true); }
   });
 }
 
@@ -3231,41 +3816,99 @@ function openChannelRssDialog(chat, afterSave) {
 
 function openChannelVkDialog(chat, afterSave) {
   const sources = state.vkChannelLinks.filter((item) => item.channel_id === chat.id);
+  const targets = state.vkChannelTargets.filter((item) => item.channel_id === chat.id);
+  const canManageVk = chat.ownerId === state.me.id;
   const overlay = document.createElement("div");
   overlay.className = "member-manager-overlay";
   const sourceList = sources.length
     ? `<div class="rss-source-list">${sources.map((source) => {
       const status = source.last_error ? `Ошибка: ${source.last_error}` : source.last_sync_at ? `Проверено: ${dateFmt(source.last_sync_at)} ${timeFmt(source.last_sync_at)}` : "Ожидается первая проверка";
-      const keywords = Array.isArray(source.keywords) && source.keywords.length ? `Фильтр: ${source.keywords.join(", ")}` : "Без фильтра по словам";
-      return `<article class="rss-source"><div><b>${esc(source.source_title || "VK-группа")}</b><small title="${esc(source.source_url)}">${esc(source.source_url)}</small><small>${esc(keywords)}</small><em class="${source.last_error ? "rss-source__error" : ""}">${esc(status)}</em></div><button class="button small danger" type="button" data-disconnect-vk="${source.id}">Отключить</button></article>`;
+      const controls = canManageVk ? `<button class="button small danger" type="button" data-disconnect-vk-source="${esc(source.id)}">Отключить источник</button>` : "";
+      return `<article class="rss-source"><div><b>${esc(source.source_title || "Открытая VK-группа")}</b><small title="${esc(source.source_url)}">${esc(source.source_url)}</small><small>Только импорт в Chat-Pro</small>${controls}<em class="${source.last_error ? "rss-source__error" : ""}">${esc(status)}</em></div></article>`;
     }).join("")}</div>`
-    : '<p class="telegram-link-status">VK-группы ещё не подключены.</p>';
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Автопостинг из VK"><header><div><b>Автопостинг из VK</b><small>Новые публикации публичных групп будут появляться в «${esc(chat.title)}» со ссылкой на оригинал.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><form class="form" data-vk-link-form><label>Ссылка на публичную группу VK<input name="sourceUrl" required type="url" placeholder="https://vk.com/имя_группы" autocomplete="url"></label><label>Токен доступа VK API<input name="accessToken" required type="password" placeholder="vk1.a..." autocomplete="new-password"></label><label>Ключевые слова — необязательно<textarea name="keywords" maxlength="3600" placeholder="Одно слово или фраза на строку"></textarea></label><p class="muted">Можно подключить до 10 групп. Проверка идёт примерно раз в 5 минут. Пустой список ключевых слов импортирует все новые посты; иначе импортируется пост, содержащий хотя бы одно указанное слово. История публикаций при подключении не переносится. Токен хранится только на локальном сервере и не показывается после сохранения.</p><div class="group-card__form-actions"><button class="button primary">Подключить VK-группу</button></div></form><section class="rss-sources"><div class="panel-title"><div><b>Подключённые VK-группы</b><small>${sources.length} из 10</small></div></div>${sourceList}</section></section>`;
+    : '<p class="telegram-link-status">Открытые VK-источники ещё не подключены.</p>';
+  const targetList = targets.length
+    ? `<div class="rss-source-list">${targets.map((target) => {
+      const status = target.last_error ? `Ошибка последней операции: ${target.last_error}` : target.last_publish_at ? `Последняя текстовая копия: ${dateFmt(target.last_publish_at)} ${timeFmt(target.last_publish_at)}` : "Текстовые копии ещё не отправлялись";
+      const controls = canManageVk ? `<label class="consent"><input type="checkbox" data-vk-target-publish="${esc(target.id)}" ${target.publish_enabled !== 0 ? "checked" : ""}><span>Отправлять новые текстовые публикации Chat-Pro</span></label><label class="consent"><input type="checkbox" data-vk-target-moderation="${esc(target.id)}" ${target.moderation_enabled ? "checked" : ""}><span>Проверять комментарии по правилам ИИ</span></label><button class="button small danger" type="button" data-disconnect-vk-target="${esc(target.id)}">Отключить сообщество</button>` : "";
+      return `<article class="rss-source"><div><b>${esc(target.target_title || "Моё сообщество VK")}</b><small title="${esc(target.target_url)}">${esc(target.target_url)}</small><small>Исходящие публикации: только текст</small>${controls}<em class="${target.last_error ? "rss-source__error" : ""}">${esc(status)}</em></div></article>`;
+    }).join("")}</div>`
+    : '<p class="telegram-link-status">Моё сообщество VK ещё не подключено.</p>';
+  const sourceForm = canManageVk
+    ? `<form class="form" data-vk-source-form><label>Ссылка на открытую группу VK<input name="sourceUrl" required type="url" placeholder="https://vk.com/имя_группы" autocomplete="url"></label><p class="muted">Для источника нужна только ссылка. Публичные новые посты импортируются в Chat-Pro примерно раз в 5 минут; история при подключении не переносится. Токен в этом потоке не используется.</p><div class="group-card__form-actions"><button class="button primary">Подключить источник</button></div></form>`
+    : '<p class="muted">Источники может подключать только создатель канала.</p>';
+  const targetForm = canManageVk
+    ? `<form class="form" data-vk-target-form><label>Ссылка на моё сообщество VK<input name="targetUrl" required type="url" placeholder="https://vk.com/имя_сообщества" autocomplete="url"></label><label>Ключ доступа сообщества VK<input name="accessToken" required type="password" minlength="20" maxlength="512" autocomplete="off" placeholder="Вставьте вручную созданный ключ"></label><p class="muted"><b>Как получить ключ:</b> Сообщество → Управление → Дополнительно → Работа с API → Ключи доступа → Создать ключ.</p><a class="button small" href="https://vk.com" target="_blank" rel="noopener noreferrer">Открыть VK</a><label class="consent"><input name="publishEnabled" type="checkbox" checked><span>После подключения отправлять в сообщество новые текстовые публикации этого канала</span></label><p class="muted">Это не нативный репост: в VK отправляется только текстовая копия. Фото, видео и другие вложения не переносятся. Для постов, импортированных из VK, добавляется ссылка на оригинал.</p><p class="muted">Ключ передаётся только при подключении и затем не показывается в интерфейсе или API. Он хранится в серверной базе для работы с VK; шифрование ключа на диске пока не реализовано. VK может отклонить публикацию или модерацию позже, если прав ключа недостаточно.</p><p class="muted">Проверка комментариев после подключения выключена. Её можно включить отдельно ниже; безопасный режим правил ИИ — ручная проверка.</p><div class="group-card__form-actions"><button class="button primary">Подключить моё сообщество</button></div></form>`
+    : '<p class="muted">Своё сообщество VK и ключ доступа может подключать только создатель канала.</p>';
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Интеграция с VK"><header><div><b>VK для «${esc(chat.title)}»</b><small>Открытые источники и моё сообщество — два независимых потока.</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><section class="rss-sources"><div class="panel-title"><div><b>Открытые VK-источники</b><small>Ссылка → импорт новых публичных постов в Chat-Pro</small></div></div>${sourceForm}${sourceList}</section><section class="rss-sources"><div class="panel-title"><div><b>Моё сообщество VK</b><small>Канал Chat-Pro → текстовые копии в сообщество VK</small></div></div>${targetForm}${targetList}</section></section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector(".member-manager__close").addEventListener("click", close);
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
-  overlay.querySelector("[data-vk-link-form]").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      const form = new FormData(event.currentTarget);
-      const result = await api("/api/channels/vk", { method: "POST", body: { channelId: chat.id, sourceUrl: form.get("sourceUrl"), accessToken: form.get("accessToken"), keywords: form.get("keywords") } });
-      await refresh(false);
-      close();
-      toast(`VK-группа «${result.sourceTitle}» подключена. Ожидаются новые публикации.`);
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  });
-  overlay.querySelectorAll("[data-disconnect-vk]").forEach((button) => button.addEventListener("click", async () => {
-    if (!window.confirm("Отключить автопостинг VK? Уже импортированные публикации останутся в канале.")) return;
-    try {
-      await api("/api/channels/vk", { method: "POST", body: { channelId: chat.id, sourceId: button.dataset.disconnectVk, disconnect: true } });
-      await refresh(false);
-      close();
-      toast("VK-группа отключена.");
-      afterSave?.();
-    } catch (error) { toast(error.message, true); }
-  }));
+  if (canManageVk) {
+    overlay.querySelector("[data-vk-source-form]").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const form = new FormData(event.currentTarget);
+        const result = await api("/api/channels/vk", { method: "POST", body: { channelId: chat.id, sourceUrl: form.get("sourceUrl") } });
+        await refresh(false);
+        close();
+        toast(`VK-источник «${result.sourceTitle}» подключён. Ожидаются новые публикации.`);
+        afterSave?.();
+      } catch (error) { toast(error.message, true); }
+    });
+    overlay.querySelector("[data-vk-target-form]").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const formElement = event.currentTarget;
+      const submit = formElement.querySelector("button[type=submit]");
+      try {
+        submit.disabled = true;
+        const form = new FormData(formElement);
+        const result = await api("/api/channels/vk/targets", { method: "POST", body: { channelId: chat.id, targetUrl: form.get("targetUrl"), accessToken: form.get("accessToken"), publishEnabled: formElement.elements.publishEnabled.checked, moderationEnabled: false } });
+        formElement.reset();
+        await refresh(false);
+        close();
+        toast(`Сообщество VK «${result.targetTitle}» подключено.`);
+        afterSave?.();
+      } catch (error) { formElement.elements.accessToken.value = ""; submit.disabled = false; toast(error.message, true); }
+    });
+    overlay.querySelectorAll("[data-vk-target-publish], [data-vk-target-moderation]").forEach((checkbox) => checkbox.addEventListener("change", async () => {
+      if (checkbox.dataset.vkTargetModeration && checkbox.checked && !window.confirm("Включить проверку комментариев VK? Действие определяется правилами ИИ; убедитесь, что для них выбран безопасный режим «ручная проверка», если не хотите автоудаление.")) {
+        checkbox.checked = false;
+        return;
+      }
+      const targetId = checkbox.dataset.vkTargetPublish || checkbox.dataset.vkTargetModeration;
+      const publishToggle = [...overlay.querySelectorAll("[data-vk-target-publish]")].find((item) => item.dataset.vkTargetPublish === targetId);
+      const moderationToggle = [...overlay.querySelectorAll("[data-vk-target-moderation]")].find((item) => item.dataset.vkTargetModeration === targetId);
+      try {
+        checkbox.disabled = true;
+        await api("/api/channels/vk/targets", { method: "POST", body: { channelId: chat.id, targetId, settingsOnly: true, publishEnabled: Boolean(publishToggle?.checked), moderationEnabled: Boolean(moderationToggle?.checked) } });
+        await refresh(false);
+        toast(checkbox.dataset.vkTargetModeration ? (checkbox.checked ? "Проверка комментариев VK включена: решения сохраняются по правилам ИИ." : "Проверка комментариев VK отключена.") : (checkbox.checked ? "Отправка текстовых копий в VK включена." : "Отправка текстовых копий в VK отключена."));
+        afterSave?.();
+      } catch (error) { checkbox.checked = !checkbox.checked; checkbox.disabled = false; toast(error.message, true); }
+    }));
+    overlay.querySelectorAll("[data-disconnect-vk-source]").forEach((button) => button.addEventListener("click", async () => {
+      if (!window.confirm("Отключить открытый VK-источник? Уже импортированные публикации останутся в канале.")) return;
+      try {
+        await api("/api/channels/vk", { method: "POST", body: { channelId: chat.id, sourceId: button.dataset.disconnectVkSource, disconnect: true } });
+        await refresh(false);
+        close();
+        toast("VK-источник отключён.");
+        afterSave?.();
+      } catch (error) { toast(error.message, true); }
+    }));
+    overlay.querySelectorAll("[data-disconnect-vk-target]").forEach((button) => button.addEventListener("click", async () => {
+      if (!window.confirm("Отключить моё сообщество VK? Новые текстовые копии больше не будут отправляться.")) return;
+      try {
+        await api("/api/channels/vk/targets", { method: "POST", body: { channelId: chat.id, targetId: button.dataset.disconnectVkTarget, disconnect: true } });
+        await refresh(false);
+        close();
+        toast("Сообщество VK отключено.");
+        afterSave?.();
+      } catch (error) { toast(error.message, true); }
+    }));
+  }
 }
 
 function openChannelAppearanceDialog(chat, afterSave) {
@@ -3331,17 +3974,28 @@ function openChannelComments(messageId) {
   const channel = state.chats.find((chat) => chat.id === message.chatId);
   const canComment = isMember(message.chatId);
   const comments = state.channelComments.filter((comment) => comment.message_id === messageId);
+  const canManageComments = ["owner", "admin"].includes(chatMemberRole(message.chatId));
   const overlay = document.createElement("div");
   overlay.className = "member-manager-overlay";
   const commentForm = canComment
     ? `<form class="form" data-channel-comment-form><label>Ваш комментарий<textarea name="text" maxlength="1000" placeholder="Напишите комментарий"></textarea></label><label>Фото<input name="photo" type="file" accept="image/png,image/jpeg,image/webp"></label><button class="button primary">Отправить</button></form>`
     : `<section class="channel-comment-join"><p class="muted">Подпишитесь на канал, чтобы оставить комментарий.</p>${channel?.type === "channel" ? '<button class="button primary small" type="button" data-join-comment-channel>Подписаться</button>' : ""}</section>`;
-  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Комментарии"><header><div><b>Комментарии</b><small>${esc(pinnedMessagePreview(message))}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-comment-list">${comments.map((comment) => { const author = userById(comment.user_id); return `<article><div class="channel-comment__author">${avatarHtml(author, "channel-comment__avatar")}<b>${esc(author?.name || "Пользователь")}</b>${comment.automated ? '<span class="channel-comment__automated">Автокомментарий</span>' : ""}</div>${comment.media_data ? `<button class="channel-comment-photo" type="button" data-open-comment-media="${esc(comment.media_data)}"><img src="${esc(comment.media_data)}" alt="Фото в комментарии"></button>` : ""}${comment.text ? `<p>${esc(comment.text)}</p>` : ""}<small>${timeFmt(comment.created_at)}</small></article>`; }).join("") || '<p class="muted">Комментариев пока нет.</p>'}</div>${commentForm}</section>`;
+  overlay.innerHTML = `<section class="member-manager" role="dialog" aria-modal="true" aria-label="Комментарии"><header><div><b>Комментарии</b><small>${esc(pinnedMessagePreview(message))}</small></div><button class="member-manager__close" type="button" aria-label="Закрыть">×</button></header><div class="channel-comment-list">${comments.map((comment) => { const author = userById(comment.user_id); return `<article><div class="channel-comment__author">${avatarHtml(author, "channel-comment__avatar")}<b>${esc(author?.name || "Пользователь")}</b>${comment.automated ? '<span class="channel-comment__automated">Автокомментарий</span>' : ""}</div><button class="channel-comment__menu" type="button" data-channel-comment-menu="${comment.id}" aria-label="Действия с комментарием" title="Действия с комментарием">⋯</button>${comment.media_data ? `<button class="channel-comment-photo" type="button" data-open-comment-media="${esc(comment.media_data)}"><img src="${esc(comment.media_data)}" alt="Фото в комментарии"></button>` : ""}${comment.text ? `<p>${esc(comment.text)}</p>` : ""}<small>${timeFmt(comment.created_at)}</small></article>`; }).join("") || '<p class="muted">Комментариев пока нет.</p>'}</div>${commentForm}</section>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector(".member-manager__close").addEventListener("click", close);
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
   overlay.querySelectorAll("[data-open-comment-media]").forEach((button) => button.addEventListener("click", () => openMedia(button.dataset.openCommentMedia)));
+  overlay.querySelectorAll("[data-channel-comment-menu]").forEach((button) => button.addEventListener("click", () => {
+    const comment = comments.find((item) => item.id === button.dataset.channelCommentMenu);
+    if (!comment) return;
+    const canDelete = comment.user_id === state.me.id || canManageComments;
+    openSimpleActions(button, [
+      { label: "Пожаловаться", action: () => reportTarget("channel-comment", comment.id) },
+      ...(canComment ? [{ label: "Ответить", action: () => { const field = overlay.querySelector("[data-channel-comment-form] textarea"); field.value = `@${userById(comment.user_id)?.name || "Пользователь"}, ${field.value}`; field.focus(); } }] : []),
+      ...(canDelete ? [{ label: "Удалить", action: async () => { if (!window.confirm("Удалить этот комментарий?")) return; await api("/api/channels/comments/delete", { method: "POST", body: { commentId: comment.id } }); await refresh(false); close(); openChannelComments(messageId); } }] : []),
+    ]);
+  }));
   overlay.querySelector("[data-join-comment-channel]")?.addEventListener("click", async () => {
     try {
       await api("/api/chats/join", { method: "POST", body: { chatId: message.chatId } });
@@ -3405,18 +4059,27 @@ function openGroupContentShare(sourceType, sourceId) {
 
 function messageMediaHtml(msg) {
   if (!msg.mediaType) return "";
+  if (msg.mediaLoading && msg.deliveryState !== "failed" && ["photo", "video"].includes(msg.mediaType)) return `<div class="message-media-loading" role="status"><i></i><span>${msg.mediaType === "photo" ? "Загружаем фото…" : "Загружаем видео…"}</span></div>`;
+  if (msg.mediaType === "vk_video") {
+    const embedUrl = vkVideoEmbedUrl(msg.mediaEmbedUrl);
+    const originalUrl = externalHttpUrl(msg.sourceId);
+    const thumbnail = msg.hasMedia ? `<img class="vk-video-card__thumbnail" src="${esc(messageMediaUrl(msg))}" alt="" loading="lazy">` : "";
+    if (embedUrl) return `<button class="vk-video-card" type="button" data-open-message-media="${msg.id}" data-open-message-media-source="${esc(embedUrl)}" data-media-type="vk_embed" aria-label="Смотреть видео из VK в Chat-Pro">${thumbnail}<span class="vk-video-card__overlay"><span class="vk-video-card__play" aria-hidden="true">▶</span><span><b>Видео из VK</b><small>Смотреть в Chat-Pro</small></span></span></button>`;
+    if (!originalUrl) return "";
+    return `<a class="vk-video-card" href="${esc(originalUrl)}" target="_blank" rel="noopener noreferrer" aria-label="Смотреть видео в VK">${thumbnail}<span class="vk-video-card__overlay"><span class="vk-video-card__play" aria-hidden="true">▶</span><span><b>Видео из VK</b><small>Смотреть в VK ↗</small></span></span></a>`;
+  }
   if (msg.mediaType === "photo") {
     const source = messageMediaUrl(msg);
-    return `<button class="message-photo-button${["rss", "vk"].includes(msg.sourceType) ? " message-photo-button--rss" : ""}" type="button" data-open-message-media="${msg.id}" data-open-message-media-source="${esc(source)}" data-media-type="photo" title="Открыть фото на весь экран" aria-label="Открыть фото на весь экран"><img class="message-photo" src="${esc(source)}" alt="Фото"></button>`;
+    return `<button class="message-photo-button${["rss", "vk"].includes(msg.sourceType) ? " message-photo-button--rss" : ""}" type="button" data-open-message-media="${msg.id}" data-open-message-media-source="${esc(source)}" data-media-type="photo" title="Открыть фото на весь экран" aria-label="Открыть фото на весь экран" data-media-loading><img class="message-photo" src="${esc(source)}" alt="Фото" loading="lazy" decoding="async"><span class="message-media-loading" role="status"><i></i><span>Загружаем фото…</span></span></button>`;
   }
   if (msg.mediaType === "document") return `<a class="message-document" href="${esc(messageMediaUrl(msg))}" target="_blank" rel="noopener"><span>📄</span><b>${esc(msg.text?.replace(/^Документ:\s*/, "") || "Документ")}</b><small>Открыть документ</small></a>`;
   const source = messageMediaUrl(msg);
-  if (msg.mediaType === "video") return `<div class="message-video"><video controls playsinline preload="metadata" src="${esc(source)}"></video><button type="button" data-open-message-media="${msg.id}" title="Открыть видео на весь экран" aria-label="Открыть видео на весь экран"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg></button></div>`;
+  if (msg.mediaType === "video") return `<div class="message-video" data-media-loading><video controls playsinline preload="metadata" src="${esc(source)}"></video><span class="message-media-loading" role="status"><i></i><span>Загружаем видео…</span></span><button type="button" data-open-message-media="${msg.id}" title="Открыть видео на весь экран" aria-label="Открыть видео на весь экран"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg></button></div>`;
   if (msg.mediaType === "voice") {
     const waveform = Array.isArray(msg.voiceWaveform) && msg.voiceWaveform.length ? msg.voiceWaveform : voiceWaveformFallback(msg.id);
     return `<div class="message-voice"><audio class="message-audio" preload="metadata" data-media-message="voice" src="${esc(source)}"></audio><button class="message-voice__play" type="button" data-voice-playback aria-label="Воспроизвести голосовое">${actionIcon("play")}</button><div class="message-voice__wave" data-voice-wave role="slider" tabindex="0" aria-label="Перемотать голосовое" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">${waveform.map((value) => `<i style="--voice-level:${Math.max(8, Number(value) || 8)}%"></i>`).join("")}</div><span class="message-voice__duration" data-voice-duration>0:00</span></div>`;
   }
-  if (msg.mediaType === "circle") return `<div class="circle-message"><div class="circle-message__mask"><video class="message-circle" playsinline preload="auto" data-media-message="circle" src="${esc(source)}"></video></div><button class="circle-expand" type="button" data-open-circle="${msg.id}" title="Открыть видеокружок" aria-label="Открыть видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg></button><div class="circle-player" aria-label="Управление видеокружком"><button type="button" data-circle-playback aria-label="Воспроизвести видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 8 6-8 6Z"/></svg></button><input type="range" min="0" max="100" value="0" step="0.1" data-circle-progress aria-label="Прогресс видеокружка"></div></div>`;
+  if (msg.mediaType === "circle") return `<div class="circle-message"><div class="circle-message__mask"><video class="message-circle" playsinline preload="none" data-media-message="circle" src="${esc(source)}"></video></div><button class="circle-expand" type="button" data-open-circle="${msg.id}" title="Открыть видеокружок" aria-label="Открыть видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg></button><div class="circle-player" aria-label="Управление видеокружком"><button type="button" data-circle-playback aria-label="Воспроизвести видеокружок"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 8 6-8 6Z"/></svg></button><input type="range" min="0" max="100" value="0" step="0.1" data-circle-progress aria-label="Прогресс видеокружка"></div></div>`;
   return "";
 }
 
@@ -3542,6 +4205,7 @@ async function openDirectChat(userId) {
   scrollChatToLatest = true;
   activeSection = "chats";
   await refresh();
+  return data.chat;
 }
 
 function pickRecordingMimeType(type) {
@@ -3576,6 +4240,7 @@ async function recordMediaMessage(chatId, type) {
       toast("Не удалось записать медиа. Проверьте разрешения камеры и микрофона.", true);
     };
     recorder.onstop = async () => {
+      const circlePreviewData = type === "circle" ? circleRecorderStream?.previewData() || "" : "";
       circleRecorderStream?.stop();
       stream.getTracks().forEach((track) => track.stop());
       recordingUi.close();
@@ -3604,7 +4269,7 @@ async function recordMediaMessage(chatId, type) {
           deliveryState: "sending",
         });
         appendLiveMessage(pendingOutgoingMessages.get(temporaryId));
-        const response = await api("/api/messages", { method: "POST", body: { chatId, text: "", mediaType: type, mediaData, voiceWaveform: type === "voice" ? recordingUi.waveform() : [] } });
+        const response = await api("/api/messages", { method: "POST", body: { chatId, text: "", mediaType: type, mediaData, circlePreviewData, voiceWaveform: type === "voice" ? recordingUi.waveform() : [] } });
         const remainingAnimation = 360 - (Date.now() - pendingStartedAt);
         if (remainingAnimation > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingAnimation));
         confirmPendingMessage(temporaryId, response.messageId);
@@ -3648,12 +4313,23 @@ function createCircleRecorderStream(sourceStream) {
   canvas.height = 720;
   const context = canvas.getContext("2d");
   let frame = 0;
+  let hasFrame = false;
+  let firstFrameData = "";
   const draw = () => {
     if (sourceVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       const sourceWidth = sourceVideo.videoWidth || 720;
       const sourceHeight = sourceVideo.videoHeight || 720;
       const side = Math.min(sourceWidth, sourceHeight);
       context.drawImage(sourceVideo, (sourceWidth - side) / 2, (sourceHeight - side) / 2, side, side, 0, 0, canvas.width, canvas.height);
+      hasFrame = true;
+      if (!firstFrameData) {
+        const preview = document.createElement("canvas");
+        preview.width = 384;
+        preview.height = 384;
+        preview.getContext("2d").drawImage(canvas, 0, 0, preview.width, preview.height);
+        const data = preview.toDataURL("image/jpeg", 0.7);
+        if (data.length <= 530_000) firstFrameData = data;
+      }
     }
     frame = requestAnimationFrame(draw);
   };
@@ -3665,6 +4341,9 @@ function createCircleRecorderStream(sourceStream) {
       sourceVideo.srcObject = null;
       sourceVideo.srcObject = sourceStream;
       sourceVideo.play().catch(() => {});
+    },
+    previewData() {
+      return hasFrame ? firstFrameData : "";
     },
     stop() {
       cancelAnimationFrame(frame);
@@ -3822,6 +4501,22 @@ function stopChatActivity(chatId) {
 function startTypingActivity(chatId) { setChatActivity(chatId, "typing"); }
 function stopTypingActivity(chatId) { stopChatActivity(chatId); }
 
+function bindMessageMediaLoading(root) {
+  root.querySelectorAll("[data-media-loading]").forEach((container) => {
+    const media = container.querySelector("img, video");
+    if (!media) return;
+    const complete = () => container.classList.add("is-loaded");
+    const loading = () => container.classList.remove("is-loaded");
+    media.addEventListener("load", complete, { once: true });
+    media.addEventListener("loadeddata", complete, { once: true });
+    media.addEventListener("loadstart", loading);
+    media.addEventListener("waiting", loading);
+    media.addEventListener("playing", complete);
+    if (media.tagName === "IMG" && media.complete && media.naturalWidth) complete();
+    if (media.tagName === "VIDEO" && media.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) complete();
+  });
+}
+
 function appendLiveMessage(message) {
   if (!message || message.chatId !== activeChatId) return;
   const messagesBox = app.querySelector("#messages");
@@ -3831,6 +4526,7 @@ function appendLiveMessage(message) {
   messagesBox.insertAdjacentHTML("beforeend", messageHtml(message));
   const element = messagesBox.querySelector(`#message-${CSS.escape(message.id)}`);
   bindLiveMessageElement(element);
+  bindMessageMediaLoading(element);
   if (shouldScroll) messagesBox.scrollTo({ top: messagesBox.scrollHeight, behavior: "auto" });
 }
 
@@ -3838,7 +4534,9 @@ function replaceLiveMessage(previousId, message) {
   const element = app.querySelector(`#message-${CSS.escape(previousId)}`);
   if (!element) return appendLiveMessage(message);
   element.outerHTML = messageHtml(message);
-  bindLiveMessageElement(app.querySelector(`#message-${CSS.escape(message.id)}`));
+  const replacement = app.querySelector(`#message-${CSS.escape(message.id)}`);
+  bindLiveMessageElement(replacement);
+  bindMessageMediaLoading(replacement);
 }
 
 function confirmPendingMessage(temporaryId, messageId) {
@@ -3918,7 +4616,7 @@ function bindLiveMessageElement(element) {
     audio.addEventListener("pause", update);
   });
   element.addEventListener("click", (event) => {
-    if (event.target.closest("button, audio, video, input, label")) return;
+    if (event.target.closest("a, button, audio, video, input, label")) return;
     const message = [...state.messages, ...pendingOutgoingMessages.values()].find((item) => item.id === element.id.replace("message-", ""));
     if (message && !message.mediaType?.includes("system")) openMessageMenu(message);
   });
@@ -4039,7 +4737,7 @@ function showIncomingCall(call) {
   box.className = "incoming-call";
   box.innerHTML = `<div><b>${esc(call.callerName)} звонит</b><p>${call.callType === "video" ? "Видеозвонок" : "Аудиозвонок"}</p><div class="incoming-call__actions"><button class="button call-action--accept" data-accept>${callControlIcon("accept")}<span>Принять</span></button><button class="button danger" data-decline>${callControlIcon("decline")}<span>Отклонить</span></button></div></div>`;
   document.body.append(box);
-  startRingTone(call.callerRingtone || "classic");
+  startRingTone(call.callerRingtoneData || call.callerRingtone || "classic");
   box.querySelector("[data-accept]").addEventListener("click", () => acceptCall(call));
   box.querySelector("[data-decline]").addEventListener("click", async () => { stopRingTone(); await api("/api/calls/end", { method: "POST", body: { callId: call.id } }); box.remove(); });
 }
@@ -4431,18 +5129,20 @@ function toggleCallPause(event) {
 }
 function startRingTone(ringtone = "classic") {
   stopRingTone();
+  if (typeof ringtone === "string" && ringtone.startsWith("data:audio/")) {
+    const audio = new Audio(ringtone);
+    audio.loop = true;
+    audio.play().catch(() => {});
+    ringTone = { audio };
+    return;
+  }
   const AudioContext = window.AudioContext || window.webkitAudioContext;
   if (!AudioContext) return;
   const context = new AudioContext();
   const gain = context.createGain();
   gain.gain.value = 0.04;
   gain.connect(context.destination);
-  const tones = {
-    classic: { frequencies: [440], interval: 1400, duration: 0.18 },
-    pulse: { frequencies: [392, 494], interval: 1200, duration: 0.14, gap: 0.2 },
-    bright: { frequencies: [660, 880], interval: 1100, duration: 0.13, gap: 0.16 },
-  };
-  const pattern = tones[ringtone] || tones.classic;
+  const pattern = { frequencies: [440], interval: 1400, duration: 0.18 };
   const playTone = (frequency, delay = 0) => {
     const oscillator = context.createOscillator();
     oscillator.type = "sine";
@@ -4458,7 +5158,9 @@ function startRingTone(ringtone = "classic") {
 function stopRingTone() {
   if (!ringTone) return;
   clearInterval(ringTone.timer);
-  ringTone.context.close?.();
+  ringTone.audio?.pause();
+  if (ringTone.audio) ringTone.audio.src = "";
+  ringTone.context?.close?.();
   ringTone = null;
 }
 async function finishCall(notify = true) {
@@ -4490,7 +5192,7 @@ function canPinMessageForEveryone(message) {
 }
 function canDeleteMessageForEveryone(message) { return message.senderId === state.me.id || (["group", "community", "channel"].includes(state.chats.find((chat) => chat.id === message.chatId)?.type) && ["owner", "admin"].includes(chatMemberRole(message.chatId))); }
 function userById(id) { return state.users.find((user) => user.id === id); }
-function chatIcon(chat) { return chat.type === "saved" ? "★" : chat.type === "group" ? "G" : chat.type === "community" ? "C" : chat.type === "channel" ? "К" : initials(chat.title); }
+function chatIcon(chat) { return chat.type === "saved" ? "★" : chat.type === "group" ? "G" : chat.type === "community" ? "C" : chat.type === "channel" ? initials(chat.title).slice(0, 1) : initials(chat.title); }
 function chatAvatarHtml(chat, className = "avatar") { return chat.avatarData ? `<img class="${className}" src="${esc(chat.avatarData)}" alt="">` : `<div class="${className}">${esc(chatIcon(chat))}</div>`; }
 function memberWord(count) { return count % 10 === 1 && count % 100 !== 11 ? "участник" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) ? "участника" : "участников"; }
 function subscriberWord(count) { return count % 10 === 1 && count % 100 !== 11 ? "подписчик" : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 10 || count % 100 >= 20) ? "подписчика" : "подписчиков"; }
@@ -4501,6 +5203,7 @@ function chatMeta(chat) {
     const user = userById(member?.user_id);
     return { icon: initials(user?.name || "?"), title: user?.name || "Пользователь", subtitle: user ? `@${user.username}` : "", user };
   }
+  if (chat.type === "channel") return { icon: chatIcon(chat), title: chat.title, subtitle: "" };
   const parts = [];
   if ((chat.settings || {}).showSubscribers !== false) parts.push(`${chat.subscriberCount} подписчиков`);
   parts.push(chat.type === "group" ? "группа" : chat.type === "channel" ? "канал" : "комьюнити");
@@ -4542,21 +5245,43 @@ function postHtml(post) {
   const reactions = Object.entries(post.reactions || {}).filter(([, count]) => Number(count) > 0);
   return `<article class="post">${avatarHtml(user)}<div class="post__body"><div class="post__author"><b>${esc(user?.name || "Пользователь")}</b><button class="post__menu" type="button" data-post-menu="${post.id}" aria-label="Действия с публикацией" title="Действия с публикацией">☰</button></div>${post.media_data ? `<button class="media-button" type="button" data-open-profile-post="${post.id}" aria-label="Открыть публикацию"><img class="post-photo" src="${esc(post.media_data)}" alt="Фото публикации"></button>` : ""}${post.text ? `<p>${esc(post.text)}</p>` : ""}${reactions.length ? `<div class="post-reactions">${reactions.map(([emoji, count]) => `<span>${esc(emoji)} ${count}</span>`).join("")}</div>` : ""}<span class="muted">${timeFmt(post.created_at)}</span></div></article>`;
 }
+async function editProfilePost(postId) {
+  const post = state.posts.find((item) => item.id === postId);
+  if (!post || post.user_id !== state.me.id) throw new Error("Можно редактировать только свои публикации.");
+  const text = window.prompt("Измените подпись публикации", post.text || "");
+  if (text === null) return false;
+  await api("/api/profile/posts/edit", { method: "POST", body: { postId, text } });
+  toast("Подпись публикации обновлена.");
+  await refresh();
+  return true;
+}
+async function deleteProfilePost(postId) {
+  const post = state.posts.find((item) => item.id === postId);
+  if (!post || post.user_id !== state.me.id) throw new Error("Можно удалять только свои публикации.");
+  if (!window.confirm("Удалить публикацию? Это действие нельзя отменить.")) return false;
+  await api("/api/profile/posts/delete", { method: "POST", body: { postId } });
+  toast("Публикация удалена.");
+  await refresh();
+  return true;
+}
 function openProfilePost(postId) {
   const post = state.posts.find((item) => item.id === postId);
   if (!post) return;
   const author = userById(post.user_id);
   const reactions = Object.entries(post.reactions || {}).filter(([, count]) => Number(count) > 0);
   const emojis = ["❤️", "👍", "🔥", "😂", "😮", "👏"];
+  const ownPost = post.user_id === state.me.id;
   const overlay = document.createElement("div");
   overlay.className = "profile-post-overlay";
-  overlay.innerHTML = `<article class="profile-post-viewer" role="dialog" aria-modal="true" aria-label="Публикация"><header><div><b>${esc(author?.name || "Пользователь")}</b><span>${timeFmt(post.created_at)}</span></div><button type="button" data-close-profile-post aria-label="Закрыть">×</button></header>${post.media_data ? `<button type="button" class="profile-post-viewer__media" data-open-media="${esc(post.media_data)}" aria-label="Открыть фото на весь экран"><img src="${esc(post.media_data)}" alt="Фото публикации"></button>` : ""}${post.text ? `<p>${esc(post.text)}</p>` : ""}<footer>${reactions.length ? `<div class="profile-post-viewer__reactions">${reactions.map(([emoji, count]) => `<span>${esc(emoji)} ${count}</span>`).join("")}</div>` : ""}<div class="profile-post-viewer__actions"><div class="profile-post-viewer__emoji-actions">${emojis.map((emoji) => `<button type="button" data-react-profile-post="${post.id}" data-emoji="${esc(emoji)}" aria-label="Выбрать реакцию ${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div><button type="button" class="profile-post-viewer__send-reaction" data-send-profile-post-reaction disabled aria-label="Отправить выбранную реакцию" title="Отправить реакцию">✈</button><button type="button" class="button small" data-share-profile-post="${post.id}">Поделиться</button></div></footer></article>`;
+  overlay.innerHTML = `<article class="profile-post-viewer" role="dialog" aria-modal="true" aria-label="Публикация"><header><div><b>${esc(author?.name || "Пользователь")}</b><span>${timeFmt(post.created_at)}</span></div><button type="button" data-close-profile-post aria-label="Закрыть">×</button></header>${post.media_data ? `<button type="button" class="profile-post-viewer__media" data-open-media="${esc(post.media_data)}" aria-label="Открыть фото на весь экран"><img src="${esc(post.media_data)}" alt="Фото публикации"></button>` : ""}${post.text ? `<p>${esc(post.text)}</p>` : ""}<footer>${reactions.length ? `<div class="profile-post-viewer__reactions">${reactions.map(([emoji, count]) => `<span>${esc(emoji)} ${count}</span>`).join("")}</div>` : ""}<div class="profile-post-viewer__actions"><div class="profile-post-viewer__emoji-actions">${emojis.map((emoji) => `<button type="button" data-react-profile-post="${post.id}" data-emoji="${esc(emoji)}" aria-label="Выбрать реакцию ${esc(emoji)}">${esc(emoji)}</button>`).join("")}</div><button type="button" class="profile-post-viewer__send-reaction" data-send-profile-post-reaction disabled aria-label="Отправить выбранную реакцию" title="Отправить реакцию">✈</button><button type="button" class="button small" data-share-profile-post="${post.id}">Поделиться</button>${ownPost ? `<button type="button" class="button small" data-edit-profile-post="${post.id}">Изменить подпись</button><button type="button" class="button small danger" data-delete-profile-post="${post.id}">Удалить</button>` : ""}</div></footer></article>`;
   document.body.append(overlay);
   const close = () => overlay.remove();
   overlay.querySelector("[data-close-profile-post]").addEventListener("click", close);
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
   overlay.querySelector("[data-open-media]")?.addEventListener("click", (event) => openMedia(event.currentTarget.dataset.openMedia, "photo", state.posts.filter((item) => item.user_id === post.user_id && item.media_data).map((item) => item.media_data)));
   overlay.querySelector("[data-share-profile-post]").addEventListener("click", () => { close(); openGroupContentShare("profile-post", post.id); });
+  overlay.querySelector("[data-edit-profile-post]")?.addEventListener("click", async () => { if (await editProfilePost(post.id)) close(); });
+  overlay.querySelector("[data-delete-profile-post]")?.addEventListener("click", async () => { if (await deleteProfilePost(post.id)) close(); });
   let selectedReaction = "";
   const sendReaction = overlay.querySelector("[data-send-profile-post-reaction]");
   const updateReactionSelection = () => {
@@ -4584,14 +5309,81 @@ function openMedia(source, mediaType = "photo", sources = [source]) {
   const items = [...new Set(sources.filter(Boolean))];
   let index = Math.max(0, items.indexOf(source));
   const isVideo = mediaType === "video";
+  const isVkEmbed = mediaType === "vk_embed";
   const overlay = document.createElement("div");
   overlay.className = "media-overlay";
+  let zoom = 1;
+  let panX = 0;
+  let panY = 0;
+  let pointerStart = null;
+  const clampPan = () => {
+    const stage = overlay.querySelector("[data-media-stage]");
+    const image = overlay.querySelector("[data-media-image]");
+    if (!stage || !image) return;
+    const maxX = Math.max(0, (image.clientWidth * zoom - stage.clientWidth) / 2);
+    const maxY = Math.max(0, (image.clientHeight * zoom - stage.clientHeight) / 2);
+    panX = Math.max(-maxX, Math.min(maxX, panX));
+    panY = Math.max(-maxY, Math.min(maxY, panY));
+  };
+  const updatePhotoTransform = () => {
+    const image = overlay.querySelector("[data-media-image]");
+    const stage = overlay.querySelector("[data-media-stage]");
+    if (!image || !stage) return;
+    clampPan();
+    image.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+    image.classList.toggle("is-zoomed", zoom > 1);
+    stage.classList.toggle("is-pannable", zoom > 1);
+    const value = overlay.querySelector("[data-media-zoom-value]");
+    if (value) value.textContent = `${Math.round(zoom * 100)}%`;
+    overlay.querySelector("[data-media-zoom-out]").disabled = zoom <= 1;
+    overlay.querySelector("[data-media-zoom-in]").disabled = zoom >= 4;
+    overlay.querySelector("[data-media-zoom-reset]").disabled = zoom === 1 && panX === 0 && panY === 0;
+  };
+  const setZoom = (nextZoom) => {
+    zoom = Math.max(1, Math.min(4, Math.round(nextZoom * 100) / 100));
+    if (zoom === 1) { panX = 0; panY = 0; }
+    updatePhotoTransform();
+  };
+  const bindPhotoControls = () => {
+    if (isVideo || isVkEmbed) return;
+    const stage = overlay.querySelector("[data-media-stage]");
+    const image = overlay.querySelector("[data-media-image]");
+    image?.addEventListener("load", updatePhotoTransform, { once: true });
+    overlay.querySelector("[data-media-zoom-out]")?.addEventListener("click", () => setZoom(zoom - .25));
+    overlay.querySelector("[data-media-zoom-in]")?.addEventListener("click", () => setZoom(zoom + .25));
+    overlay.querySelector("[data-media-zoom-reset]")?.addEventListener("click", () => { zoom = 1; panX = 0; panY = 0; updatePhotoTransform(); });
+    stage?.addEventListener("pointerdown", (event) => {
+      if (zoom <= 1 || event.button !== 0) return;
+      pointerStart = { id: event.pointerId, x: event.clientX, y: event.clientY, panX, panY };
+      stage.setPointerCapture(event.pointerId);
+    });
+    stage?.addEventListener("pointermove", (event) => {
+      if (!pointerStart || event.pointerId !== pointerStart.id) return;
+      panX = pointerStart.panX + event.clientX - pointerStart.x;
+      panY = pointerStart.panY + event.clientY - pointerStart.y;
+      updatePhotoTransform();
+    });
+    const stopPan = (event) => {
+      if (!pointerStart || event.pointerId !== pointerStart.id) return;
+      if (stage?.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+      pointerStart = null;
+    };
+    stage?.addEventListener("pointerup", stopPan);
+    stage?.addEventListener("pointercancel", stopPan);
+    updatePhotoTransform();
+  };
   const render = () => {
     const current = items[index];
-    overlay.innerHTML = `<button class="media-overlay__close" aria-label="Закрыть">×</button>${items.length > 1 ? `<button class="media-overlay__nav media-overlay__nav--previous" type="button" data-media-previous aria-label="Предыдущее фото">‹</button><button class="media-overlay__nav media-overlay__nav--next" type="button" data-media-next aria-label="Следующее фото">›</button><span class="media-overlay__counter">${index + 1} / ${items.length}</span>` : ""}${isVideo ? `<video controls autoplay playsinline src="${esc(current)}">Ваш браузер не поддерживает видео.</video>` : `<img src="${esc(current)}" alt="Просмотр изображения">`}`;
+    zoom = 1;
+    panX = 0;
+    panY = 0;
+    const photo = `<div class="media-overlay__photo-viewer"><div class="media-overlay__image-stage" data-media-stage><img data-media-image src="${esc(current)}" alt="Просмотр изображения" draggable="false"></div><div class="media-overlay__zoom-controls" role="group" aria-label="Масштаб изображения"><button type="button" data-media-zoom-out aria-label="Уменьшить фото">−</button><output data-media-zoom-value aria-live="polite">100%</output><button type="button" data-media-zoom-in aria-label="Увеличить фото">+</button><button type="button" data-media-zoom-reset>Сбросить</button><small>После увеличения перетаскивайте фото, чтобы выбрать нужную часть.</small></div></div>`;
+    const vkEmbed = `<iframe class="media-overlay__vk-player" src="${esc(current)}" title="Видео из VK" allow="autoplay; encrypted-media; fullscreen; picture-in-picture; screen-wake-lock" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+    overlay.innerHTML = `<button class="media-overlay__close" aria-label="Закрыть">×</button>${items.length > 1 ? `<button class="media-overlay__nav media-overlay__nav--previous" type="button" data-media-previous aria-label="Предыдущее фото">‹</button><button class="media-overlay__nav media-overlay__nav--next" type="button" data-media-next aria-label="Следующее фото">›</button><span class="media-overlay__counter">${index + 1} / ${items.length}</span>` : ""}${isVkEmbed ? vkEmbed : isVideo ? `<video controls autoplay playsinline src="${esc(current)}">Ваш браузер не поддерживает видео.</video>` : photo}`;
     overlay.querySelector(".media-overlay__close").addEventListener("click", close);
     overlay.querySelector("[data-media-previous]")?.addEventListener("click", () => show(index - 1));
     overlay.querySelector("[data-media-next]")?.addEventListener("click", () => show(index + 1));
+    bindPhotoControls();
   };
   const show = (nextIndex) => { index = (nextIndex + items.length) % items.length; render(); };
   document.body.append(overlay);
@@ -4600,11 +5392,18 @@ function openMedia(source, mediaType = "photo", sources = [source]) {
     overlay.remove();
     document.removeEventListener("keydown", onKeyDown);
   };
-  const onKeyDown = (event) => { if (event.key === "Escape") close(); else if (items.length > 1 && event.key === "ArrowLeft") show(index - 1); else if (items.length > 1 && event.key === "ArrowRight") show(index + 1); };
+  const onKeyDown = (event) => {
+    if (event.key === "Escape") close();
+    else if (!isVideo && !isVkEmbed && event.key === "+") setZoom(zoom + .25);
+    else if (!isVideo && !isVkEmbed && event.key === "-") setZoom(zoom - .25);
+    else if (items.length > 1 && event.key === "ArrowLeft") show(index - 1);
+    else if (items.length > 1 && event.key === "ArrowRight") show(index + 1);
+  };
   overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
   render();
   document.addEventListener("keydown", onKeyDown);
 }
+
 function openCircle(messageId) {
   const message = state.messages.find((item) => item.id === messageId && item.mediaType === "circle");
   if (!message) return;
